@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_quill/flutter_quill.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
@@ -16,7 +15,7 @@ class NewJournalScreen extends StatefulWidget {
 }
 
 class _NewJournalScreenState extends State<NewJournalScreen> {
-  final QuillController _qc = QuillController.basic();
+  final quill.QuillController _qc = quill.QuillController.basic();
   final FocusNode _focusNode = FocusNode();
   final ScrollController _scrollController = ScrollController();
 
@@ -39,10 +38,10 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
     ).copy('${dir.path}/${DateTime.now().millisecondsSinceEpoch}_${img.name}');
 
     final index = _qc.selection.baseOffset;
-    _qc.document.insert(index, BlockEmbed.image(saved.path));
+    _qc.document.insert(index, quill.BlockEmbed.image(saved.path));
     _qc.updateSelection(
       TextSelection.collapsed(offset: index + 1),
-      ChangeSource.local,
+      quill.ChangeSource.local,
     );
   }
 
@@ -100,35 +99,31 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
+      body:
+          //Column(
+          //children: [
           // TOOLBAR
-          Container(
-            color: cs.surface,
-            child: quill.QuillToolbar.simple(
-              controller: _qc,
-              config: const quill.QuillSimpleToolbarConfig(),
-            ),
-          ),
-
+          //Container(
+          //color: cs.surface,
+          //child: quill.QuillToolbar.simple(
+          // controller: _qc,
+          // config: const quill.QuillSimpleToolbarConfig(),
+          //),
+          //),
           // EDITOR
           Expanded(
-            child: Container(
-              color: cs.surface,
-              child: quill.QuillEditor(
-                controller: _qc,
-                focusNode: _focusNode,
-                scrollController: _scrollController,
-                config: const quill.QuillEditorConfig(
-                  autoFocus: true,
-                  expands: true,
-                  padding: EdgeInsets.all(12),
-                ),
+            child: quill.QuillEditor.basic(
+              controller: _qc,
+              config: const quill.QuillEditorConfig(
+                autoFocus: true,
+                expands: true,
+                padding: EdgeInsets.all(12),
               ),
             ),
           ),
-        ],
-      ),
+
+      // ],
+      //  ),
     );
   }
 }
