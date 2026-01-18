@@ -12,6 +12,14 @@ import 'router.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // ✅ MUST happen before any Supabase.instance usage (router + auth listener)
+  await Supabase.initialize(
+    url: 'https://sb_publishable_nK_sBS6WTIOtqPIpTl7x7g_FQ1r1oQs',
+    anonKey:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpudGZ4bmpydGdsaXl6aGVmYXloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MjIzMDgsImV4cCI6MjA4MDQ5ODMwOH0.TgMtKwjswRTbMESjpep2FWq37_OG20Z8VCb6aR03Bo8.supabase.co',
+  );
+
+  // ✅ create router AFTER Supabase is initialized
   final appRouter = createRouter();
 
   runApp(ProviderScope(child: _Bootstrap(router: appRouter)));
