@@ -85,26 +85,40 @@ class _HomeBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: scheme.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: scheme.outline.withOpacity(0.25)),
-        ),
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, color: scheme.onSurface),
-            const Spacer(),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleSmall,
+    return Container(
+      // This decoration creates the glow effect
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.15), // The glow color
+            blurRadius: 20, // How soft the glow is
+            spreadRadius: 2, // How far the glow extends
+            offset: const Offset(0, 4), // Subtle downward shift
+          ),
+        ],
+      ),
+      child: Material(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: scheme.outline.withOpacity(0.25)),
             ),
-          ],
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(icon, color: scheme.onSurface),
+                const Spacer(),
+                Text(title, style: Theme.of(context).textTheme.titleSmall),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -133,8 +147,24 @@ class _HomeBody extends StatelessWidget {
               child: const Text('Calendar'),
             ),
           ),
+          const SizedBox(height: 10),
+
+          // BRAIN FOG
+          SizedBox(
+            height: 52,
+            child: OutlinedButton(
+              onPressed: () => context.go('/brain-fog'),
+              child: const Text('Brain fog bubble 😶‍🌫️'),
+            ),
+          ),
+
           IconButton(
-            icon: const Icon(Icons.insights),
+            icon: Icon(
+              Icons.insights,
+              color: Theme.of(
+                context,
+              ).colorScheme.primary, // Matches the buttons
+            ),
             onPressed: () => context.go('/insights'),
           ),
           // ✅ Put this where your Home body content goes
@@ -214,7 +244,6 @@ class _HomeBody extends StatelessWidget {
           //label: const Text('Create logs template'),
           //),
           //const SizedBox(height: 12),
-
           const SizedBox(
             height: 24,
           ), // optional bottom padding so grid doesn't hit bottom

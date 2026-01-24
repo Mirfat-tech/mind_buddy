@@ -14,7 +14,7 @@ import 'features/auth/reset_password_screen.dart';
 import 'package:mind_buddy/features/home/home_screen.dart';
 import 'calendar/calendar_screen.dart';
 import 'features/journal/new_journal_screen.dart';
-//import 'features/day/daily_page_screen.dart';
+import 'features/day/daily_page_screen.dart';
 import 'features/chat/chat_screen.dart';
 import 'package:mind_buddy/features/templates/log_table_screen.dart';
 import 'package:mind_buddy/features/insights/insights_screen.dart';
@@ -28,6 +28,9 @@ import 'package:mind_buddy/features/insights/manage_habits_screen.dart';
 import 'package:mind_buddy/features/templates/create_templates_screen.dart';
 
 import 'features/pomodoro/pomodoro_screen.dart';
+
+import 'package:mind_buddy/features/brain_fog/brain_fog_screen.dart';
+
 //
 
 // theming wrapper
@@ -161,14 +164,14 @@ GoRouter createRouter() {
         builder: (_, __) => themed(const NewJournalScreen()),
       ),
 
-      // DAY PAGE
-      //GoRoute(
-      // path: '/day/:dayId',
-      //builder: (context, state) {
-      //final dayId = state.pathParameters['dayId']!;
-      //return themed(DailyPageScreen(dayId: dayId));
-      //},
-      //),
+      //DAY PAGE
+      GoRoute(
+        path: '/day/:dayId',
+        builder: (context, state) {
+          final dayId = state.pathParameters['dayId']!;
+          return themed(DailyPageScreen(dayId: dayId));
+        },
+      ),
 
       // CHAT (attached to a day)
       GoRoute(
@@ -195,7 +198,7 @@ GoRouter createRouter() {
       // TEMPLATES (list)
       GoRoute(
         path: '/templates',
-        builder: (_, __) => themed(const TemplatesScreen()),
+        builder: (_, __) => themed(TemplatesScreen()),
       ),
 
       GoRoute(
@@ -258,7 +261,12 @@ GoRouter createRouter() {
 
       GoRoute(
         path: '/templates/create',
-        builder: (context, state) => themed(const CreateLogTemplateScreen()),
+        builder: (context, state) => themed(CreateLogTemplateScreen()),
+      ),
+
+      GoRoute(
+        path: '/brain-fog',
+        builder: (context, state) => themed(const BrainFogScreen()),
       ),
 
       GoRoute(
@@ -267,11 +275,13 @@ GoRouter createRouter() {
           final templateId = state.uri.queryParameters['templateId']!;
           final templateKey = state.uri.queryParameters['templateKey']!;
           final dayId = state.uri.queryParameters['dayId']!;
-          return themed(LogTableScreen(
-            templateId: templateId,
-            templateKey: templateKey,
-            dayId: dayId,
-          ));
+          return themed(
+            LogTableScreen(
+              templateId: templateId,
+              templateKey: templateKey,
+              dayId: dayId,
+            ),
+          );
         },
       ),
     ],

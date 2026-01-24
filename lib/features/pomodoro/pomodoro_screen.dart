@@ -1,28 +1,45 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'dart:ui'; // Required for FontFeature
 
 class PomodoroScreen extends StatelessWidget {
   const PomodoroScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final scheme = Theme.of(context).colorScheme;
+
+    return MbScaffold(
+      applyBackground: false,
       appBar: AppBar(
-        title: const Text('Pomodoro'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (Navigator.of(context).canPop()) {
-              Navigator.of(context).pop();
-            } else {
-              context.go('/home');
-            }
-          },
+        centerTitle: true,
+        title: const Text('Focus Timer'),
+        leading: Container(
+          margin: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(
+                color: scheme.primary.withValues(alpha: 0.15),
+                blurRadius: 20,
+              ),
+            ],
+          ),
+          child: CircleAvatar(
+            backgroundColor: scheme.surface,
+            child: IconButton(
+              icon: Icon(Icons.arrow_back, color: scheme.primary, size: 20),
+              onPressed: () => Navigator.of(context).canPop()
+                  ? Navigator.of(context).pop()
+                  : context.go('/home'),
+            ),
+          ),
         ),
       ),
       body: const Padding(
-        padding: EdgeInsets.all(16),
+        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         child: PomodoroStandalone(),
       ),
     );
@@ -38,20 +55,12 @@ class PomodoroStandalone extends StatefulWidget {
 
 class _PomodoroStandaloneState extends State<PomodoroStandalone> {
   Timer? _timer;
-
   int focusMinutes = 25;
   int breakMinutes = 5;
-
-  String mode = 'focus'; // focus | break
+  String mode = 'focus';
   int secondsLeft = 25 * 60;
   bool running = false;
-
-  // “streak” / total focused today (in-app session, resets at date change)
-  String _todayKey = _dateKey(DateTime.now());
   int focusedMinutesToday = 0;
-
-  static String _dateKey(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   @override
   void initState() {
@@ -61,44 +70,11 @@ class _PomodoroStandaloneState extends State<PomodoroStandalone> {
 
   @override
   void dispose() {
-    _stopTimer();
+    _timer?.cancel();
     super.dispose();
   }
 
-  void _ensureToday() {
-    final nowKey = _dateKey(DateTime.now());
-    if (nowKey != _todayKey) {
-      _todayKey = nowKey;
-      focusedMinutesToday = 0;
-    }
-  }
-
-  int _modeMinutes(String m) {
-    switch (m) {
-      case 'break':
-        return breakMinutes;
-      case 'focus':
-      default:
-        return focusMinutes;
-    }
-  }
-
-  String _modeLabel(String m) {
-    switch (m) {
-      case 'break':
-        return 'Break';
-      case 'focus':
-      default:
-        return 'Focus';
-    }
-  }
-
-  String _formatTime(int secs) {
-    final m = secs ~/ 60;
-    final s = secs % 60;
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-  }
-
+  // --- TIMER LOGIC ---
   void _startTimer() {
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
@@ -109,84 +85,29 @@ class _PomodoroStandaloneState extends State<PomodoroStandalone> {
     _timer = null;
   }
 
-  void _tick() async {
+  void _tick() {
     if (!mounted) return;
-
-    _ensureToday();
-
     if (secondsLeft <= 0) return;
 
     setState(() => secondsLeft -= 1);
 
     if (secondsLeft <= 0) {
       _stopTimer();
-      setState(() {
-        running = false;
-        secondsLeft = 0;
-      });
-
-      await _handleTimerFinished();
+      setState(() => running = false);
+      _handleTimerFinished();
     }
   }
 
   Future<void> _handleTimerFinished() async {
-    if (!mounted) return;
-
     if (mode == 'focus') {
-      setState(() {
-        focusedMinutesToday += focusMinutes;
-      });
-
-      final startBreak = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Focus time is done'),
-          content: const Text('Start break?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Not now'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Start break'),
-            ),
-          ],
-        ),
-      );
-
-      if (startBreak == true && mounted) {
-        _setMode('break', autoStart: true);
-      }
-      return;
+      setState(() => focusedMinutesToday += focusMinutes);
     }
-
-    final startFocus = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Break is done'),
-        content: const Text('Start focus?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Not now'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Start focus'),
-          ),
-        ],
-      ),
-    );
-
-    if (startFocus == true && mounted) {
-      _setMode('focus', autoStart: true);
-    }
+    // Simple switch logic to keep flow clean
+    _setMode(mode == 'focus' ? 'break' : 'focus');
   }
 
   void _toggleRunning() {
     setState(() => running = !running);
-
     if (running) {
       _startTimer();
     } else {
@@ -198,230 +119,202 @@ class _PomodoroStandaloneState extends State<PomodoroStandalone> {
     _stopTimer();
     setState(() {
       running = false;
-      secondsLeft = _modeMinutes(mode) * 60;
+      secondsLeft = (mode == 'focus' ? focusMinutes : breakMinutes) * 60;
     });
   }
 
-  void _setMode(String newMode, {bool autoStart = false}) {
+  void _setMode(String newMode) {
     _stopTimer();
     setState(() {
       mode = newMode;
-      running = autoStart;
-      secondsLeft = _modeMinutes(mode) * 60;
+      running = false;
+      secondsLeft = (mode == 'focus' ? focusMinutes : breakMinutes) * 60;
     });
-
-    if (autoStart) _startTimer();
   }
 
-  Future<void> _pickFocusMinutes() async {
-    int temp = focusMinutes;
+  // --- THE SLIDERS (Your original logic) ---
+  Future<void> _pickMinutes() async {
+    bool isFocus = mode == 'focus';
+    int temp = isFocus ? focusMinutes : breakMinutes;
 
     final selected = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
-      builder: (_) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Focus length',
-                  style: Theme.of(context).textTheme.titleLarge,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                isFocus ? 'Focus Length' : 'Break Length',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
                 ),
-                const SizedBox(height: 12),
-                StatefulBuilder(
-                  builder: (context, setInner) {
-                    return Column(
-                      children: [
-                        Text(
-                          '$temp min',
-                          style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 20),
+              StatefulBuilder(
+                builder: (context, setInner) {
+                  return Column(
+                    children: [
+                      Text(
+                        '$temp min',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Theme.of(context).colorScheme.primary,
                         ),
-                        Slider(
-                          value: temp.toDouble(),
-                          min: 5,
-                          max: 120,
-                          divisions: 115,
-                          label: '$temp',
-                          onChanged: (v) => setInner(() => temp = v.round()),
-                        ),
-                      ],
-                    );
-                  },
+                      ),
+                      Slider(
+                        value: temp.toDouble(),
+                        min: isFocus ? 5 : 1,
+                        max: isFocus ? 120 : 60,
+                        onChanged: (v) => setInner(() => temp = v.round()),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx, temp),
+                  child: const Text('Set Duration'),
                 ),
-                const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context, temp),
-                  child: const Text('Set focus length'),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      ),
     );
 
-    if (selected == null) return;
-
-    setState(() {
-      focusMinutes = selected;
-      if (mode == 'focus' && !running) {
-        secondsLeft = focusMinutes * 60;
-      }
-    });
-  }
-
-  Future<void> _pickBreakMinutes() async {
-    int temp = breakMinutes;
-
-    final selected = await showModalBottomSheet<int>(
-      context: context,
-      showDragHandle: true,
-      builder: (_) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'Break length',
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                StatefulBuilder(
-                  builder: (context, setInner) {
-                    return Column(
-                      children: [
-                        Text(
-                          '$temp min',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        Slider(
-                          value: temp.toDouble(),
-                          min: 1,
-                          max: 60,
-                          divisions: 59,
-                          label: '$temp',
-                          onChanged: (v) => setInner(() => temp = v.round()),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: () => Navigator.pop(context, temp),
-                  child: const Text('Set break length'),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-
-    if (selected == null) return;
-
-    setState(() {
-      breakMinutes = selected;
-      if (mode == 'break' && !running) {
-        secondsLeft = breakMinutes * 60;
-      }
-    });
-  }
-
-  String _nextLabel() {
-    if (mode == 'focus') return 'Next: Break';
-    return 'Next: Focus';
-  }
-
-  int _nextSeconds() {
-    if (mode == 'focus') return breakMinutes * 60;
-    return focusMinutes * 60;
+    if (selected != null) {
+      setState(() {
+        if (isFocus)
+          focusMinutes = selected;
+        else
+          breakMinutes = selected;
+        if (!running) secondsLeft = selected * 60;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    _ensureToday();
-
-    final time = _formatTime(secondsLeft);
-    final nextTime = _formatTime(_nextSeconds());
-
     final scheme = Theme.of(context).colorScheme;
+    final minutes = (secondsLeft ~/ 60).toString().padLeft(2, '0');
+    final seconds = (secondsLeft % 60).toString().padLeft(2, '0');
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
           'You’ve focused for $focusedMinutesToday min today',
-          style: Theme.of(context).textTheme.bodyMedium,
+          style: TextStyle(color: scheme.onSurface.withValues(alpha: 0.6)),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 30),
+
+        // THE GLOWING CIRCLE
         Center(
           child: Container(
-            width: 220,
-            height: 220,
+            width: 240,
+            height: 240,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: scheme.surface,
-              border: Border.all(color: scheme.outline.withOpacity(0.35)),
               boxShadow: [
+                // Outer Core Glow
                 BoxShadow(
-                  blurRadius: 18,
+                  color: (mode == 'focus' ? scheme.primary : Colors.teal)
+                      .withValues(alpha: running ? 0.3 : 0.1),
+                  blurRadius: 40,
                   spreadRadius: 2,
-                  color: Colors.black.withOpacity(0.06),
+                ),
+                // Wider Atmospheric Glow
+                BoxShadow(
+                  color: (mode == 'focus' ? scheme.primary : Colors.teal)
+                      .withValues(alpha: running ? 0.15 : 0.05),
+                  blurRadius: 70,
+                  spreadRadius: -10,
+                ),
+                // Soft Shadow for depth
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  offset: const Offset(0, 10),
+                  blurRadius: 20,
                 ),
               ],
+              border: Border.all(
+                color: (mode == 'focus' ? scheme.primary : Colors.teal)
+                    .withValues(alpha: running ? 0.4 : 0.15),
+                width: 2,
+              ),
             ),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Text(
-                  _modeLabel(mode),
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  time,
-                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
-                const SizedBox(height: 10),
-                if (mode == 'focus')
-                  TextButton.icon(
-                    onPressed: running ? null : _pickFocusMinutes,
-                    icon: const Icon(Icons.tune),
-                    label: Text('Focus: $focusMinutes min'),
-                  )
-                else
-                  TextButton.icon(
-                    onPressed: running ? null : _pickBreakMinutes,
-                    icon: const Icon(Icons.tune),
-                    label: Text('Break: $breakMinutes min'),
+                  mode.toUpperCase(),
+                  style: TextStyle(
+                    letterSpacing: 2,
+                    fontWeight: FontWeight.w800,
+                    color: (mode == 'focus' ? scheme.primary : Colors.teal)
+                        .withValues(alpha: 0.5),
                   ),
+                ),
+                Text(
+                  '$minutes:$seconds',
+                  style: const TextStyle(
+                    fontSize: 58,
+                    fontWeight: FontWeight.w300,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  onPressed: running ? null : _pickMinutes,
+                  icon: const Icon(Icons.tune, size: 16),
+                  label: Text(
+                    '${mode == 'focus' ? focusMinutes : breakMinutes} min',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  style: TextButton.styleFrom(
+                    foregroundColor: (mode == 'focus'
+                        ? scheme.primary
+                        : Colors.teal),
+                  ),
+                ),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 40),
+
+        // YOUR BUTTON LAYOUT (Modernized)
         Row(
           children: [
             Expanded(
               child: OutlinedButton(
                 onPressed: running ? null : () => _setMode('focus'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: mode == 'focus' ? scheme.primary : null,
+                  side: mode == 'focus'
+                      ? BorderSide(color: scheme.primary)
+                      : null,
+                ),
                 child: const Text('Focus'),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             Expanded(
               child: OutlinedButton(
                 onPressed: running ? null : () => _setMode('break'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: mode == 'break' ? Colors.teal : null,
+                  side: mode == 'break'
+                      ? const BorderSide(color: Colors.teal)
+                      : null,
+                ),
                 child: const Text('Break'),
               ),
             ),
@@ -435,42 +328,43 @@ class _PomodoroStandaloneState extends State<PomodoroStandalone> {
                 onPressed: _toggleRunning,
                 icon: Icon(running ? Icons.pause : Icons.play_arrow),
                 label: Text(running ? 'Pause' : 'Start'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: scheme.primary,
+                  foregroundColor: scheme.onPrimary,
+                  elevation: 0,
+                ),
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             OutlinedButton(onPressed: _reset, child: const Text('Reset')),
           ],
         ),
         const Spacer(),
+
+        // BOTTOM PREVIEW CARD
         Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: scheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: scheme.outline.withOpacity(0.25)),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: scheme.outline.withValues(alpha: 0.1)),
           ),
           child: Row(
             children: [
-              const Icon(Icons.schedule),
-              const SizedBox(width: 10),
+              Icon(Icons.timer_outlined, color: scheme.primary),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  '${_nextLabel()} • $nextTime',
-                  style: Theme.of(context).textTheme.titleSmall,
+                  'Next: ${mode == 'focus' ? 'Break' : 'Focus'}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
               TextButton(
                 onPressed: running
                     ? null
-                    : () {
-                        if (mode == 'focus') {
-                          _setMode('break');
-                        } else {
-                          _setMode('focus');
-                        }
-                      },
+                    : () => _setMode(mode == 'focus' ? 'break' : 'focus'),
                 child: const Text('Switch'),
-              )
+              ),
             ],
           ),
         ),

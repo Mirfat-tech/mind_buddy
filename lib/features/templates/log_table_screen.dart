@@ -1,14 +1,14 @@
-// lib/features/templates/log_table_screen.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/router.dart';
 
 class LogTableScreen extends StatefulWidget {
   const LogTableScreen({
     super.key,
-    required this.templateId, // UUID string
-    required this.templateKey, // e.g. "sleep"
-    required this.dayId, // "YYYY-MM-DD"
+    required this.templateId,
+    required this.templateKey,
+    required this.dayId,
   });
 
   final String templateId;
@@ -20,172 +20,180 @@ class LogTableScreen extends StatefulWidget {
 }
 
 class _LogTableScreenState extends State<LogTableScreen> {
-  /// Hide columns from the TABLE (but keep available in Add/Edit dialog)
-  final Map<String, Set<String>> hiddenTableColumnsByTemplateKey = {
-    'sleep': {'hours_slept', 'sleep_quality'},
-    'cycle': {'period_flow'},
-  };
-
+  bool _sortAscending = false;
   final SupabaseClient supabase = Supabase.instance.client;
-
   bool loading = true;
 
-  Map<String, dynamic>? template; // {id, template_key, name, ...}
   List<Map<String, dynamic>> fields = [];
   List<Map<String, dynamic>> entries = [];
 
-  // ====== Table names ======
-  static const String tTemplates = 'log_templates_v2';
-  static const String tFields = 'log_template_fields_v2';
-  static const String tEntries = 'log_entries';
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = "";
 
-  // ====== Column keys ======
-  static const String cTemplateId = 'template_id';
-
-  static const String cFieldKey = 'field_key';
-  static const String cFieldLabel = 'label';
-  static const String cFieldType = 'field_type';
-
-  static const String cEntryId = 'id';
-  static const String cEntryDay = 'day'; // "YYYY-MM-DD"
-  static const String cEntryData = 'data';
-  static const String cEntryCreatedAt = 'created_at';
-
-  Map<String, dynamic> _asMap(dynamic v) => Map<String, dynamic>.from(v as Map);
+  String _getTableName() {
+    final key = widget.templateKey.toLowerCase();
+    switch (key) {
+      case 'goals':
+        return 'goal_logs';
+      case 'water':
+        return 'water_logs';
+      case 'sleep':
+        return 'sleep_logs';
+      case 'cycle':
+        return 'menstrual_logs';
+      case 'books':
+        return 'book_logs';
+      case 'income':
+        return 'income_logs';
+      case 'wishlist':
+        return 'wishlist';
+      case 'restaurants':
+        return 'restaurant_logs';
+      case 'movies':
+        return 'movie_logs';
+      case 'bills':
+        return 'bill_logs';
+      case 'expenses':
+        return 'expense_logs';
+      case 'places':
+        return 'place_logs';
+      case 'tasks':
+        return 'task_logs';
+      case 'fast':
+        return 'fast_logs';
+      case 'meditation':
+        return 'meditation_logs';
+      case 'skin_care':
+        return 'skin_care_logs';
+      case 'social':
+        return 'social_logs';
+      case 'study':
+        return 'study_logs';
+      case 'workout':
+        return 'workout_logs';
+      case 'mood':
+        return 'mood_logs';
+      case 'symptoms':
+        return 'symptom_logs';
+      default:
+        return '${key}_logs';
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     _load();
+    _searchController.addListener(() {
+      if (mounted)
+        setState(() => _searchQuery = _searchController.text.toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => loading = true);
-
     try {
-      // Template (by UUID id)
-      final tpl = await supabase
-          .from(tTemplates)
-          .select()
-          .eq('id', widget.templateId)
-          .maybeSingle();
-
-      // Fields (by UUID template_id)
+      final currentTable = _getTableName();
       final f = await supabase
-          .from(tFields)
+          .from('log_template_fields_v2')
           .select()
-          .eq(cTemplateId, widget.templateId)
+          .eq('template_id', widget.templateId)
           .eq('is_hidden', false)
           .order('sort_order');
 
-      // Entries (by UUID template_id + day)
       final e = await supabase
-          .from(tEntries)
+          .from(currentTable)
           .select()
-          .eq(cTemplateId, widget.templateId)
-          .order(cEntryCreatedAt, ascending: false);
+          .order('day', ascending: _sortAscending);
 
-      template = (tpl is Map) ? _asMap(tpl) : null;
-      fields = (f as List).map<Map<String, dynamic>>((x) => _asMap(x)).toList();
-
-      // Optional: remove sleep_quality from dialog too
-      if (widget.templateKey == 'sleep') {
-        fields = fields.where((field) {
-          final key = (field[cFieldKey] ?? '').toString();
-          return key != 'sleep_quality';
-        }).toList();
+      if (mounted) {
+        setState(() {
+          fields = List<Map<String, dynamic>>.from(f);
+          entries = List<Map<String, dynamic>>.from(e);
+          loading = false;
+        });
       }
-
-      entries =
-          (e as List).map<Map<String, dynamic>>((x) => _asMap(x)).toList();
     } catch (err) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Load error: $err')));
+      debugPrint("Load error: $err");
+      if (mounted) setState(() => loading = false);
     }
+  }
 
-    if (!mounted) return;
-    setState(() => loading = false);
+  List<Map<String, dynamic>> get _filteredEntries {
+    if (_searchQuery.isEmpty) return entries;
+    return entries.where((entry) {
+      // Safely check if day exists
+      final dateStr = entry['day']?.toString() ?? '';
+      final dateMatch = _fmtEntryDate(entry).contains(_searchQuery);
+
+      final contentMatch = entry.values.any((val) {
+        if (val == null) return false;
+        return val.toString().toLowerCase().contains(_searchQuery);
+      });
+      return dateMatch || contentMatch;
+    }).toList();
   }
 
   Future<void> _addEntry() async {
     final result = await showDialog<_NewEntryResult>(
       context: context,
-      builder: (_) => _NewEntryDialog(fields: fields, title: 'Add log entry'),
+      builder: (_) => _NewEntryDialog(
+        fields: fields,
+        title: 'Add ${widget.templateKey}',
+        templateKey: widget.templateKey,
+      ),
     );
-
     if (result == null) return;
 
     try {
-      final dayString = result.day.toIso8601String().substring(0, 10);
-
-      final insert = <String, dynamic>{
-        cTemplateId: widget.templateId, // UUID
-        cEntryDay: dayString,
-        cEntryData: result.data,
-      };
-
-      await supabase.from(tEntries).insert(insert);
-      await _load();
-    } catch (err) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Save error: $err')));
+      await supabase.from(_getTableName()).insert({
+        'user_id': supabase.auth.currentUser!.id,
+        'day': result.day.toIso8601String().substring(0, 10),
+        ...result.data,
+      });
+      _load();
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Save error: $e')));
     }
   }
 
   Future<void> _editEntry(Map<String, dynamic> entry) async {
-    final initialDataRaw = entry[cEntryData];
-    final initialData = (initialDataRaw is Map)
-        ? Map<String, dynamic>.from(initialDataRaw)
-        : <String, dynamic>{};
-
-    DateTime initialDay = DateTime.now();
-    final dayVal = entry[cEntryDay];
-    if (dayVal is String) {
-      final parsed = DateTime.tryParse(dayVal);
-      if (parsed != null) initialDay = parsed;
-    } else {
-      final created = entry[cEntryCreatedAt];
-      if (created is String) {
-        final parsed = DateTime.tryParse(created);
-        if (parsed != null) initialDay = parsed;
-      }
-    }
-
     final result = await showDialog<_NewEntryResult>(
       context: context,
       builder: (_) => _NewEntryDialog(
         fields: fields,
-        title: 'Edit log entry',
-        initialDay: initialDay,
-        initialData: initialData,
+        title: 'Edit entry',
+        initialDay: DateTime.tryParse(entry['day'] ?? '') ?? DateTime.now(),
+        initialData: Map<String, dynamic>.from(entry),
+        templateKey: widget.templateKey,
       ),
     );
-
     if (result == null) return;
 
     try {
-      final dayString = result.day.toIso8601String().substring(0, 10);
-
-      final update = <String, dynamic>{
-        cEntryDay: dayString,
-        cEntryData: result.data,
-      };
-
       await supabase
-          .from(tEntries)
-          .update(update)
-          .eq(cEntryId, entry[cEntryId]);
-      await _load();
+          .from(_getTableName())
+          .update({
+            'day': result.day.toIso8601String().substring(0, 10),
+            ...result.data,
+          })
+          .eq('id', entry['id']);
+      _load();
     } catch (err) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Update error: $err')));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Update error: $err')));
     }
   }
 
@@ -193,145 +201,136 @@ class _LogTableScreenState extends State<LogTableScreen> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text('Delete entry?'),
-        content: const Text('This cannot be undone.'),
+        content: const Text('This action cannot be undone.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              'Delete',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ),
         ],
       ),
     );
-
-    if (ok != true) return;
-
-    try {
-      await supabase.from(tEntries).delete().eq(cEntryId, entry[cEntryId]);
-      await _load();
-    } catch (err) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Delete error: $err')),
-      );
+    if (ok == true) {
+      await supabase.from(_getTableName()).delete().eq('id', entry['id']);
+      _load();
     }
   }
 
-  Widget _buildThemedTable(
-      BuildContext context, List<Map<String, dynamic>> tableFields) {
-    final scheme = Theme.of(context).colorScheme;
+  String _fmtEntryDate(Map<String, dynamic> e) {
+    final d = DateTime.tryParse(e['day'] ?? '');
+    return d == null ? '' : '${d.day}/${d.month}/${d.year}';
+  }
 
-    return Theme(
-      // forces DataTable to respect your current colorScheme
-      data: Theme.of(context).copyWith(
-        dividerColor: scheme.outline.withOpacity(0.35),
-      ),
-      child: DataTable(
-        headingRowColor: MaterialStateProperty.all(scheme.surface),
-        dataRowColor:
-            MaterialStateProperty.all(scheme.surface.withOpacity(0.6)),
-        columns: [
-          const DataColumn(label: Text('Date')),
-          ...tableFields.map(
-            (f) => DataColumn(label: Text((f[cFieldLabel] ?? '').toString())),
-          ),
-        ],
-        rows: entries.map<DataRow>((e) {
-          final dataRaw = e[cEntryData];
-          final data = (dataRaw is Map)
-              ? Map<String, dynamic>.from(dataRaw)
-              : <String, dynamic>{};
+  String _formatValue(String fieldType, dynamic v) {
+    if (v == null || v.toString().isEmpty) return '-';
 
-          final dateText = _fmtEntryDate(e);
+    if (fieldType == 'rating') {
+      // Convert "5.0" or 5 to an int, then repeat the star icon
+      int stars = double.tryParse(v.toString())?.toInt() ?? 0;
+      return '⭐' * stars;
+    }
 
-          Widget cellLongPressWrapper(Widget child) {
-            return GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onLongPress: () => _confirmDelete(e),
-              child: child,
-            );
-          }
-
-          return DataRow(
-            onSelectChanged: (_) => _editEntry(e),
-            cells: [
-              DataCell(cellLongPressWrapper(Text(dateText))),
-              ...tableFields.map((f) {
-                final key = (f[cFieldKey] ?? '').toString();
-                final type = (f[cFieldType] ?? '').toString();
-                final v = data[key];
-                return DataCell(
-                  cellLongPressWrapper(Text(_formatValue(type, v))),
-                );
-              }).toList(),
-            ],
-          );
-        }).toList(),
-      ),
-    );
+    if (fieldType == 'bool' || v is bool) return (v == true) ? '✓' : '✗';
+    return v.toString();
   }
 
   @override
   Widget build(BuildContext context) {
-    final hidden =
-        hiddenTableColumnsByTemplateKey[widget.templateKey] ?? <String>{};
-
-    final tableFields = fields.where((f) {
-      final key = (f[cFieldKey] ?? '').toString();
-      return key.isNotEmpty && !hidden.contains(key);
-    }).toList();
-
-    final title = (template?['name'] ?? widget.templateKey).toString();
-
     return MbScaffold(
-      applyBackground: false, // ✅ IMPORTANT: let PaperCanvas show through
-      appBar: AppBar(title: Text(title)),
-      floatingActionButton: FloatingActionButton(
+      applyBackground: false,
+      appBar: AppBar(
+        title: Text(widget.templateKey.toUpperCase()),
+        centerTitle: true,
+        leading: Center(
+          child: Container(
+            margin: const EdgeInsets.only(left: 8),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                  blurRadius: 15,
+                ),
+              ],
+            ),
+            child: CircleAvatar(
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              radius: 20,
+              child: IconButton(
+                icon: Icon(
+                  Icons.arrow_back,
+                  color: Theme.of(context).colorScheme.primary,
+                  size: 20,
+                ),
+                onPressed: () => Navigator.of(context).canPop()
+                    ? Navigator.pop(context)
+                    : Navigator.pushReplacementNamed(context, '/home'),
+              ),
+            ),
+          ),
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: loading ? null : _addEntry,
-        child: const Icon(Icons.add),
+        label: const Text('Add Log'),
+        icon: const Icon(Icons.add),
       ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
-          : entries.isEmpty
-              ? const Center(child: Text('No entries yet. Tap + to add one.'))
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  scrollDirection: Axis.horizontal,
-                  child: _buildThemedTable(context, tableFields),
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 8.0,
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: "Search logs...",
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () => _searchController.clear(),
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: Theme.of(
+                        context,
+                      ).colorScheme.surfaceVariant.withOpacity(0.3),
+                    ),
+                  ),
                 ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: _StickyLogTable(
+                      entries: _filteredEntries,
+                      tableFields: fields,
+                      fmtEntryDate: _fmtEntryDate,
+                      formatValue: _formatValue,
+                      onEdit: _editEntry,
+                      onDelete: _confirmDelete,
+                    ),
+                  ),
+                ),
+              ],
+            ),
     );
-  }
-
-  String _fmtEntryDate(Map<String, dynamic> e) {
-    DateTime? d;
-    final dayVal = e[cEntryDay];
-    if (dayVal is String) d = DateTime.tryParse(dayVal);
-
-    d ??= (() {
-      final created = e[cEntryCreatedAt];
-      if (created is String) return DateTime.tryParse(created);
-      return null;
-    })();
-
-    if (d == null) return '';
-    final dd = d.day.toString().padLeft(2, '0');
-    final mm = d.month.toString().padLeft(2, '0');
-    final yy = d.year.toString();
-    return '$dd/$mm/$yy';
-  }
-
-  String _formatValue(String fieldType, dynamic v) {
-    if (v == null) return '';
-    if (fieldType == 'rating') return '⭐ ${v.toString()}';
-    if (fieldType == 'bool') return (v == true) ? '✓' : '';
-    if (fieldType == 'multi_select') {
-      if (v is List) return v.map((x) => x.toString()).join(', ');
-      return v.toString();
-    }
-    if (fieldType == 'select') return v.toString();
-    return v.toString();
   }
 }
 
@@ -341,327 +340,852 @@ class _NewEntryResult {
   const _NewEntryResult({required this.day, required this.data});
 }
 
+class _StickyLogTable extends StatelessWidget {
+  const _StickyLogTable({
+    required this.entries,
+    required this.tableFields,
+    required this.fmtEntryDate,
+    required this.formatValue,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final List<Map<String, dynamic>> entries;
+  final List<Map<String, dynamic>> tableFields;
+  final String Function(Map<String, dynamic>) fmtEntryDate;
+  final String Function(String, dynamic) formatValue;
+  final Function(Map<String, dynamic>) onEdit;
+  final Function(Map<String, dynamic>) onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    if (entries.isEmpty)
+      return const Center(child: Text("No matching logs found."));
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceVariant.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withOpacity(0.5),
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: DataTable(
+          horizontalMargin: 24,
+          columnSpacing: 36,
+          headingRowColor: MaterialStateProperty.all(
+            theme.colorScheme.surfaceVariant.withOpacity(0.4),
+          ),
+          columns: [
+            const DataColumn(label: Text('DATE')),
+            ...tableFields.map(
+              (f) =>
+                  DataColumn(label: Text(f['label'].toString().toUpperCase())),
+            ),
+          ],
+          rows: entries.map((entry) {
+            return DataRow(
+              onLongPress: () => onDelete(entry),
+              cells: [
+                DataCell(
+                  Text(
+                    fmtEntryDate(entry),
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  onTap: () => onEdit(entry),
+                ),
+                ...tableFields.map((f) {
+                  final key = f['field_key'];
+                  final val = entry.containsKey(key) ? entry[key] : null;
+                  if (key == 'amount') {
+                    // Look for a 'unit' value in the same entry
+                    final unit = entry['unit'] ?? '';
+                    return DataCell(Text('$val $unit'));
+                  }
+
+                  return DataCell(Text(formatValue(f['field_type'], val)));
+                }),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+}
+
 class _NewEntryDialog extends StatefulWidget {
   const _NewEntryDialog({
     required this.fields,
     this.initialDay,
     this.initialData,
     this.title,
+    required this.templateKey,
   });
-
   final List<Map<String, dynamic>> fields;
   final DateTime? initialDay;
   final Map<String, dynamic>? initialData;
   final String? title;
+  final String templateKey;
 
   @override
   State<_NewEntryDialog> createState() => _NewEntryDialogState();
 }
 
 class _NewEntryDialogState extends State<_NewEntryDialog> {
-  DateTime day = DateTime.now();
-
+  late DateTime day;
   final Map<String, TextEditingController> controllers = {};
-  final Map<String, int> rating = {};
-  final Map<String, bool> bools = {};
-  final Map<String, String> selects = {};
-  final Map<String, Set<String>> multiSelects = {};
-
-  static const String cFieldKey = 'field_key';
-  static const String cFieldLabel = 'label';
-  static const String cFieldType = 'field_type';
-  static const String cFieldOptions = 'options';
+  final Map<String, dynamic> values = {};
 
   @override
   void initState() {
     super.initState();
-
     day = widget.initialDay ?? DateTime.now();
-    final initial = widget.initialData ?? <String, dynamic>{};
 
-    for (final f in widget.fields) {
-      final key = (f[cFieldKey] ?? '').toString();
-      final type = (f[cFieldType] ?? '').toString();
+    // Define which types are NOT text-based
+    final specialTypes = ['rating', 'bool', 'dropdown', 'time', 'scale'];
+    final specialKeys = [
+      'products',
+      'skin_condition',
+      'people',
+      'study_methods',
+      'hours_slept',
+      'paid',
+      'is_done',
+      'duration_hours',
+      'energy_level',
+      'severity',
+      'intensity',
+    ];
 
-      if (type == 'rating') {
-        final v = initial[key];
-        rating[key] = (v is num) ? v.toInt() : 0;
-      } else if (type == 'bool') {
-        bools[key] = initial[key] == true;
-      } else if (type == 'select') {
-        selects[key] = (initial[key] ?? '').toString();
-      } else if (type == 'multi_select') {
-        final v = initial[key];
-        multiSelects[key] =
-            (v is List) ? v.map((x) => x.toString()).toSet() : <String>{};
-      } else {
+    final numericKeys = [
+      'hours_slept',
+      'duration_hours',
+      'energy_level',
+      'amount_ml',
+      'duration_minutes',
+      'intensity',
+      'weight_kg',
+      'amount',
+      'price',
+      'priority',
+      'sets',
+      'reps',
+    ];
+
+    for (var f in widget.fields) {
+      final key = f['field_key'];
+      final initVal = widget.initialData?[key];
+
+      // 1. Handle Numeric Sliders & Ratings
+      if (numericKeys.contains(key) ||
+          f['field_type'] == 'rating' ||
+          key == 'severity') {
+        if (initVal == null || initVal.toString().isEmpty) {
+          values[key] = (key == 'intensity') ? 5.0 : 0.0;
+        } else {
+          values[key] = double.tryParse(initVal.toString()) ?? 0.0;
+        }
+      }
+      // 2. Handle Booleans
+      else if (f['field_type'] == 'bool') {
+        values[key] = initVal ?? false;
+      }
+      // 3. Handle Dropdowns & Multi-select (Strings in 'values' map)
+      else if (['dropdown', 'multi_select', 'time'].contains(f['field_type']) ||
+          [
+            'products',
+            'skin_condition',
+            'people',
+            'study_methods',
+            'feeling',
+            'mood',
+          ].contains(key)) {
+        values[key] = initVal?.toString() ?? "";
+      }
+      // 4. Handle Text Fields (The part that was breaking)
+      else {
         controllers[key] = TextEditingController(
-          text: initial[key]?.toString() ?? '',
+          text: initVal?.toString() ?? '',
         );
       }
     }
   }
 
   @override
-  void dispose() {
-    for (final c in controllers.values) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tKey = widget.templateKey.toLowerCase();
+
+    List<Map<String, dynamic>> sortedFields = List.from(widget.fields);
+    sortedFields.sort(
+      (a, b) => (a['sort_order'] ?? 99).compareTo(b['sort_order'] ?? 99),
+    );
+
     return AlertDialog(
-      title: Text(widget.title ?? 'Add log entry'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Date'),
-              subtitle: Text(_fmtDate(day)),
-              trailing: IconButton(
-                icon: const Icon(Icons.calendar_today),
-                onPressed: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: day,
-                    firstDate: DateTime(2000),
-                    lastDate: DateTime(2100),
-                  );
-                  if (picked != null) setState(() => day = picked);
-                },
-              ),
-            ),
-            const SizedBox(height: 12),
-            ...widget.fields.map((f) {
-              final key = (f[cFieldKey] ?? '').toString();
-              final label = (f[cFieldLabel] ?? '').toString();
-              final type = (f[cFieldType] ?? '').toString();
-
-              if (type == 'rating') {
-                final current = rating[key] ?? 0;
-                return _RatingPicker(
-                  label: label,
-                  value: current,
-                  onChanged: (v) => setState(() => rating[key] = v),
-                );
-              }
-
-              if (type == 'bool') {
-                final current = bools[key] ?? false;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(label)),
-                      Switch(
-                        value: current,
-                        onChanged: (v) => setState(() => bools[key] = v),
-                      ),
-                    ],
-                  ),
-                );
-              }
-
-              if (type == 'select') {
-                final opts = _optionsValues(f);
-                final current = (selects[key] ?? '').trim();
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: DropdownButtonFormField<String>(
-                    value: current.isEmpty ? null : current,
-                    items: opts
-                        .map(
-                          (v) => DropdownMenuItem<String>(
-                            value: v,
-                            child: Text(v),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() => selects[key] = v ?? ''),
-                    decoration: InputDecoration(
-                      labelText: label,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                );
-              }
-
-              if (type == 'multi_select') {
-                final opts = _optionsValues(f);
-                final selected = multiSelects[key] ?? <String>{};
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(label),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: opts.map((v) {
-                          final isOn = selected.contains(v);
-                          return FilterChip(
-                            label: Text(v),
-                            selected: isOn,
-                            onSelected: (on) {
-                              setState(() {
-                                final set = multiSelects[key] ?? <String>{};
-                                if (on) {
-                                  set.add(v);
-                                } else {
-                                  set.remove(v);
-                                }
-                                multiSelects[key] = set;
-                              });
-                            },
-                          );
-                        }).toList(),
-                      ),
-                    ],
-                  ),
-                );
-              }
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: TextField(
-                  controller: controllers[key],
-                  keyboardType: type == 'number'
-                      ? TextInputType.number
-                      : TextInputType.text,
-                  decoration: InputDecoration(
-                    labelText: label,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-              );
-            }),
-          ],
+      title: Text(widget.title ?? 'New Entry'),
+      content: SizedBox(
+        width: MediaQuery.of(context).size.width * 0.9,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _FieldLabel(label: "Date"),
+              _buildDateButton(theme),
+              const SizedBox(height: 16),
+              ...sortedFields.map((f) => _buildField(f, theme)),
+            ],
+          ),
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
         FilledButton(
+          // Inside your Save Entry FilledButton
           onPressed: () {
-            final data = <String, dynamic>{};
+            final data = Map<String, dynamic>.from(values);
 
-            for (final f in widget.fields) {
-              final key = (f[cFieldKey] ?? '').toString();
-              final type = (f[cFieldType] ?? '').toString();
-
-              if (type == 'rating' ||
-                  type == 'bool' ||
-                  type == 'select' ||
-                  type == 'multi_select') continue;
-
-              final text = controllers[key]?.text.trim() ?? '';
-              if (text.isEmpty) continue;
-
-              if (type == 'number') {
-                final numVal = num.tryParse(text);
-                data[key] = numVal ?? text;
-              } else {
-                data[key] = text;
+            // Convert any numeric ratings/intensity to pure integers
+            for (var f in widget.fields) {
+              final key = f['field_key'];
+              if ([
+                'rating',
+                'intensity',
+                'severity',
+                'libido',
+                'energy_level',
+              ].contains(key)) {
+                if (data[key] != null) {
+                  data[key] = (data[key] as num)
+                      .toInt(); // This turns 5.0 into 5
+                }
               }
             }
 
-            for (final f in widget.fields.where(
-              (x) => (x[cFieldType] ?? '') == 'rating',
-            )) {
-              final key = (f[cFieldKey] ?? '').toString();
-              final v = rating[key] ?? 0;
-              if (v > 0) data[key] = v;
-            }
-
-            for (final f in widget.fields.where(
-              (x) => (x[cFieldType] ?? '') == 'bool',
-            )) {
-              final key = (f[cFieldKey] ?? '').toString();
-              data[key] = bools[key] ?? false;
-            }
-
-            for (final f in widget.fields.where(
-              (x) => (x[cFieldType] ?? '') == 'select',
-            )) {
-              final key = (f[cFieldKey] ?? '').toString();
-              final v = (selects[key] ?? '').trim();
-              if (v.isNotEmpty) data[key] = v;
-            }
-
-            for (final f in widget.fields.where(
-              (x) => (x[cFieldType] ?? '') == 'multi_select',
-            )) {
-              final key = (f[cFieldKey] ?? '').toString();
-              final set = multiSelects[key] ?? <String>{};
-              if (set.isNotEmpty) data[key] = set.toList();
-            }
-
+            controllers.forEach((k, c) => data[k] = c.text);
             Navigator.pop(context, _NewEntryResult(day: day, data: data));
           },
-          child: const Text('Save'),
+          child: const Text('Save Entry'),
         ),
       ],
     );
   }
 
-  List<String> _optionsValues(Map<String, dynamic> f) {
-    final raw = f[cFieldOptions];
-    if (raw is Map) {
-      final values = raw['values'];
-      if (values is List) return values.map((x) => x.toString()).toList();
+  Widget _buildField(Map<String, dynamic> f, ThemeData theme) {
+    final key = f['field_key'];
+
+    // 1. CONSOLIDATED DROPDOWN & MULTI-SELECT
+    if (f['field_type'] == 'dropdown' ||
+        f['field_type'] == 'multi_select' ||
+        [
+          'exercise',
+          'exercises',
+          'flow',
+          'category',
+          'cuisine_type',
+          'routine_type',
+          'symptoms',
+          'feeling',
+          'status',
+          'genre',
+          'subject',
+          'study_methods',
+          'people',
+          'currency',
+        ].contains(key)) {
+      List<String> options = _getDropdownOptions(key);
+      bool isMulti =
+          (key == 'exercise' ||
+          key == 'exercises' ||
+          key == 'exercises' ||
+          key == 'symptoms' ||
+          key == 'products' ||
+          key == 'skin_condition' ||
+          key == 'people' ||
+          key == 'study_methods' ||
+          key == 'feeling' || // Added
+          key == 'mood');
+
+      // SAFETY CHECK: If for some reason a controller got in here, convert to string
+      final dynamic currentVal = values[key] is TextEditingController
+          ? ""
+          : values[key];
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(label: f['label']),
+          isMulti
+              ? Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: options.map((option) {
+                    bool selected = currentVal.toString().contains(option);
+                    return FilterChip(
+                      label: Text(option),
+                      selected: selected,
+                      onSelected: (bool value) {
+                        setState(() {
+                          List<String> current = currentVal
+                              .toString()
+                              .split(',')
+                              .map((s) => s.trim())
+                              .where((s) => s.isNotEmpty)
+                              .toList();
+                          if (value) {
+                            if (!current.contains(option)) current.add(option);
+                          } else {
+                            current.remove(option);
+                          }
+                          values[key] = current.join(', ');
+                        });
+                      },
+                    );
+                  }).toList(),
+                )
+              : DropdownButtonFormField<String>(
+                  // 1. Check if options contains the value, otherwise force null
+                  value:
+                      (options.contains(values[key].toString()) &&
+                          values[key].toString().isNotEmpty)
+                      ? values[key].toString()
+                      : null,
+                  // 2. .toSet().toList() removes any duplicate strings in your list that cause crashes
+                  items: options.toSet().toList().map((o) {
+                    return DropdownMenuItem(
+                      value: o,
+                      child: Text(o, overflow: TextOverflow.ellipsis),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => values[key] = v),
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: theme.colorScheme.surface,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                  ),
+                  // 3. This allows the dropdown to handle long text gracefully
+                  isExpanded: true,
+                ),
+        ],
+      );
     }
-    return <String>[];
+
+    // Handle Sliders (Hours Slept, Fasting Duration, Energy)
+    if ([
+      'hours_slept',
+      'duration_hours',
+      'energy_level',
+      'duration_minutes',
+    ].contains(key)) {
+      double current = (values[key] ?? 5.0).toDouble();
+      double maxVal = 24.0;
+      if (key == 'duration_hours') maxVal = 72.0;
+      if (key == 'duration_minutes') maxVal = 120.0;
+      if (key == 'energy_level') maxVal = 10.0; // Fixed for Cycle/Mood
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(label: "${f['label']}: ${current.toInt()}"),
+          Slider(
+            value: current.clamp(0.0, maxVal),
+            min: 0,
+            max: maxVal,
+            divisions: maxVal.toInt(),
+            onChanged: (v) => setState(() => values[key] = v),
+          ),
+          const SizedBox(height: 16),
+        ],
+      );
+    }
+
+    // Handle Booleans
+    if (f['field_type'] == 'bool' ||
+        ['paid', 'is_done', 'goal_reached'].contains(key)) {
+      return SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          f['label'],
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        value: values[key] == true,
+        onChanged: (v) => setState(() => values[key] = v),
+      );
+    }
+
+    if (key == 'intensity') {
+      // FIX: Ensure current value isn't 0.0 (which causes the crash)
+      double current = (values[key] ?? 5.0).toDouble();
+      if (current < 1.0) current = 1.0;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(label: "${f['label']}: ${current.toInt()}"),
+          Slider(
+            value: current,
+            min: 1, // Slider starts at 1
+            max: 10,
+            divisions: 9,
+            onChanged: (v) => setState(() => values[key] = v),
+          ),
+          const SizedBox(height: 16),
+        ],
+      );
+    }
+
+    if (f['field_type'] == 'slider' || key == 'sets' || key == 'reps') {
+      double maxVal = (key == 'reps') ? 30.0 : 12.0;
+      // Ensure we have a double for the slider
+      double currentSliderVal = 0.0;
+      if (values[key] is num) {
+        currentSliderVal = (values[key] as num).toDouble();
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(label: "${f['label']}: ${currentSliderVal.toInt()}"),
+          Slider(
+            value: currentSliderVal.clamp(0.0, maxVal),
+            min: 0,
+            max: maxVal,
+            divisions: maxVal.toInt(), // Makes it snap to whole numbers
+            label: currentSliderVal.toInt().toString(),
+            onChanged: (val) {
+              setState(() {
+                values[key] = val;
+              });
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
+      );
+    }
+
+    // Handle Ratings
+    if (f['field_type'] == 'rating' ||
+        [
+          'severity',
+          'focus_rating',
+          'quality',
+          'libido', // Added for Menstrual
+          'energy_level', // Added for Menstrual
+          'stress_level', // Added for Menstrual
+        ].contains(key)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(label: f['label']),
+          _RatingPicker(
+            value: values[key] ?? 0,
+            onChanged: (v) => setState(() => values[key] = v),
+          ),
+          const SizedBox(height: 16),
+        ],
+      );
+    }
+
+    // Default Text Fields
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _FieldLabel(label: f['label']),
+        TextField(
+          controller: controllers[key],
+          keyboardType:
+              [
+                'amount_ml',
+                'amount',
+                'current_page',
+                'price',
+                'sets',
+                'reps',
+                'weight_kg',
+              ].contains(key)
+              ? TextInputType.number
+              : TextInputType.text,
+          maxLines: (key == 'notes' || key == 'products' || key == 'feeling')
+              ? 4
+              : 1,
+          decoration: InputDecoration(
+            prefixIcon: key == 'current_page'
+                ? const Icon(Icons.bookmark_outline)
+                : null,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
   }
 
-  String _fmtDate(DateTime d) {
-    final dd = d.day.toString().padLeft(2, '0');
-    final mm = d.month.toString().padLeft(2, '0');
-    final yy = d.year.toString();
-    return '$dd/$mm/$yy';
+  List<String> _getDropdownOptions(String key) {
+    final tKey = widget.templateKey.toLowerCase();
+    List<String> options = [];
+
+    // --- 1. CATEGORY LOGIC
+    if (key == 'category') {
+      if (tKey == 'bills') {
+        options = [
+          '🏠 Rent/Mortgage',
+          '⚡ Utilities (Elec/Water)',
+          '📱 Phone/Internet',
+          '🚗 Insurance',
+          '📺 Subscription',
+          '💳 Credit Card',
+          '🎓 Loan/Education',
+          '🛠️ Maintenance',
+        ];
+      } else if (tKey == 'goals') {
+        options = [
+          '🎉 Annual Resolution',
+          '🏆 Life Goal',
+          '💪 Fitness',
+          '📚 Learning',
+          '🧠 Mental Well-being',
+        ];
+      } else if (tKey == 'income') {
+        options = [
+          '💰 Salary',
+          '💻 Freelance',
+          '📈 Investment',
+          '🎁 Gift',
+          '🔄 Refund',
+          '🏦 Interest',
+          '🧸 Selling Items',
+        ];
+      } else if (tKey == 'books') {
+        options = [
+          'Fiction',
+          'Non-Fiction',
+          'Mystery',
+          'Thriller',
+          'Sci-Fi',
+          'Fantasy',
+          'Romance',
+          'Historical',
+          'Horror',
+          'Graphic Novel',
+          'Young Adult',
+          'Self-Help',
+          'Business',
+          'Textbook',
+          'Research Paper',
+          'Poetry',
+          'Drama/Plays',
+        ];
+      }
+    }
+    // --- 2. STATUS LOGIC ---
+    else if (key == 'status') {
+      if (tKey == 'expenses') {
+        options = ['✅ Paid', '⏳ Pending', '🟡 Cleared', '❌ Cancelled'];
+      } else if (tKey == 'movies' || tKey == 'tv') {
+        options = ['⏳ Watchlist', '🍿 Watching', '✅ Finished', '❌ Abandoned'];
+      } else if (tKey == 'wishlist') {
+        options = ['🛍️ To Buy', '📦 Ordered', '⏳ Waiting', '✅ Received'];
+      } else if (tKey == 'income') {
+        options = ['✅ Received', '⏳ Expected', '📅 Scheduled'];
+      }
+    }
+    // --- 3. EXERCISE LOGIC (Fixes Multi-select) ---
+    else if (key == 'exercise' || key == 'exercises') {
+      options = [
+        'Bench Press',
+        'Squat',
+        'Deadlift',
+        'Pushups',
+        'Pullups',
+        'Plank',
+        'Running',
+      ];
+    } else if (key == 'skin_condition') {
+      options = [
+        '✨ Clear',
+        '🕳️ Pitted',
+        '🌵 Dry',
+        '🛢️ Oily',
+        '🔴 Redness',
+        '🌋 Active Acne',
+        '🩹 Scars',
+        '🧖 Pores',
+        'Other',
+      ];
+    }
+    // --- 4. OTHER LOGIC (Skin, People, Symptoms, etc.) ---
+    else if (key == 'feeling') {
+      options = [
+        '😊 Happy',
+        '🤩 Excited',
+        '😎 Confident',
+        '🧘 Calm',
+        '😐 Neutral',
+        '😔 Sad',
+        '😤 Angry',
+        '🤯 Stressed',
+        '🤔 Anxious',
+        '😴 Tired',
+        '🤒 Sick',
+      ];
+    } else if (key == 'symptoms') {
+      options = [
+        'Cramps',
+        'Headache',
+        'Bloating',
+        'Acne',
+        'Mood Swings',
+        'Fatigue',
+      ];
+    }
+    if (key == 'category' && tKey == 'expenses') {
+      options = [
+        '🛒 Groceries',
+        '🍱 Dining & Takeout',
+        '🚗 Transport/Fuel',
+        '🛍️ Shopping/Retail',
+        '🏥 Health & Medical',
+        '🎬 Entertainment',
+        '🏠 Household/Home',
+        '🛡️ Personal Care',
+        '✈️ Travel',
+      ];
+    } else if (key == 'activity_type') {
+      options = [
+        '☕ Coffee/Cafe',
+        '🍽️ Dinner/Lunch',
+        '🍻 Drinks/Nightlife',
+        '🍿 Movie/Show',
+        '🚶 Walk/Hike',
+        '🎮 Gaming',
+        '🛍️ Shopping',
+        '🏠 Chilling at Home',
+        'Other',
+      ];
+    } else if (key == 'people') {
+      options = [
+        'Family',
+        'Partner',
+        'Best Friends',
+        'Work Colleagues',
+        'New Acquaintance',
+        'Large Group',
+        'Solo (Public)',
+        'Other',
+      ];
+    } else if (key == 'products') {
+      options = [
+        '🧼 Cleanser',
+        '🧪 Serum',
+        '🧴 Moisturizer',
+        '☀️ SPF',
+        '💧 Toner',
+        '✨ Retinol',
+        '🧪 Vitamin C',
+        '💊 Exfoliant',
+        '👁️ Eye Cream',
+        '🎭 Face Mask',
+        '🩹 Pimple Patch',
+      ];
+    } else if (key == 'unit') {
+      options = ['ml', 'oz', 'Glasses', 'Litres'];
+    } else if (key == 'routine_type') {
+      options = [
+        '☀️ Morning (AM)',
+        '🌙 Evening (PM)',
+        '🧖 Mid-day Refresh',
+        '🛁 Weekly Treatment',
+      ];
+    } else if (key == 'cuisine_type') {
+      options = [
+        '🍕 Italian',
+        '🌮 Mexican',
+        '🍣 Japanese',
+        '🍜 Chinese',
+        '🥘 Indian',
+        '🍔 American',
+        '🥗 Mediterranean',
+        '🥖 French',
+        '☕ Cafe/Bakery',
+        '🥙 Middle Eastern',
+        '🍷 Steakhouse',
+      ];
+    } else if (key == 'location' && tKey == 'movies') {
+      options = [
+        '🏠 Home',
+        '🎬 Cinema',
+        '🛋️ Friend/Relative',
+        '✈️ Airplane',
+        '🚌 Commute',
+      ];
+    } else if (key == 'genre' && tKey == 'movies') {
+      options = [
+        'Action',
+        'Comedy',
+        'Drama',
+        'Horror',
+        'Sci-Fi',
+        'Documentary',
+        'Anime',
+        'Romance',
+        'Other',
+      ];
+    } else if (key == 'technique') {
+      options = [
+        '🌬️ Breathwork',
+        '🧘 Mindfulness',
+        '👁️ Visualization',
+        '🌌 Scan (Body/Energy)',
+        '🚶 Walking Meditation',
+      ];
+    } else if (key == 'subject') {
+      options = [
+        '📚 Math',
+        '🧬 Science',
+        '✍️ English'
+            '⚖️ Law',
+        '💻 Programming',
+        '🎨 Art/Design',
+        '🌍 Languages',
+        '📈 Business',
+        ' Writing',
+        '🌍 Religion',
+      ];
+    } else if (key == 'study_methods') {
+      options = [
+        '⏲️ Pomodoro',
+        '🃏 Flashcards',
+        '📝 Note Taking',
+        '🧠 Active Recall',
+        '🎧 Deep Work',
+        '👥 Group Study',
+      ];
+    } else if (key == 'symptoms') {
+      options = [
+        'Cramps',
+        'Headache',
+        'Bloating',
+        'Acne',
+        'Mood Swings',
+        'Fatigue',
+        'Cravings',
+        'Back Pain',
+      ];
+    } else if (key == 'expenses') {
+      options = ['Groceries', 'Dining', 'Shopping', 'Health', 'Travel'];
+    } // --- MOOD & FEELING SHARED LOGIC ---
+    if (key == 'feeling' || key == 'mood' || tKey == 'mood') {
+      options = [
+        '😊 Happy',
+        '🤩 Excited',
+        '😎 Confident',
+        '🧘 Calm',
+        '😐 Neutral',
+        '😔 Sad',
+        '😤 Angry',
+        '🤯 Stressed',
+        '🤔 Anxious',
+        '😴 Tired',
+        '🤒 Sick',
+      ];
+    }
+    // --- NEW CURRENCY LOGIC ---
+    if (key == 'currency') {
+      options = [
+        'USD (\$)',
+        'EUR (€)',
+        'GBP (£)',
+        'JPY (¥)',
+        'AUD (\$)',
+        'CAD (\$)',
+        'INR (₹)',
+      ];
+    }
+    if (key == 'flow') {
+      options = ['Spotting', 'Light', 'Medium', 'Heavy', 'Very Heavy', 'Other'];
+    }
+    if (key == 'pregnancy_test') {
+      options = ['Not Done', 'Positive', 'Negative', 'Inconclusive', 'Other'];
+    }
+
+    // Always ensure 'Other' is at the end and the list is unique
+    if (options.isEmpty) {
+      options = ['Other'];
+    } else if (!options.contains('Other')) {
+      options.add('Other');
+    }
+
+    return options.toSet().toList().where((s) => s.trim().isNotEmpty).toList();
+  }
+  /////-------------------------
+
+  Widget _buildDateButton(ThemeData theme) {
+    return InkWell(
+      onTap: () async {
+        final d = await showDatePicker(
+          context: context,
+          initialDate: day,
+          firstDate: DateTime(2000),
+          lastDate: DateTime(2100),
+        );
+        if (d != null) setState(() => day = d);
+      },
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.colorScheme.outlineVariant),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.calendar_today, size: 18),
+            const SizedBox(width: 8),
+            Text("${day.day}/${day.month}/${day.year}"),
+          ],
+        ),
+      ),
+    );
   }
 }
 
-class _RatingPicker extends StatelessWidget {
-  const _RatingPicker({
-    required this.label,
-    required this.value,
-    required this.onChanged,
-  });
-
+class _FieldLabel extends StatelessWidget {
   final String label;
-  final int value;
-  final ValueChanged<int> onChanged;
+  const _FieldLabel({required this.label});
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 6, left: 4),
+    child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+  );
+}
 
+class _RatingPicker extends StatelessWidget {
+  const _RatingPicker({required this.value, required this.onChanged});
+  final dynamic value;
+  final ValueChanged<int> onChanged;
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Row(
-        children: [
-          Expanded(child: Text(label)),
-          DropdownButton<int>(
-            value: value,
-            items: List.generate(6, (i) => i)
-                .map(
-                  (i) => DropdownMenuItem<int>(
-                    value: i,
-                    child: Text(i == 0 ? '-' : '$i'),
-                  ),
-                )
-                .toList(),
-            onChanged: (v) => onChanged(v ?? 0),
+    final int cur = (value is num) ? value.toInt() : 0;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(
+        5,
+        (i) => IconButton(
+          icon: Icon(
+            i < cur ? Icons.star : Icons.star_border,
+            color: Colors.amber,
+            size: 32,
           ),
-        ],
+          onPressed: () => onChanged(i + 1),
+        ),
       ),
     );
   }

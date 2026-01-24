@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
 import 'log_table_screen.dart';
 import 'create_templates_screen.dart';
 import 'package:mind_buddy/router.dart';
@@ -14,14 +13,40 @@ class TemplatesScreen extends StatefulWidget {
 
 class _TemplatesScreenState extends State<TemplatesScreen> {
   final supabase = Supabase.instance.client;
-
+  final TextEditingController _searchController = TextEditingController();
   bool loading = true;
   List<Map<String, dynamic>> templates = [];
 
-  // ===== Supabase tables =====
-  static const tTemplates = 'log_templates_v2';
-  static const tFields = 'log_template_fields_v2';
-  static const tEntries = 'log_entries';
+  // Updated to match the template_keys we inserted via SQL
+  final List<String> _builtInTemplates = [
+    'menstrual',
+    'cycle',
+    'sleep',
+    'bills',
+    'income',
+    'expenses',
+    'tasks',
+    'wishlist',
+    'music',
+    'mood',
+    'water',
+    'movies',
+    'tv_log',
+    'places',
+    'restaurants',
+    'books',
+    'health',
+    'workout',
+    'fast',
+    'study',
+    'skin_care',
+    'meditation',
+    'social',
+    'Goals/Resolutions'
+        // 'symptoms',
+        'habits',
+    'meal_prep',
+  ];
 
   @override
   void initState() {
@@ -31,264 +56,275 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
 
   String _today() => DateTime.now().toIso8601String().substring(0, 10);
 
+  bool _isDeletable(Map<String, dynamic> t) {
+    final name = (t['name'] ?? '').toString().toLowerCase();
+    final key = (t['template_key'] ?? '').toString().toLowerCase();
+
+    // If it matches our built-in list OR if user_id is null (System Template), don't delete
+    final isBuiltIn = _builtInTemplates.any(
+      (b) => name.contains(b) || key.contains(b),
+    );
+    if (isBuiltIn || t['user_id'] == null) return false;
+
+    final user = supabase.auth.currentUser;
+    return (t['user_id'] ?? '').toString() == user?.id;
+  }
+
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => loading = true);
-
     try {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
-      // Only fetch this user's templates (these are "user templates")
+      // FIX: Fetch where user_id is the current user OR user_id is NULL (System Templates)
       final rows = await supabase
-          .from(tTemplates)
+          .from('log_templates_v2')
           .select()
-          .eq('user_id', user.id)
-          .order('created_at', ascending: true);
+          .or('user_id.eq.${user.id},user_id.is.null')
+          .order('name', ascending: true);
 
-      templates = (rows as List)
-          .map<Map<String, dynamic>>((x) => Map<String, dynamic>.from(x))
-          .where((t) => (t['template_key'] ?? '').toString() != 'habits')
-          .toList();
+      if (mounted) {
+        setState(() {
+          // Filter out 'habits' if you want it hidden from this view
+          templates = List<Map<String, dynamic>>.from(
+            rows,
+          ).where((t) => (t['template_key'] ?? '') != 'habits').toList();
+          loading = false;
+        });
+      }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Load failed: $e')),
-      );
+      debugPrint('Load error: $e');
+      if (mounted) setState(() => loading = false);
     }
-
-    if (!mounted) return;
-    setState(() => loading = false);
   }
 
-  /// Confirm popup before deleting
-  Future<bool> _confirmDeleteTemplate({
-    required String title,
-  }) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Delete template?'),
-        content:
-            Text('“$title” will be deleted permanently (including its logs).'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
+  Future<void> _deleteTemplate(String templateId) async {
+    try {
+      await supabase.from('log_entries').delete().eq('template_id', templateId);
+      await supabase
+          .from('log_template_fields_v2')
+          .delete()
+          .eq('template_id', templateId);
+      await supabase.from('log_templates_v2').delete().eq('id', templateId);
+      _load();
+    } catch (e) {
+      debugPrint('Delete failed: $e');
+    }
+  }
+
+  String _getEmoji(String title) {
+    final t = title.toLowerCase();
+    if (t.contains('menstrual') || t.contains('cycle')) return '🩸';
+    if (t.contains('sleep')) return '😴';
+    if (t.contains('bill')) return '💸';
+    if (t.contains('income')) return '💰';
+    if (t.contains('expense')) return '📉';
+    if (t.contains('task')) return '✅';
+    if (t.contains('wishlist')) return '✨';
+    if (t.contains('music')) return '🎵';
+    if (t.contains('mood')) return '🎭';
+    if (t.contains('water')) return '💧';
+    if (t.contains('movie')) return '🍿';
+    if (t.contains('tv log')) return '📺';
+    if (t.contains('place')) return '📍';
+    if (t.contains('restaurant')) return '🍽️';
+    if (t.contains('book')) return '📖';
+    //if (t.contains('health') || t.contains('symptoms')) return '🏥';
+    if (t.contains('workout')) return '💪';
+    if (t.contains('fast')) return '⏳';
+    if (t.contains('skin care')) return '🧼';
+    if (t.contains('meditation')) return '🧘';
+    if (t.contains('study')) return '🧠';
+    if (t.contains('goals')) return '🎊';
+    // if (t.contains('meal prep')) return '🍱';
+    return '📋';
+  }
+
+  Widget _glowingIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required ColorScheme scheme,
+  }) {
+    return Container(
+      margin: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.15),
+            blurRadius: 20,
+            spreadRadius: 0,
+            offset: const Offset(0, 0),
           ),
         ],
       ),
+      child: CircleAvatar(
+        backgroundColor: scheme.surface,
+        radius: 20,
+        child: IconButton(
+          icon: Icon(icon, color: scheme.primary, size: 20),
+          onPressed: onPressed,
+        ),
+      ),
     );
-
-    return ok == true;
-  }
-
-  /// Deletes a template + its children (fields + entries)
-  /// Returns true if successful (so the swipe only completes if delete succeeded).
-  Future<bool> _deleteTemplate(String templateId) async {
-    try {
-      // NOTE: delete children first to avoid FK constraint errors
-      await supabase.from(tEntries).delete().eq('template_id', templateId);
-      await supabase.from(tFields).delete().eq('template_id', templateId);
-
-      // Finally delete the template row itself
-      await supabase.from(tTemplates).delete().eq('id', templateId);
-
-      return true;
-    } catch (e) {
-      if (!mounted) return false;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Delete failed: $e')),
-      );
-      return false;
-    }
-  }
-
-  /// This decides whether a template is allowed to be deleted.
-  /// Right now: only templates owned by the current user are deletable.
-  bool _isDeletable(Map<String, dynamic> t) {
-    final user = supabase.auth.currentUser;
-    if (user == null) return false;
-
-    final ownerId = (t['user_id'] ?? '').toString();
-    return ownerId == user.id;
-
-    // If you later add a column like is_system, you can do:
-    // final isSystem = t['is_system'] == true;
-    // return ownerId == user.id && !isSystem;
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final query = _searchController.text.toLowerCase();
+    final filtered = query.isEmpty
+        ? templates
+        : templates
+              .where(
+                (t) =>
+                    (t['name'] ?? '').toString().toLowerCase().contains(query),
+              )
+              .toList();
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Templates'),
+        leading: _glowingIconButton(
+          icon: Icons.arrow_back,
+          onPressed: () => Navigator.pop(context),
+          scheme: scheme,
+        ),
+        title: Text('Templates (${templates.length})'),
+        centerTitle: true,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: _openAddMenu, // ✅ this calls the bottom sheet
+          _glowingIconButton(
+            icon: Icons.add,
+            onPressed: _openAddMenu,
+            scheme: scheme,
           ),
+          const SizedBox(width: 8),
         ],
       ),
       body: loading
           ? const Center(child: CircularProgressIndicator())
-          : templates.isEmpty
-              ? const Center(
-                  child: Text('No templates yet. Tap + to create one.'))
-              : ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: templates.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, i) {
-                    final t = templates[i];
-
-                    final name = (t['name'] ?? '').toString();
-                    final templateKey = (t['template_key'] ?? '').toString();
-                    final templateId = (t['id'] ?? '').toString();
-
-                    final title = name.isEmpty ? templateKey : name;
-
-                    // Your existing tile UI
-                    final tile = ListTile(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: scheme.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: scheme.primary.withOpacity(0.08),
+                          blurRadius: 15,
+                          spreadRadius: 0,
+                        ),
+                      ],
+                      border: Border.all(
+                        color: scheme.outline.withOpacity(0.1),
                       ),
-                      tileColor: Theme.of(context).colorScheme.surface,
-                      leading: const Icon(Icons.table_chart_outlined),
-                      title: Text(title),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () {
-                        final dayId = _today();
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => themed(
-                              LogTableScreen(
-                                templateId: templateId,
-                                templateKey: templateKey,
-                                dayId: dayId,
-                              ),
+                    ),
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        hintText: 'Search templates...',
+                        prefixIcon: Icon(Icons.search),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(vertical: 15),
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, i) {
+                      final t = filtered[i];
+                      final title = (t['name'] ?? t['template_key'] ?? '')
+                          .toString();
+                      final templateId = t['id'].toString();
+
+                      final tileContent = Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: [
+                            BoxShadow(
+                              color: scheme.primary.withOpacity(0.05),
+                              blurRadius: 10,
+                              spreadRadius: 0,
+                            ),
+                          ],
+                        ),
+                        child: ListTile(
+                          tileColor: scheme.surface,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            side: BorderSide(
+                              color: scheme.outline.withOpacity(0.1),
                             ),
                           ),
-                        );
-                      },
-                    );
-
-                    // If it isn't deletable, just return the tile (no swipe)
-                    if (!_isDeletable(t)) return tile;
-
-                    // Swipe-to-delete wrapper
-                    return Dismissible(
-                      key: ValueKey('tpl_$templateId'),
-                      direction: DismissDirection.endToStart,
-
-                      // Red delete background
-                      background: Container(
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.errorContainer,
-                          borderRadius: BorderRadius.circular(14),
+                          leading: Text(
+                            _getEmoji(title),
+                            style: const TextStyle(fontSize: 24),
+                          ),
+                          title: Text(
+                            title,
+                            style: TextStyle(
+                              color: scheme.onSurface,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          trailing: const Icon(Icons.chevron_right, size: 18),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => themed(
+                                  LogTableScreen(
+                                    templateId: templateId,
+                                    templateKey: t['template_key'],
+                                    dayId: _today(),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                         ),
-                        child: Icon(
-                          Icons.delete_outline,
-                          color: Theme.of(context).colorScheme.onErrorContainer,
+                      );
+
+                      if (!_isDeletable(t)) return tileContent;
+
+                      return Dismissible(
+                        key: ValueKey(templateId),
+                        direction: DismissDirection.endToStart,
+                        onDismissed: (_) => _deleteTemplate(templateId),
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20),
+                          decoration: BoxDecoration(
+                            color: scheme.errorContainer,
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: Icon(Icons.delete, color: scheme.error),
                         ),
-                      ),
-
-                      /// ✅ We delete BEFORE dismissing. If delete fails, it snaps back.
-                      confirmDismiss: (_) async {
-                        final confirm =
-                            await _confirmDeleteTemplate(title: title);
-                        if (!confirm) return false;
-
-                        // Do the backend delete
-                        final success = await _deleteTemplate(templateId);
-
-                        if (!success) return false;
-
-                        // Also remove locally so it disappears immediately
-                        if (mounted) {
-                          setState(() {
-                            templates.removeAt(i);
-                          });
-                        }
-
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Deleted “$title”')),
-                        );
-
-                        return true;
-                      },
-
-                      child: tile,
-                    );
-                  },
+                        child: tileContent,
+                      );
+                    },
+                  ),
                 ),
+              ],
+            ),
     );
   }
 
-  Future<void> _openAddMenu() async {
-    final scheme = Theme.of(context).colorScheme;
-
-    final result = await showModalBottomSheet<String>(
-      context: context,
-      showDragHandle: true,
-      backgroundColor: scheme.surface,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.table_chart_outlined),
-                title: const Text('Create logs template'),
-                subtitle: const Text('Make a custom table (movies, gym, etc)'),
-                onTap: () => Navigator.pop(ctx, 'create_log_template'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.check_box_outlined),
-                title: const Text('Add checklist'),
-                subtitle:
-                    const Text('A checklist template (Apple Notes style)'),
-                onTap: () => Navigator.pop(ctx, 'create_checklist'),
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
+  void _openAddMenu() async {
+    final ok = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => themed(const CreateLogTemplateScreen()),
+      ),
     );
-
-    if (!mounted || result == null) return;
-
-    if (result == 'create_log_template') {
-      final ok = await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(
-            builder: (_) => themed(const CreateLogTemplateScreen())),
-      );
-      if (ok == true) await _load();
-    }
-
-    if (result == 'create_checklist') {
-      // ✅ This depends on what your checklist flow is:
-      // If you already have a ChecklistTemplateCreateScreen, push it here.
-      // If you store checklists differently, you might insert a "checklist template" row in DB, then reload.
-      //
-      // Example route push (replace with your real screen/route):
-      // final ok = await Navigator.push<bool>(context, MaterialPageRoute(builder: (_) => themed(const CreateChecklistTemplateScreen())));
-      // if (ok == true) await _load();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text(
-                'Checklist create not wired yet. Tell me your checklist screen name/route and I’ll hook it in.')),
-      );
-    }
+    if (ok == true) _load();
   }
 }

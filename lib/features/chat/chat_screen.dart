@@ -1,4 +1,6 @@
-// lib/features/chat/chat_screen.dart
+import 'dart:async';
+import 'dart:math';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -19,7 +21,6 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _controller = TextEditingController();
   final _scroll = ScrollController();
-
   bool _busy = false;
 
   static const String _baseUrl = 'http://127.0.0.1:3000';
@@ -38,8 +39,8 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!_scroll.hasClients) return;
       _scroll.animateTo(
         _scroll.position.maxScrollExtent,
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOut,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOutCubic,
       );
     });
   }
@@ -56,10 +57,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     setState(() => _busy = true);
     _controller.clear();
-    FocusScope.of(context).unfocus();
 
     try {
-      // 1) Persist user message
       await repo.addMessage(
         chatId: widget.chatId,
         userId: user.id,
@@ -67,10 +66,8 @@ class _ChatScreenState extends State<ChatScreen> {
         content: text,
       );
 
-      // 2) Get assistant reply
       final res = await _api.sendMessage(message: text, chatId: widget.chatId);
 
-      // 3) Persist assistant message
       await repo.addMessage(
         chatId: res.chatId,
         userId: user.id,
@@ -89,111 +86,228 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _handleBack(BuildContext context) {
-    if (context.canPop()) {
-      context.pop();
-    } else {
-      context.go('/home');
-    }
+  Widget _glowingIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required ColorScheme scheme,
+  }) {
+    return Container(
+      margin: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withValues(alpha: 0.15),
+            blurRadius: 20,
+          ),
+        ],
+      ),
+      child: CircleAvatar(
+        backgroundColor: scheme.surface,
+        child: IconButton(
+          icon: Icon(icon, color: scheme.primary, size: 20),
+          onPressed: onPressed,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
 
     return MbScaffold(
-      applyBackground: false, // ✅ IMPORTANT: let PaperCanvas show through
+      applyBackground: false,
       appBar: AppBar(
-        title: const Text('Chat'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => _handleBack(context),
+        title: const Text('Mind Buddy Chat'),
+        centerTitle: true,
+        leading: _glowingIconButton(
+          icon: Icons.arrow_back,
+          scheme: scheme,
+          onPressed: () =>
+              context.canPop() ? context.pop() : context.go('/home'),
         ),
       ),
-      body: Column(
+      body: Stack(
         children: [
-          // Day context card (matches theme)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          // 1. Ambient Background Glow Layer
+          Positioned(
+            bottom: 200,
+            left: -100,
             child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
+              width: 300,
+              height: 300,
               decoration: BoxDecoration(
-                color: scheme.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: scheme.outline),
+                shape: BoxShape.circle,
+                color: scheme.primary.withValues(alpha: 0.05),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('DAY', style: textTheme.labelSmall),
-                        const SizedBox(height: 4),
-                        Text(
-                          'This chat is attached to this day.',
-                          style: textTheme.bodyMedium,
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 80, sigmaY: 80),
+                child: const SizedBox.shrink(),
+              ),
+            ),
+          ),
+
+          Column(
+            children: [
+              Expanded(
+                child: Stack(
+                  children: [
+                    _MessagesList(
+                      chatId: widget.chatId,
+                      scroll: _scroll,
+                      onPainted: _scrollToBottom,
+                    ),
+
+                    // 2. Glassmorphism Header (Blurs content underneath)
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      child: ClipRRect(
+                        child: BackdropFilter(
+                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            decoration: BoxDecoration(
+                              color: scheme.surface.withValues(alpha: 0.7),
+                              border: Border(
+                                bottom: BorderSide(
+                                  color: scheme.primary.withValues(alpha: 0.1),
+                                ),
+                              ),
+                            ),
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: scheme.primary.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  'Journal Entry: ${widget.dayId}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: scheme.primary,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    widget.dayId,
-                    style: textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurface.withOpacity(0.6),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          Expanded(
-            child: _MessagesList(
-              chatId: widget.chatId,
-              scroll: _scroll,
-              onPainted: _scrollToBottom,
-            ),
-          ),
-
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      textInputAction: TextInputAction.send,
-                      onSubmitted: (_) => _busy ? null : _send(),
-                      decoration: const InputDecoration(
-                        hintText: 'Type a message…',
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    height: 44,
-                    child: FilledButton(
-                      onPressed: _busy ? null : _send,
-                      child: _busy
-                          ? const SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Send'),
-                    ),
-                  ),
-                ],
+
+                    // 3. Typing Indicator
+                    if (_busy)
+                      Positioned(
+                        bottom: 10,
+                        left: 16,
+                        child: const _TypingIndicator(),
+                      ),
+                  ],
+                ),
               ),
-            ),
+
+              // 4. Glowy Input Bar
+              SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: scheme.surface,
+                            borderRadius: BorderRadius.circular(28),
+                            boxShadow: [
+                              BoxShadow(
+                                color: scheme.primary.withValues(alpha: 0.08),
+                                blurRadius: 15,
+                                spreadRadius: 2,
+                              ),
+                            ],
+                            border: Border.all(
+                              color: scheme.primary.withValues(alpha: 0.1),
+                            ),
+                          ),
+                          child: TextField(
+                            controller: _controller,
+                            textInputAction: TextInputAction.send,
+                            onSubmitted: (_) => _busy ? null : _send(),
+                            decoration: InputDecoration(
+                              hintText: 'Share your thoughts...',
+                              hintStyle: TextStyle(
+                                color: scheme.onSurface.withValues(alpha: 0.3),
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 14,
+                              ),
+                              border: InputBorder.none,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      ListenableBuilder(
+                        listenable: _controller,
+                        builder: (context, _) => _buildSendButton(scheme),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSendButton(ColorScheme scheme) {
+    final hasText = _controller.text.trim().isNotEmpty;
+    return GestureDetector(
+      onTap: _busy || !hasText ? null : _send,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        height: 48,
+        width: 48,
+        decoration: BoxDecoration(
+          color: _busy || !hasText ? scheme.surface : scheme.primary,
+          shape: BoxShape.circle,
+          boxShadow: [
+            if (!_busy && hasText)
+              BoxShadow(
+                color: scheme.primary.withValues(alpha: 0.4),
+                blurRadius: 15,
+                spreadRadius: 2,
+              ),
+          ],
+        ),
+        child: _busy
+            ? Center(
+                child: SizedBox(
+                  height: 20,
+                  width: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: scheme.primary,
+                  ),
+                ),
+              )
+            : Icon(
+                Icons.send_rounded,
+                color: hasText
+                    ? scheme.onPrimary
+                    : scheme.onSurface.withValues(alpha: 0.3),
+                size: 20,
+              ),
       ),
     );
   }
@@ -205,7 +319,6 @@ class _MessagesList extends StatelessWidget {
     required this.scroll,
     required this.onPainted,
   });
-
   final int chatId;
   final ScrollController scroll;
   final VoidCallback onPainted;
@@ -213,67 +326,137 @@ class _MessagesList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-
-    final supabase = Supabase.instance.client;
-    final repo = HobonichiRepo(supabase);
+    final repo = HobonichiRepo(Supabase.instance.client);
 
     return StreamBuilder<List<Map<String, dynamic>>>(
       stream: repo.streamMessages(chatId: chatId),
       builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
-        }
-        if (!snapshot.hasData) {
+        if (!snapshot.hasData)
           return const Center(child: CircularProgressIndicator());
-        }
-
         final msgs = snapshot.data ?? const [];
-        if (msgs.isEmpty) {
-          return Center(
-            child: Text(
-              'No messages yet. Say hi 👋',
-              style: TextStyle(color: scheme.onSurface.withOpacity(0.6)),
-            ),
-          );
-        }
-
         onPainted();
 
         return ListView.builder(
           controller: scroll,
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(
+            16,
+            70,
+            16,
+            80,
+          ), // Extra top padding for Glass header
           itemCount: msgs.length,
           itemBuilder: (context, i) {
             final m = msgs[i];
-            final role = (m['role'] ?? 'user').toString();
-            final content = (m['content'] ?? '').toString();
-            final isUser = role == 'user';
-
-            final bubbleColor = isUser
-                ? scheme.primary.withOpacity(0.18)
-                : scheme.surface;
-
-            final borderColor = isUser
-                ? scheme.primary.withOpacity(0.35)
-                : scheme.outline;
+            final isUser = m['role'] == 'user';
 
             return Align(
               alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
               child: Container(
-                margin: const EdgeInsets.symmetric(vertical: 6),
-                padding: const EdgeInsets.all(12),
-                constraints: const BoxConstraints(maxWidth: 320),
-                decoration: BoxDecoration(
-                  color: bubbleColor,
-                  border: Border.all(color: borderColor),
-                  borderRadius: BorderRadius.circular(14),
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
                 ),
-                child: Text(content, style: TextStyle(color: scheme.onSurface)),
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width * 0.75,
+                ),
+                decoration: BoxDecoration(
+                  color: isUser ? scheme.primary : scheme.surface,
+                  borderRadius: BorderRadius.only(
+                    topLeft: const Radius.circular(20),
+                    topRight: const Radius.circular(20),
+                    bottomLeft: Radius.circular(isUser ? 20 : 4),
+                    bottomRight: Radius.circular(isUser ? 4 : 20),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Text(
+                  m['content'] ?? '',
+                  style: TextStyle(
+                    color: isUser ? scheme.onPrimary : scheme.onSurface,
+                    height: 1.4,
+                  ),
+                ),
               ),
             );
           },
         );
       },
+    );
+  }
+}
+
+class _TypingIndicator extends StatefulWidget {
+  const _TypingIndicator();
+  @override
+  State<_TypingIndicator> createState() => _TypingIndicatorState();
+}
+
+class _TypingIndicatorState extends State<_TypingIndicator>
+    with TickerProviderStateMixin {
+  late AnimationController _controller;
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(20),
+          topRight: Radius.circular(20),
+          bottomRight: Radius.circular(20),
+          bottomLeft: Radius.circular(4),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withValues(alpha: 0.1),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(3, (i) {
+          return AnimatedBuilder(
+            animation: _controller,
+            builder: (context, child) {
+              final delay = i * 0.2;
+              final value = (sin((_controller.value * 2 * pi) - delay) + 1) / 2;
+              return Container(
+                width: 6,
+                height: 6,
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: scheme.primary.withValues(alpha: 0.2 + (value * 0.6)),
+                ),
+              );
+            },
+          );
+        }),
+      ),
     );
   }
 }

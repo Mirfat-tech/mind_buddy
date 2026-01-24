@@ -12,7 +12,6 @@ class CreateLogTemplateScreen extends StatefulWidget {
 
 class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
   final supabase = Supabase.instance.client;
-
   final nameCtrl = TextEditingController();
   final keyCtrl = TextEditingController();
 
@@ -32,6 +31,71 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     super.dispose();
   }
 
+  // --- UI HELPERS ---
+
+  String _getEmoji(String title) {
+    final t = title.toLowerCase();
+    if (t.contains('menstrual')) return '🩸';
+    if (t.contains('sleep')) return '😴';
+    if (t.contains('bill')) return '💸';
+    if (t.contains('income')) return '💰';
+    if (t.contains('expense')) return '📉';
+    if (t.contains('task')) return '✅';
+    if (t.contains('wishlist')) return '✨';
+    if (t.contains('music')) return '🎵';
+    if (t.contains('mood')) return '🎭';
+    if (t.contains('water')) return '💧';
+    if (t.contains('movie')) return '🍿';
+    if (t.contains('tv log')) return '📺';
+    if (t.contains('places')) return '📍';
+    if (t.contains('restaurants')) return '🍽️';
+    if (t.contains('books')) return '📖';
+    return '📋';
+  }
+
+  Widget _glowingIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required ColorScheme scheme,
+  }) {
+    return Container(
+      margin: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.4),
+            blurRadius: 12,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: CircleAvatar(
+        backgroundColor: scheme.surface,
+        child: IconButton(
+          icon: Icon(icon, color: scheme.primary, size: 20),
+          onPressed: onPressed,
+        ),
+      ),
+    );
+  }
+
+  Widget _inputWrapper(ColorScheme scheme, {required Widget child}) {
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(color: scheme.primary.withOpacity(0.08), blurRadius: 15),
+        ],
+        border: Border.all(color: scheme.outline.withOpacity(0.1)),
+      ),
+      child: child,
+    );
+  }
+
+  // --- LOGIC ---
+
   String _slugify(String s) {
     final lower = s.trim().toLowerCase();
     final cleaned = lower.replaceAll(RegExp(r'[^a-z0-9\s_-]'), '');
@@ -42,7 +106,6 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
   Future<String> _uniqueTemplateKey(String baseKey, String userId) async {
     var key = baseKey;
     var i = 2;
-
     while (true) {
       final existing = await supabase
           .from(tTemplates)
@@ -50,9 +113,7 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
           .eq('user_id', userId)
           .eq('template_key', key)
           .maybeSingle();
-
       if (existing == null) return key;
-
       key = '${baseKey}_$i';
       i++;
     }
@@ -61,15 +122,9 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
   Future<void> _save() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
-
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
 
-    final baseKey = _slugify(keyCtrl.text.trim().isEmpty ? name : keyCtrl.text);
-
-    final templateKey = await _uniqueTemplateKey(baseKey, user.id);
-
-    // Basic validation: must have at least 1 field
     final cleanedFields = fields
         .where((f) => f.label.trim().isNotEmpty)
         .map((f) => f.cleaned())
@@ -80,7 +135,9 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     setState(() => saving = true);
 
     try {
-      // 1) insert template
+      final baseKey = _slugify(keyCtrl.text.isEmpty ? name : keyCtrl.text);
+      final templateKey = await _uniqueTemplateKey(baseKey, user.id);
+
       final tpl = await supabase
           .from(tTemplates)
           .insert({
@@ -92,12 +149,10 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
           .single();
 
       final templateId = (tpl['id'] ?? '').toString();
-
-      // 2) insert fields
-      final rows = <Map<String, dynamic>>[];
-      for (int i = 0; i < cleanedFields.length; i++) {
-        final f = cleanedFields[i];
-        rows.add({
+      final rows = cleanedFields.asMap().entries.map((entry) {
+        final i = entry.key;
+        final f = entry.value;
+        return {
           'user_id': user.id,
           'template_id': templateId,
           'field_key': f.key,
@@ -106,103 +161,131 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
           'sort_order': i,
           'options': f.optionsJson,
           'is_hidden': false,
-        });
-      }
+        };
+      }).toList();
 
       await supabase.from(tFields).insert(rows);
-
       if (!mounted) return;
-      Navigator.pop(context, true); // tells caller to refresh
+      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Save failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Save failed: $e')));
     } finally {
       if (mounted) setState(() => saving = false);
     }
   }
 
-  void _addField() {
-    setState(() {
-      fields.add(_FieldDraft(label: '', key: '', type: 'text'));
-    });
-  }
-
-  void _removeField(int index) {
-    setState(() {
-      fields.removeAt(index);
-      if (fields.isEmpty) {
-        fields.add(_FieldDraft(label: 'Item', key: '', type: 'text'));
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    return MbScaffold(
-      applyBackground: false, // ✅ let PaperCanvas show through
+    final scheme = Theme.of(context).colorScheme;
 
+    return MbScaffold(
+      applyBackground: false,
       appBar: AppBar(
-        title: const Text('Create logs template'),
+        leading: _glowingIconButton(
+          icon: Icons.arrow_back,
+          onPressed: () => Navigator.pop(context),
+          scheme: scheme,
+        ),
+        title: const Text('New Template'),
         actions: [
-          TextButton(
-            onPressed: saving ? null : _save,
-            child: saving ? const Text('Saving...') : const Text('Save'),
+          Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: TextButton(
+              onPressed: saving ? null : _save,
+              child: Text(
+                saving ? 'SAVING...' : 'SAVE',
+                style: TextStyle(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           ),
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(
+          24,
+          24,
+          24,
+          40,
+        ), // Bottom padding added
         children: [
-          TextField(
-            textDirection: TextDirection.ltr,
-            controller: nameCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Template name',
-              border: OutlineInputBorder(),
+          Center(
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: scheme.primary.withOpacity(0.05),
+                shape: BoxShape.circle,
+                border: Border.all(color: scheme.primary.withOpacity(0.1)),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                _getEmoji(nameCtrl.text),
+                style: const TextStyle(fontSize: 40),
+              ),
             ),
-            onChanged: (v) {
-              if (keyCtrl.text.trim().isEmpty) {
-                keyCtrl.text = _slugify(v);
-              }
-              setState(() {});
-            },
           ),
-          const SizedBox(height: 12),
-          //TextField(
-          //controller: keyCtrl,
-          //decoration: const InputDecoration(
-          //labelText: 'Template key (auto)',
-          //helperText: 'Used internally, e.g. gym_log',
-          //border: OutlineInputBorder(),
-          //),
-          //),
-          const SizedBox(height: 18),
-          const Text('Fields', style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 8),
+          const SizedBox(height: 32),
+          _inputWrapper(
+            scheme,
+            child: TextField(
+              controller: nameCtrl,
+              onChanged: (v) => setState(() {}),
+              decoration: const InputDecoration(
+                hintText: 'Template Name',
+                border: InputBorder.none, // Removes default pink border
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 32),
+          const Text(
+            'FIELDS',
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 16),
           for (int i = 0; i < fields.length; i++) ...[
             _FieldEditor(
               field: fields[i],
               onChanged: (f) => setState(() => fields[i] = f),
-              onDelete: () => _removeField(i),
+              onDelete: () => setState(() {
+                fields.removeAt(i);
+                if (fields.isEmpty)
+                  fields.add(_FieldDraft(label: 'Item', key: '', type: 'text'));
+              }),
             ),
             const SizedBox(height: 12),
           ],
+          const SizedBox(height: 12),
           Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
-              onPressed: saving ? null : _addField,
-              icon: const Icon(Icons.add),
-              label: const Text('Add field'),
+              onPressed: () => setState(
+                () => fields.add(_FieldDraft(label: '', key: '', type: 'text')),
+              ),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add Field'),
             ),
           ),
-          const SizedBox(height: 24),
         ],
       ),
     );
   }
 }
+
+// --- DATA CLASSES ---
 
 class _FieldDraft {
   final String label;
@@ -217,8 +300,12 @@ class _FieldDraft {
     this.options = const [],
   });
 
-  _FieldDraft copyWith(
-      {String? label, String? key, String? type, List<String>? options}) {
+  _FieldDraft copyWith({
+    String? label,
+    String? key,
+    String? type,
+    List<String>? options,
+  }) {
     return _FieldDraft(
       label: label ?? this.label,
       key: key ?? this.key,
@@ -234,34 +321,43 @@ class _FieldDraft {
 
     Map<String, dynamic>? optionsJson;
     if (type2 == 'select' || type2 == 'multi_select') {
-      final vals =
-          options.map((x) => x.trim()).where((x) => x.isNotEmpty).toList();
-      optionsJson = {'values': vals};
+      optionsJson = {
+        'values': options
+            .map((x) => x.trim())
+            .where((x) => x.isNotEmpty)
+            .toList(),
+      };
     }
 
     return _CleanedField(
-        label: label2, key: key2, type: type2, optionsJson: optionsJson);
+      label: label2,
+      key: key2,
+      type: type2,
+      optionsJson: optionsJson,
+    );
   }
 
   static String _autoKey(String s) {
-    final lower = s.trim().toLowerCase();
-    final cleaned = lower.replaceAll(RegExp(r'[^a-z0-9\s_-]'), '');
-    final underscored = cleaned.replaceAll(RegExp(r'[\s-]+'), '_');
-    return underscored.replaceAll(RegExp(r'_+'), '_');
+    return s
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]'), '_')
+        .replaceAll(RegExp(r'_+'), '_');
   }
 }
 
 class _CleanedField {
-  final String label;
-  final String key;
-  final String type;
+  final String label, key, type;
   final Map<String, dynamic>? optionsJson;
-  _CleanedField(
-      {required this.label,
-      required this.key,
-      required this.type,
-      required this.optionsJson});
+  _CleanedField({
+    required this.label,
+    required this.key,
+    required this.type,
+    required this.optionsJson,
+  });
 }
+
+// --- FIELD COMPONENT ---
 
 class _FieldEditor extends StatelessWidget {
   const _FieldEditor({
@@ -269,77 +365,110 @@ class _FieldEditor extends StatelessWidget {
     required this.onChanged,
     required this.onDelete,
   });
-
   final _FieldDraft field;
   final ValueChanged<_FieldDraft> onChanged;
   final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final types = const <({String value, String label})>[
       (value: 'text', label: 'Text'),
       (value: 'number', label: 'Number'),
       (value: 'rating', label: 'Rating (1–5)'),
       (value: 'bool', label: 'Yes / No'),
       (value: 'select', label: 'Pick one option'),
-      (value: 'multi_select', label: 'Pick multiple options'),
     ];
 
-    //final optionsCtrl = TextEditingController(text: field.options.join(', '));
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                    child: TextFormField(
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: scheme.outline.withOpacity(0.1)),
+        boxShadow: [
+          BoxShadow(color: scheme.primary.withOpacity(0.05), blurRadius: 10),
+        ],
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
                   initialValue: field.label,
-                  textDirection: TextDirection.ltr,
-                  decoration: const InputDecoration(labelText: 'Label'),
+                  // border: InputBorder.none stops the overlapping label issue
+                  decoration: const InputDecoration(
+                    hintText: 'Field Label',
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
                   onChanged: (v) => onChanged(field.copyWith(label: v)),
-                )),
-                const SizedBox(width: 10),
-                IconButton(
-                  onPressed: onDelete,
-                  icon: const Icon(Icons.delete_outline),
                 ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              value:
-                  types.any((t) => t.value == field.type) ? field.type : 'text',
+              ),
+              IconButton(
+                onPressed: onDelete,
+                icon: Icon(
+                  Icons.close,
+                  size: 18,
+                  color: scheme.primary.withOpacity(0.5),
+                ),
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8.0),
+            child: Divider(color: scheme.outline.withOpacity(0.1), height: 1),
+          ),
+          DropdownButtonHideUnderline(
+            child: DropdownButtonFormField<String>(
+              value: field.type,
               items: types
-                  .map((t) =>
-                      DropdownMenuItem(value: t.value, child: Text(t.label)))
+                  .map(
+                    (t) => DropdownMenuItem(
+                      value: t.value,
+                      child: Text(
+                        t.label.toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: scheme.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  )
                   .toList(),
               onChanged: (v) => onChanged(field.copyWith(type: v ?? 'text')),
-              decoration: const InputDecoration(labelText: 'Answer type'),
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
             ),
-            if (field.type == 'select' || field.type == 'multi_select') ...[
-              const SizedBox(height: 10),
-              TextFormField(
-                initialValue: field.options.join(', '),
-                textDirection: TextDirection.ltr,
-                decoration: const InputDecoration(
-                  labelText: 'Choices (comma separated)',
-                  helperText: 'Example: treadmill, stairmaster, bike',
+          ),
+          if (field.type == 'select') ...[
+            const SizedBox(height: 8),
+            TextFormField(
+              initialValue: field.options.join(', '),
+              decoration: InputDecoration(
+                hintText: 'Choices (comma separated)',
+                hintStyle: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurface.withOpacity(0.4),
                 ),
-                onChanged: (v) {
-                  final parts = v
-                      .split(',')
-                      .map((x) => x.trim())
-                      .where((x) => x.isNotEmpty)
-                      .toList();
-                  onChanged(field.copyWith(options: parts));
-                },
-              )
-            ],
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 12),
+              onChanged: (v) => onChanged(
+                field.copyWith(
+                  options: v.split(',').map((e) => e.trim()).toList(),
+                ),
+              ),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }

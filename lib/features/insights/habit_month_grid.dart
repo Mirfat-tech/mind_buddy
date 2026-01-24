@@ -77,8 +77,10 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
     final done = data['done'];
     if (done is bool) return done;
 
-    final status =
-        (data['status'] ?? data['state'] ?? '').toString().toLowerCase().trim();
+    final status = (data['status'] ?? data['state'] ?? '')
+        .toString()
+        .toLowerCase()
+        .trim();
 
     return status == 'done' ||
         status == 'completed' ||
@@ -354,7 +356,8 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
 
         await supabase
             .from('log_entries')
-            .update({'data': existingData}).eq('id', id);
+            .update({'data': existingData})
+            .eq('id', id);
       } else {
         // 3b) Insert new row
         await supabase.from('log_entries').insert({
@@ -419,10 +422,9 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
         Expanded(
           child: Text(
             title,
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
         ),
         IconButton(
@@ -436,9 +438,9 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
           child: Text(
             'Manage',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: cs.primary,
-                  fontWeight: FontWeight.w600,
-                ),
+              color: cs.primary,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],
@@ -490,91 +492,97 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             physics: const BouncingScrollPhysics(),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // NUMBERS ROW (scrolls together with dots)
-                SizedBox(
-                  height: _numbersRowHeight,
-                  child: Row(
-                    children: List.generate(days, (i) {
-                      return Padding(
-                        padding: const EdgeInsets.only(right: _dayCellGap),
-                        child: SizedBox(
-                          width: _dayCellWidth,
-                          child: Center(
-                            child: Text(
-                              '${i + 1}',
-                              maxLines: 1,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(
-                                    fontSize: 10,
-                                    height: 1.0,
-                                    color: cs.onSurface.withOpacity(0.75),
-                                  ),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minWidth: (days * _dayCellWidth) + ((days - 1) * _dayCellGap),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // NUMBERS ROW (scrolls together with dots)
+                  SizedBox(
+                    height: _numbersRowHeight,
+                    child: Row(
+                      children: List.generate(days, (i) {
+                        return Padding(
+                          padding: const EdgeInsets.only(right: _dayCellGap),
+                          child: SizedBox(
+                            width: _dayCellWidth,
+                            child: Center(
+                              child: Text(
+                                '${i + 1}',
+                                maxLines: 1,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      fontSize: 10,
+                                      height: 1.0,
+                                      color: cs.onSurface.withOpacity(0.75),
+                                    ),
+                              ),
                             ),
                           ),
-                        ),
-                      );
-                    }),
+                        );
+                      }),
+                    ),
                   ),
-                ),
 
-                // HABIT DOT ROWS (scroll with the numbers row)
-                for (final habitName in _activeHabits) ...[
-                  SizedBox(
-                    height: _habitRowHeight, // exact same height as label row
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Row(
-                        children: List.generate(days, (i) {
-                          final day = DateTime(base.year, base.month, i + 1);
-                          final dayKey = _ymd(day);
+                  // HABIT DOT ROWS (scroll with the numbers row)
+                  for (final habitName in _activeHabits) ...[
+                    SizedBox(
+                      height: _habitRowHeight, // exact same height as label row
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          children: List.generate(days, (i) {
+                            final day = DateTime(base.year, base.month, i + 1);
+                            final dayKey = _ymd(day);
 
-                          final hk = _habitKey(habitName);
-                          final doneSet = _doneByHabitKey[hk] ?? <String>{};
-                          final filled = doneSet.contains(dayKey);
+                            final hk = _habitKey(habitName);
+                            final doneSet = _doneByHabitKey[hk] ?? <String>{};
+                            final filled = doneSet.contains(dayKey);
 
-                          // Pop animation trigger for last tapped cell
-                          final cellKey = '$dayKey::$hk';
-                          final isRecentTap = _lastTappedCellKey == cellKey &&
-                              _lastTapAt != null &&
-                              DateTime.now()
-                                      .difference(_lastTapAt!)
-                                      .inMilliseconds <
-                                  220;
+                            // Pop animation trigger for last tapped cell
+                            final cellKey = '$dayKey::$hk';
+                            final isRecentTap =
+                                _lastTappedCellKey == cellKey &&
+                                _lastTapAt != null &&
+                                DateTime.now()
+                                        .difference(_lastTapAt!)
+                                        .inMilliseconds <
+                                    220;
 
-                          return Padding(
-                            padding: const EdgeInsets.only(right: _dayCellGap),
-                            child: SizedBox(
-                              width: _dayCellWidth,
-                              child: Center(
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(20),
-                                  onTap: () => _toggleDone(
-                                    habitName: habitName,
-                                    day: day,
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8),
-                                    child: _dot(
-                                      filled: filled,
-                                      isPopping: isRecentTap,
-                                      cs: cs,
+                            return Padding(
+                              padding: const EdgeInsets.only(
+                                right: _dayCellGap,
+                              ),
+                              child: SizedBox(
+                                width: _dayCellWidth,
+                                child: Center(
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(20),
+                                    onTap: () => _toggleDone(
+                                      habitName: habitName,
+                                      day: day,
+                                    ),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8),
+                                      child: _dot(
+                                        filled: filled,
+                                        isPopping: isRecentTap,
+                                        cs: cs,
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        }),
+                            );
+                          }),
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -591,10 +599,9 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
         padding: const EdgeInsets.only(top: 6),
         child: Text(
           'Loading your month…',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: cs.onSurface.withOpacity(0.65)),
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: cs.onSurface.withOpacity(0.65),
+          ),
         ),
       );
     }
@@ -604,8 +611,9 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
         padding: const EdgeInsets.only(top: 6),
         child: Text(
           'Couldn’t load month grid: $_error',
-          style:
-              Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.error),
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: cs.error),
         ),
       );
     }
@@ -619,6 +627,23 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
       children: [
         _buildMonthHeader(context),
         const SizedBox(height: 8),
+
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Row(
+            children: [
+              Icon(Icons.swipe, size: 16, color: cs.onSurface.withOpacity(0.6)),
+              const SizedBox(width: 6),
+              Text(
+                'Swipe sideways to see the rest of the month',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurface.withOpacity(0.6),
+                ),
+              ),
+            ],
+          ),
+        ),
+
         _buildScrolledGrid(context, days),
       ],
     );

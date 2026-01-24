@@ -110,4 +110,17 @@ class LogRepository {
         .map((e) => LogEntry.fromMap(e as Map<String, dynamic>))
         .toList();
   }
+
+  Future<List<Map<String, dynamic>>> listEntriesForTemplate({
+    required String templateId,
+  }) async {
+    final rows = await supabase
+        .from('log_entries')
+        .select('*')
+        .eq('template_id', templateId)
+        .order('day', ascending: false) // ✅ newest date first
+        .order('created_at', ascending: false); // ✅ stable within same day
+
+    return (rows as List).cast<Map<String, dynamic>>();
+  }
 }

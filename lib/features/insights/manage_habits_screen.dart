@@ -1,13 +1,9 @@
 // lib/features/insights/manage_habit_streaks.dart
-// lib/features/insights/manage_habits_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-
 import 'package:supabase_flutter/supabase_flutter.dart';
-
-// IMPORTANT: replace this import with YOUR MbScaffold import (same as chat_screen.dart)
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/router.dart';
 
 class ManageHabitsScreen extends StatefulWidget {
   const ManageHabitsScreen({super.key});
@@ -21,8 +17,6 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
 
   bool _loading = true;
   final List<Map<String, dynamic>> _habits = [];
-
-  // Streaks: habit name -> (current, best)
   final Map<String, ({int current, int best})> _streaksByHabitName = {};
 
   @override
@@ -31,332 +25,257 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     _loadHabits();
   }
 
+  // --- GLOWING UI HELPERS ---
+
+  Widget _glowingIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required ColorScheme scheme,
+  }) {
+    return Container(
+      margin: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.15),
+            blurRadius: 20,
+            spreadRadius: 0,
+          ),
+        ],
+      ),
+      child: CircleAvatar(
+        backgroundColor: scheme.surface,
+        child: IconButton(
+          icon: Icon(icon, color: scheme.primary, size: 20),
+          onPressed: onPressed,
+        ),
+      ),
+    );
+  }
+
+  // --- LOGIC METHODS ---
+
   ({int current, int best}) _computeStreak(Set<DateTime> doneDates) {
     if (doneDates.isEmpty) return (current: 0, best: 0);
-
-    final dates = doneDates
-        .map((d) => DateTime(d.year, d.month, d.day))
-        .toSet()
-        .toList()
-      ..sort();
-
-    // best streak
+    final dates = doneDates.toList()..sort();
     int best = 1;
     int run = 1;
     for (int i = 1; i < dates.length; i++) {
-      final diff = dates[i].difference(dates[i - 1]).inDays;
-      if (diff == 1) {
+      if (dates[i].difference(dates[i - 1]).inDays == 1) {
         run++;
         if (run > best) best = run;
-      } else if (diff > 1) {
+      } else if (dates[i].difference(dates[i - 1]).inDays > 1) {
         run = 1;
       }
     }
-
-    // current streak: today backwards
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    final set = dates.toSet();
+    final today = DateTime(
+      DateTime.now().year,
+      DateTime.now().month,
+      DateTime.now().day,
+    );
     int current = 0;
     DateTime cursor = today;
-    while (set.contains(cursor)) {
+    while (doneDates.contains(cursor)) {
       current++;
       cursor = cursor.subtract(const Duration(days: 1));
     }
-
     return (current: current, best: best);
   }
 
   Future<void> _loadHabits() async {
     setState(() => _loading = true);
-
     try {
       final user = supabase.auth.currentUser;
-      if (user == null) {
-        if (!mounted) return;
-        setState(() => _loading = false);
-        return;
-      }
-
+      if (user == null) return;
       final rows = await supabase
           .from('user_habits')
-          .select('id, name, sort_order, is_active')
+          .select()
           .eq('user_id', user.id)
           .order('sort_order');
-
-      _habits
-        ..clear()
-        ..addAll(
-          (rows as List).map((e) => Map<String, dynamic>.from(e as Map)),
-        );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to load habits: $e')),
+      _habits.clear();
+      _habits.addAll(
+        (rows as List).map((e) => Map<String, dynamic>.from(e as Map)),
       );
+      await _loadStreaks();
+    } catch (e) {
+      debugPrint('Load error: $e');
     }
-
-    if (!mounted) return;
-    setState(() => _loading = false);
-
-    await _loadStreaks();
-    if (!mounted) return;
-    setState(() {}); // rebuild to show streak text
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _loadStreaks() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
-
     final tpl = await supabase
         .from('log_templates_v2')
         .select('id')
         .eq('user_id', user.id)
         .eq('template_key', 'habits')
         .maybeSingle();
-
     if (tpl == null) return;
-    final templateId = tpl['id'] as String;
 
-    final from = DateTime.now().subtract(const Duration(days: 370));
-    final fromStr = '${from.year.toString().padLeft(4, '0')}-'
-        '${from.month.toString().padLeft(2, '0')}-'
-        '${from.day.toString().padLeft(2, '0')}';
-
+    final fromStr = DateTime.now()
+        .subtract(const Duration(days: 370))
+        .toIso8601String()
+        .substring(0, 10);
     final rows = await supabase
         .from('log_entries')
         .select('day, data')
-        .eq('template_id', templateId)
+        .eq('template_id', tpl['id'])
         .gte('day', fromStr);
 
     final Map<String, Set<DateTime>> doneDatesByHabit = {};
-
     for (final r in (rows as List)) {
-      final row = Map<String, dynamic>.from(r as Map);
-
-      final dayVal = row['day'];
-      final day = (dayVal is DateTime)
-          ? DateTime(dayVal.year, dayVal.month, dayVal.day)
-          : DateTime.parse(dayVal.toString());
-      final dayOnly = DateTime(day.year, day.month, day.day);
-
-      final dataRaw = row['data'];
-      final data = (dataRaw is Map)
-          ? Map<String, dynamic>.from(dataRaw as Map)
-          : <String, dynamic>{};
-
+      final data = Map<String, dynamic>.from(r['data'] ?? {});
       final habit = (data['habit'] ?? data['habit_name'] ?? data['name'] ?? '')
           .toString()
           .trim();
-      if (habit.isEmpty) continue;
+      if (habit.isEmpty || data['done'] != true) continue;
 
-      final done = data['done'] == true ||
-          (data['status'] ?? '').toString().toLowerCase().trim() == 'done' ||
-          (data['state'] ?? '').toString().toLowerCase().trim() == 'done';
-
-      if (!done) continue;
-
-      doneDatesByHabit.putIfAbsent(habit, () => <DateTime>{});
-      doneDatesByHabit[habit]!.add(dayOnly);
+      final day = DateTime.parse(r['day'].toString());
+      doneDatesByHabit
+          .putIfAbsent(habit, () => <DateTime>{})
+          .add(DateTime(day.year, day.month, day.day));
     }
 
     _streaksByHabitName.clear();
     for (final h in _habits) {
       final name = (h['name'] ?? '').toString().trim();
-      final set = doneDatesByHabit[name] ?? <DateTime>{};
-      _streaksByHabitName[name] = _computeStreak(set);
+      _streaksByHabitName[name] = _computeStreak(doneDatesByHabit[name] ?? {});
     }
   }
 
-  Future<void> _addHabit() async {
-    final controller = TextEditingController();
-    final name = await showDialog<String?>(
+  Future<void> _showHabitDialog({
+    String? initialName,
+    required String title,
+    required Function(String) onSave,
+  }) async {
+    final controller = TextEditingController(text: initialName);
+    final scheme = Theme.of(context).colorScheme;
+
+    await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Add habit'),
+        title: Text(title),
         content: TextField(
           controller: controller,
           autofocus: true,
-          textInputAction: TextInputAction.done,
-          decoration: const InputDecoration(hintText: 'e.g. Lemon water'),
-          onSubmitted: (_) => Navigator.pop(ctx, controller.text),
+          decoration: InputDecoration(
+            hintText: 'e.g. Morning Yoga',
+            filled: true,
+            fillColor: scheme.surface,
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx, null),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
-    );
-
-    final trimmed = (name ?? '').trim();
-    if (trimmed.isEmpty) return;
-
-    final user = supabase.auth.currentUser;
-    if (user == null) return;
-
-    try {
-      final nextOrder = _habits.length;
-      await supabase.from('user_habits').insert({
-        'user_id': user.id,
-        'name': trimmed,
-        'sort_order': nextOrder,
-        'is_active': true,
-      });
-
-      await _loadHabits();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to add habit: $e')),
-      );
-    }
-  }
-
-  Future<void> _renameHabit(Map<String, dynamic> habit) async {
-    final controller = TextEditingController(
-      text: (habit['name'] ?? '').toString(),
-    );
-    final newName = await showDialog<String?>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Rename habit'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          textInputAction: TextInputAction.done,
-          onSubmitted: (_) => Navigator.pop(ctx, controller.text),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, null),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                onSave(controller.text.trim());
+                Navigator.pop(ctx);
+              }
+            },
             child: const Text('Save'),
           ),
         ],
       ),
     );
+  }
 
-    final trimmed = (newName ?? '').trim();
-    if (trimmed.isEmpty) return;
+  Future<void> _addHabit() async {
+    await _showHabitDialog(
+      title: 'Add Habit',
+      onSave: (name) async {
+        await supabase.from('user_habits').insert({
+          'user_id': supabase.auth.currentUser!.id,
+          'name': name,
+          'sort_order': _habits.length,
+          'is_active': true,
+        });
+        _loadHabits();
+      },
+    );
+  }
 
-    try {
-      await supabase
-          .from('user_habits')
-          .update({'name': trimmed}).eq('id', habit['id']);
-
-      await _loadHabits();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to rename habit: $e')),
-      );
-    }
+  Future<void> _renameHabit(Map<String, dynamic> habit) async {
+    await _showHabitDialog(
+      initialName: habit['name'],
+      title: 'Rename Habit',
+      onSave: (name) async {
+        await supabase
+            .from('user_habits')
+            .update({'name': name})
+            .eq('id', habit['id']);
+        _loadHabits();
+      },
+    );
   }
 
   Future<void> _toggleActive(Map<String, dynamic> habit) async {
-    final current = habit['is_active'] == true;
-    try {
-      await supabase
-          .from('user_habits')
-          .update({'is_active': !current}).eq('id', habit['id']);
-
-      await _loadHabits();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update habit: $e')),
-      );
-    }
-  }
-
-  Future<void> _persistOrder() async {
-    try {
-      for (int i = 0; i < _habits.length; i++) {
-        await supabase
-            .from('user_habits')
-            .update({'sort_order': i}).eq('id', _habits[i]['id']);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save order: $e')),
-      );
-    }
+    await supabase
+        .from('user_habits')
+        .update({'is_active': !(habit['is_active'] == true)})
+        .eq('id', habit['id']);
+    _loadHabits();
   }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return MbScaffold(
       applyBackground: false,
       appBar: AppBar(
-        title: const Text('Manage habits'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (Navigator.of(context).canPop()) {
-              Navigator.of(context).pop();
-            } else {
-              // Fallback if this screen was opened as a root route
-              context.go('/home'); // or wherever your main screen is
-            }
-          },
+        leading: _glowingIconButton(
+          icon: Icons.arrow_back,
+          onPressed: () => Navigator.of(context).canPop()
+              ? Navigator.of(context).pop()
+              : context.go('/home'),
+          scheme: scheme,
         ),
+        title: const Text('Manage Habits'),
+        centerTitle: true,
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
                   child: Row(
                     children: [
-                      const Expanded(
+                      Expanded(
                         child: Text(
-                          'Your habit rows (drag to reorder)',
-                          style: TextStyle(fontWeight: FontWeight.w600),
+                          'Drag rows to reorder',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurface.withValues(
+                              alpha: 0.7,
+                            ), // Use .withValues for the latest Flutter
+                          ),
                         ),
                       ),
-                      FilledButton(
+                      _glowingIconButton(
+                        icon: Icons.add,
                         onPressed: _addHabit,
-                        child: const Text('Add'),
+                        scheme: scheme,
                       ),
                     ],
                   ),
                 ),
                 Expanded(
                   child: _habits.isEmpty
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  'Start your Hobonichi-style tracker by adding your first habit 🌸',
-                                  textAlign: TextAlign.center,
-                                  style: Theme.of(context).textTheme.bodyLarge,
-                                ),
-                                const SizedBox(height: 16),
-                                FilledButton(
-                                  onPressed: _addHabit,
-                                  child: const Text('Add habit'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        )
+                      ? _buildEmptyState()
                       : ReorderableListView.builder(
-                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
                           itemCount: _habits.length,
                           onReorder: (oldIndex, newIndex) async {
                             setState(() {
@@ -364,72 +283,84 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
                               final item = _habits.removeAt(oldIndex);
                               _habits.insert(newIndex, item);
                             });
-                            await _persistOrder();
+                            for (int i = 0; i < _habits.length; i++) {
+                              await supabase
+                                  .from('user_habits')
+                                  .update({'sort_order': i})
+                                  .eq('id', _habits[i]['id']);
+                            }
                           },
                           itemBuilder: (context, index) {
                             final h = _habits[index];
-                            final name = (h['name'] ?? '').toString();
                             final active = h['is_active'] == true;
+                            final streak =
+                                _streaksByHabitName[h['name']] ??
+                                (current: 0, best: 0);
 
-                            final streak = _streaksByHabitName[name];
-                            final current = streak?.current ?? 0;
-                            final best = streak?.best ?? 0;
-
-                            String subtitleText;
-
-                            if (!active) {
-                              subtitleText = best > 0
-                                  ? 'Hidden • You’ve done this before — best was $best days 🌸'
-                                  : 'Hidden • You can bring this back anytime 🌸';
-                            } else {
-                              if (current == 0 && best == 0) {
-                                subtitleText =
-                                    'Active • Start whenever you’re ready 🌸';
-                              } else if (current == 0 && best > 0) {
-                                subtitleText =
-                                    'Active • A fresh start is still progress • Best: $best days 🌸';
-                              } else if (current == 1) {
-                                subtitleText = best > 1
-                                    ? 'Active • Day 1 — you showed up 🌸 • Best: $best days'
-                                    : 'Active • Day 1 — you showed up 🌸';
-                              } else {
-                                subtitleText = best > 0
-                                    ? 'Active • You’re on a $current-day run 🌸 • Best: $best days'
-                                    : 'Active • You’re on a $current-day run 🌸';
-                              }
-                            }
-
-                            return Card(
+                            return Padding(
                               key: ValueKey(h['id']),
-                              child: ListTile(
-                                title: Text(
-                                  name,
-                                  style: TextStyle(
-                                    decoration: active
-                                        ? null
-                                        : TextDecoration.lineThrough,
-                                  ),
-                                ),
-                                subtitle: Text(subtitleText),
-                                leading: const Icon(Icons.drag_handle),
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      tooltip: 'Rename',
-                                      onPressed: () => _renameHabit(h),
-                                      icon: const Icon(Icons.edit),
-                                    ),
-                                    IconButton(
-                                      tooltip: active ? 'Hide' : 'Show',
-                                      onPressed: () => _toggleActive(h),
-                                      icon: Icon(
-                                        active
-                                            ? Icons.visibility_off
-                                            : Icons.visibility,
-                                      ),
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: scheme.surface,
+                                  borderRadius: BorderRadius.circular(20),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: scheme.primary.withOpacity(0.05),
+                                      blurRadius: 10,
                                     ),
                                   ],
+                                  border: Border.all(
+                                    color: scheme.outline.withOpacity(0.1),
+                                  ),
+                                ),
+                                child: ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 4,
+                                  ),
+                                  leading: Icon(
+                                    Icons.drag_handle,
+                                    color: scheme.outline,
+                                  ),
+                                  title: Text(
+                                    h['name'],
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      decoration: active
+                                          ? null
+                                          : TextDecoration.lineThrough,
+                                      color: active
+                                          ? scheme.onSurface
+                                          : scheme.onSurface.withOpacity(0.4),
+                                    ),
+                                  ),
+                                  subtitle: _buildSubtitle(
+                                    active,
+                                    streak,
+                                    scheme,
+                                  ),
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.edit_outlined,
+                                          size: 20,
+                                        ),
+                                        onPressed: () => _renameHabit(h),
+                                      ),
+                                      IconButton(
+                                        icon: Icon(
+                                          active
+                                              ? Icons.visibility_off_outlined
+                                              : Icons.visibility_outlined,
+                                          size: 20,
+                                        ),
+                                        onPressed: () => _toggleActive(h),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             );
@@ -438,6 +369,56 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
                 ),
               ],
             ),
+    );
+  }
+
+  Widget _buildSubtitle(
+    bool active,
+    ({int current, int best}) streak,
+    ColorScheme scheme,
+  ) {
+    if (!active) return const Text('Hidden • Tap eye to restore');
+
+    return RichText(
+      text: TextSpan(
+        style: TextStyle(
+          color: scheme.onSurface.withOpacity(0.6),
+          fontSize: 12,
+        ),
+        children: [
+          const TextSpan(text: 'Streak: '),
+          TextSpan(
+            text: '${streak.current} days',
+            style: TextStyle(
+              color: scheme.primary,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const TextSpan(text: '  •  Best: '),
+          TextSpan(text: '${streak.best} days'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Text('🌸', style: TextStyle(fontSize: 40)),
+          const SizedBox(height: 16),
+          const Text(
+            'No habits yet.',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _addHabit,
+            child: const Text('Add your first habit'),
+          ),
+        ],
+      ),
     );
   }
 }
