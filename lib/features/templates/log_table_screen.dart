@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
-import 'package:mind_buddy/router.dart';
+//import 'package:mind_buddy/router.dart';
 
 class LogTableScreen extends StatefulWidget {
   const LogTableScreen({
@@ -130,7 +130,7 @@ class _LogTableScreenState extends State<LogTableScreen> {
     if (_searchQuery.isEmpty) return entries;
     return entries.where((entry) {
       // Safely check if day exists
-      final dateStr = entry['day']?.toString() ?? '';
+      // final dateStr = entry['day']?.toString() ?? '';
       final dateMatch = _fmtEntryDate(entry).contains(_searchQuery);
 
       final contentMatch = entry.values.any((val) {
@@ -173,7 +173,9 @@ class _LogTableScreenState extends State<LogTableScreen> {
       builder: (_) => _NewEntryDialog(
         fields: fields,
         title: 'Edit entry',
-        initialDay: DateTime.tryParse(entry['day'] ?? '') ?? DateTime.now(),
+        initialDay:
+            DateTime.tryParse(entry['day']?.toString() ?? '') ?? DateTime.now(),
+
         initialData: Map<String, dynamic>.from(entry),
         templateKey: widget.templateKey,
       ),
@@ -226,7 +228,7 @@ class _LogTableScreenState extends State<LogTableScreen> {
   }
 
   String _fmtEntryDate(Map<String, dynamic> e) {
-    final d = DateTime.tryParse(e['day'] ?? '');
+    final d = DateTime.tryParse(e['day']?.toString() ?? '');
     return d == null ? '' : '${d.day}/${d.month}/${d.year}';
   }
 
@@ -402,10 +404,16 @@ class _StickyLogTable extends StatelessWidget {
                 ...tableFields.map((f) {
                   final key = f['field_key'];
                   final val = entry.containsKey(key) ? entry[key] : null;
-                  if (key == 'amount') {
-                    // Look for a 'unit' value in the same entry
-                    final unit = entry['unit'] ?? '';
-                    return DataCell(Text('$val $unit'));
+                  if (key == 'amount' ||
+                      key == 'amount_ml' ||
+                      key == 'cost' ||
+                      key == 'estimated_price') {
+                    final unit = (entry['unit'] ?? entry['currency'] ?? '')
+                        .toString();
+                    final shownUnit = unit.isEmpty
+                        ? (key == 'amount_ml' ? 'ml' : '')
+                        : unit;
+                    return DataCell(Text('${val ?? ''} $shownUnit'));
                   }
 
                   return DataCell(Text(formatValue(f['field_type'], val)));
@@ -445,6 +453,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
   @override
   void initState() {
     super.initState();
+
     day = widget.initialDay ?? DateTime.now();
 
     // Define which types are NOT text-based
@@ -467,11 +476,10 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       'hours_slept',
       'duration_hours',
       'energy_level',
-      'amount_ml',
+      //   'amount_ml',
       'duration_minutes',
       'intensity',
       'weight_kg',
-      'amount',
       'price',
       'priority',
       'sets',
@@ -481,6 +489,16 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     for (var f in widget.fields) {
       final key = f['field_key'];
       final initVal = widget.initialData?[key];
+      // ✅ Always treat money inputs as text (so decimals like 12.50 work)
+      if (key == 'amount' ||
+          key == 'cost' ||
+          key == 'price' ||
+          key == 'estimated_price') {
+        controllers[key] = TextEditingController(
+          text: initVal?.toString() ?? '',
+        );
+        continue;
+      }
 
       // 1. Handle Numeric Sliders & Ratings
       if (numericKeys.contains(key) ||
@@ -497,7 +515,15 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         values[key] = initVal ?? false;
       }
       // 3. Handle Dropdowns & Multi-select (Strings in 'values' map)
-      else if (['dropdown', 'multi_select', 'time'].contains(f['field_type']) ||
+      else if (f['field_type'] == 'time') {
+        controllers[key] = TextEditingController(
+          text: initVal?.toString() ?? '',
+        );
+      } else if ([
+            'dropdown',
+            'multi_select',
+            'date',
+          ].contains(f['field_type']) ||
           [
             'products',
             'skin_condition',
@@ -517,10 +543,27 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     }
   }
 
+  Future<void> _selectTime(String key) async {
+    final TimeOfDay? picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.now(),
+    );
+    if (picked != null) {
+      setState(() {
+        // Formats it as "HH:mm" (e.g., 22:30)
+        final localizations = MaterialLocalizations.of(context);
+        controllers[key]?.text = localizations.formatTimeOfDay(
+          picked,
+          alwaysUse24HourFormat: true,
+        );
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final tKey = widget.templateKey.toLowerCase();
+    // final tKey = widget.templateKey.toLowerCase();
 
     List<Map<String, dynamic>> sortedFields = List.from(widget.fields);
     sortedFields.sort(
@@ -548,26 +591,111 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         FilledButton(
           // Inside your Save Entry FilledButton
           onPressed: () {
+            // 1. Start with a copy of the special values (sliders, dates, etc.)
             final data = Map<String, dynamic>.from(values);
 
-            // Convert any numeric ratings/intensity to pure integers
-            for (var f in widget.fields) {
-              final key = f['field_key'];
-              if ([
-                'rating',
-                'intensity',
-                'severity',
-                'libido',
-                'energy_level',
-              ].contains(key)) {
-                if (data[key] != null) {
-                  data[key] = (data[key] as num)
-                      .toInt(); // This turns 5.0 into 5
-                }
-              }
+            // 2. Overwrite/Add text values from controllers
+            controllers.forEach((k, c) => data[k] = c.text);
+
+            // 1. DYNAMIC CURRENCY FIX:
+            // If the user picked a currency from your dropdown, make sure it's in the data
+            // We check for 'currency' and 'unit' as these are the common dropdown keys
+            if (values.containsKey('currency'))
+              data['currency'] = values['currency'];
+            if (values.containsKey('unit')) data['unit'] = values['unit'];
+
+            // CRITICAL FIXES:
+            // 1. Force Quality/Rating to Integer
+            if (data.containsKey('quality')) {
+              data['quality'] = (data['quality'] as num?)?.toInt() ?? 0;
             }
 
-            controllers.forEach((k, c) => data[k] = c.text);
+            // 2. Format Date for Supabase (YYYY-MM-DD)
+            // Ensure we aren't sending 'target_date' if it's empty
+            if (data.containsKey('target_date') &&
+                data['target_date'].toString().isEmpty) {
+              data.remove('target_date');
+            }
+
+            // 3. Ensure numeric fields are actually numbers
+            if (data.containsKey('hours_slept')) {
+              data['hours_slept'] =
+                  double.tryParse(data['hours_slept'].toString()) ?? 0.0;
+            }
+
+            // 3. CRITICAL: Force integers for DB compatibility (Fixes the 11.0 error)
+            final intKeys = [
+              'rating',
+              'quality',
+              'focus_rating',
+              'priority',
+              'intensity',
+              'severity',
+              'libido',
+              'energy_level',
+            ];
+
+            // Force integer columns safely
+            for (final k in intKeys) {
+              final v = data[k];
+              if (v == null) continue;
+
+              final parsed = (v is num) ? v : num.tryParse(v.toString());
+              if (parsed != null) data[k] = parsed.toInt();
+            }
+
+            // Decimal safety for numeric columns like amount/price
+            // Decimal safety for numeric money fields
+            for (final k in ['amount', 'price', 'cost', 'estimated_price']) {
+              if (!data.containsKey(k)) continue;
+              final v = data[k];
+              data[k] = (v == null || v.toString().isEmpty)
+                  ? 0.0
+                  : (double.tryParse(v.toString()) ?? 0.0);
+            }
+
+            // ✅ Water fix: parse amount_ml too
+            if (data.containsKey('amount_ml')) {
+              final v = data['amount_ml'];
+              data['amount_ml'] = (v == null || v.toString().isEmpty)
+                  ? 0.0
+                  : (double.tryParse(v.toString()) ?? 0.0);
+            }
+            // ---- EXPENSES: map amount -> cost (because expense_logs uses 'cost' not 'amount')
+
+            // 4. Ensure date fields aren't empty strings (Fixes the date error)
+            if (data['target_date'] == null ||
+                data['target_date'].toString().isEmpty) {
+              // Optional: remove it or set a default if the column allows nulls
+              data.remove('target_date');
+            }
+            // ✅ Only enforce 'amount' for tables that actually have an 'amount' column
+            final tKey = widget.templateKey.toLowerCase();
+
+            // ✅ EXPENSES: ensure we only send 'cost' (never 'amount')
+            if (tKey == 'expenses') {
+              // If UI field is 'amount', convert it -> cost
+              if (data.containsKey('amount') && !data.containsKey('cost')) {
+                data['cost'] = data['amount'];
+              }
+              data.remove('amount');
+
+              // Parse cost to double
+              final v = data['cost'];
+              data['cost'] = (v == null || v.toString().trim().isEmpty)
+                  ? 0.0
+                  : (double.tryParse(v.toString()) ?? 0.0);
+            } else {
+              // Expenses table uses 'cost'
+              if (data.containsKey('cost')) {
+                final v = data['cost'];
+                data['cost'] = (v == null || v.toString().isEmpty)
+                    ? 0.0
+                    : (double.tryParse(v.toString()) ?? 0.0);
+              }
+            }
+            debugPrint("SAVING (${widget.templateKey}): $data");
+
             Navigator.pop(context, _NewEntryResult(day: day, data: data));
           },
           child: const Text('Save Entry'),
@@ -579,6 +707,25 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
   Widget _buildField(Map<String, dynamic> f, ThemeData theme) {
     final key = f['field_key'];
 
+    if (f['field_type'] == 'date') {
+      return ListTile(
+        title: Text("${f['label']}: ${values[key] ?? 'Select Date'}"),
+        trailing: const Icon(Icons.calendar_today),
+        onTap: () async {
+          DateTime? picked = await showDatePicker(
+            context: context,
+            initialDate: DateTime.now(),
+            firstDate: DateTime(2000),
+            lastDate: DateTime(2100),
+          );
+          if (picked != null) {
+            setState(
+              () => values[key] = picked.toIso8601String().split('T')[0],
+            );
+          }
+        },
+      );
+    }
     // 1. CONSOLIDATED DROPDOWN & MULTI-SELECT
     if (f['field_type'] == 'dropdown' ||
         f['field_type'] == 'multi_select' ||
@@ -651,17 +798,15 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
               : DropdownButtonFormField<String>(
                   // 1. Check if options contains the value, otherwise force null
                   value:
-                      (options.contains(values[key].toString()) &&
-                          values[key].toString().isNotEmpty)
-                      ? values[key].toString()
+                      (options.contains(currentVal.toString()) &&
+                          currentVal.toString().isNotEmpty)
+                      ? currentVal.toString()
                       : null,
                   // 2. .toSet().toList() removes any duplicate strings in your list that cause crashes
-                  items: options.toSet().toList().map((o) {
-                    return DropdownMenuItem(
-                      value: o,
-                      child: Text(o, overflow: TextOverflow.ellipsis),
-                    );
-                  }).toList(),
+                  items: options
+                      .toSet()
+                      .map((o) => DropdownMenuItem(value: o, child: Text(o)))
+                      .toList(),
                   onChanged: (v) => setState(() => values[key] = v),
                   decoration: InputDecoration(
                     filled: true,
@@ -669,36 +814,47 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
                   ),
-                  // 3. This allows the dropdown to handle long text gracefully
                   isExpanded: true,
                 ),
+          const SizedBox(height: 16),
         ],
       );
     }
-
     // Handle Sliders (Hours Slept, Fasting Duration, Energy)
+    // --- 3. Numeric Sliders & Ratings ---
     if ([
-      'hours_slept',
-      'duration_hours',
-      'energy_level',
-      'duration_minutes',
-    ].contains(key)) {
-      double current = (values[key] ?? 5.0).toDouble();
-      double maxVal = 24.0;
-      if (key == 'duration_hours') maxVal = 72.0;
-      if (key == 'duration_minutes') maxVal = 120.0;
-      if (key == 'energy_level') maxVal = 10.0; // Fixed for Cycle/Mood
+          'hours_slept',
+          'duration_hours',
+          'energy_level',
+          'priority',
+          'intensity',
+        ].contains(key) ||
+        f['field_type'] == 'rating') {
+      if (f['field_type'] == 'rating' ||
+          ['severity', 'quality', 'focus_rating'].contains(key)) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _FieldLabel(label: f['label']),
+            _RatingPicker(
+              value: values[key] ?? 0,
+              onChanged: (v) => setState(() => values[key] = v),
+            ),
+            const SizedBox(height: 16),
+          ],
+        );
+      }
+
+      double maxVal = (key == 'duration_hours')
+          ? 72.0
+          : (key == 'hours_slept' ? 24.0 : 10.0);
+      double current = (values[key] ?? 0.0).toDouble().clamp(0.0, maxVal);
       return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _FieldLabel(label: "${f['label']}: ${current.toInt()}"),
           Slider(
-            value: current.clamp(0.0, maxVal),
+            value: current,
             min: 0,
             max: maxVal,
             divisions: maxVal.toInt(),
@@ -709,11 +865,10 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       );
     }
 
-    // Handle Booleans
+    // --- 4. Booleans ---
     if (f['field_type'] == 'bool' ||
         ['paid', 'is_done', 'goal_reached'].contains(key)) {
       return SwitchListTile(
-        contentPadding: EdgeInsets.zero,
         title: Text(
           f['label'],
           style: const TextStyle(fontWeight: FontWeight.bold),
@@ -794,6 +949,9 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         ],
       );
     }
+    final hint = (key == 'bedtime' || key == 'wake_up_time')
+        ? "Tap to select time"
+        : null; // This removes the "Enter your thoughts" text from everything else
 
     // Default Text Fields
     return Column(
@@ -802,28 +960,59 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         _FieldLabel(label: f['label']),
         TextField(
           controller: controllers[key],
+
           keyboardType:
-              [
-                'amount_ml',
-                'amount',
-                'current_page',
-                'price',
-                'sets',
-                'reps',
-                'weight_kg',
-              ].contains(key)
-              ? TextInputType.number
+              (key == 'amount' ||
+                  key == 'cost' ||
+                  key == 'price' ||
+                  key == 'estimated_price' ||
+                  key == 'weight_kg' ||
+                  key == 'current_page' ||
+                  key == 'sets' ||
+                  key == 'reps')
+              ? const TextInputType.numberWithOptions(decimal: true)
+              : (key == 'notes' || key == 'note' || key == 'action_plan')
+              ? TextInputType.multiline
               : TextInputType.text,
-          maxLines: (key == 'notes' || key == 'products' || key == 'feeling')
+          textInputAction:
+              (key == 'notes' || key == 'note' || key == 'action_plan')
+              ? TextInputAction.newline
+              : TextInputAction.done,
+
+          // If it's a "time" field, we make it read-only so they have to use our picker
+          readOnly:
+              f['field_type'] == 'time' ||
+              key == 'bedtime' ||
+              key == 'wake_up_time',
+          onTap:
+              (f['field_type'] == 'time' ||
+                  key == 'bedtime' ||
+                  key == 'wake_up_time')
+              ? () => _selectTime(key)
+              : null,
+          maxLines:
+              (key == 'notes' ||
+                  key == 'note' ||
+                  key == 'action_plan' ||
+                  key == 'feeling' ||
+                  key == 'products')
               ? 4
               : 1,
           decoration: InputDecoration(
+            hintText: hint,
+            suffixIcon:
+                (f['field_type'] == 'time' ||
+                    key == 'bedtime' ||
+                    key == 'wake_up_time')
+                ? const Icon(Icons.access_time)
+                : null,
             prefixIcon: key == 'current_page'
                 ? const Icon(Icons.bookmark_outline)
                 : null,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
+
         const SizedBox(height: 16),
       ],
     );
@@ -1051,13 +1240,12 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       options = [
         '📚 Math',
         '🧬 Science',
-        '✍️ English'
-            '⚖️ Law',
+        '✍️ English',
+        '⚖️ Law',
         '💻 Programming',
         '🎨 Art/Design',
         '🌍 Languages',
         '📈 Business',
-        ' Writing',
         '🌍 Religion',
       ];
     } else if (key == 'study_methods') {
