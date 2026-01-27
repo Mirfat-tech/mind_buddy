@@ -42,10 +42,10 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     'skin_care',
     'meditation',
     'social',
-    'Goals/Resolutions'
-        // 'symptoms',
-        'habits',
-    'meal_prep',
+    'Goals/Resolutions',
+    // 'symptoms',
+    // 'habits',
+    //'meal_prep'
   ];
 
   @override
@@ -83,6 +83,14 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
           .select()
           .or('user_id.eq.${user.id},user_id.is.null')
           .order('name', ascending: true);
+
+      debugPrint('--- TEMPLATE KEYS FROM DB (${rows.length}) ---');
+      for (final r in rows) {
+        debugPrint(
+          'name=${r['name']}  key=${r['template_key']}  user_id=${r['user_id']}',
+        );
+      }
+      debugPrint('--- END ---');
 
       if (mounted) {
         setState(() {

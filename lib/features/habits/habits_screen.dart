@@ -69,8 +69,9 @@ class _HabitsScreenState extends State<HabitsScreen> {
 
           // ✅ Key forces rebuild when refreshTick changes
           HabitStreaksSummary(
-            key:
-                ValueKey('summary_${refreshTick}_${month.year}-${month.month}'),
+            key: ValueKey(
+              'summary_${refreshTick}_${month.year}-${month.month}',
+            ),
             month: month,
             onManageTap: () => context.go('/habits/manage'),
           ),

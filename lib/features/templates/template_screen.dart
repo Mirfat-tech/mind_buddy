@@ -189,9 +189,9 @@ class _TemplateConfig {
           description: 'Movie log screen goes here.',
           primaryCta: 'Add movie',
         );
-      case 'tv':
+      case 'tv_log':
         return const _TemplateConfig(
-          id: 'tv',
+          id: 'tv_log',
           title: 'TV log',
           icon: Icons.tv_outlined,
           calendarLinked: false,

@@ -71,6 +71,9 @@ class _LogTableScreenState extends State<LogTableScreen> {
         return 'study_logs';
       case 'workout':
         return 'workout_logs';
+      case 'tv_log':
+        return 'tv_logs';
+
       case 'mood':
         return 'mood_logs';
       case 'symptoms':
@@ -99,8 +102,9 @@ class _LogTableScreenState extends State<LogTableScreen> {
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => loading = true);
+
+    // 1) Always load fields first
     try {
-      final currentTable = _getTableName();
       final f = await supabase
           .from('log_template_fields_v2')
           .select()
@@ -108,22 +112,31 @@ class _LogTableScreenState extends State<LogTableScreen> {
           .eq('is_hidden', false)
           .order('sort_order');
 
+      if (mounted) {
+        setState(() => fields = List<Map<String, dynamic>>.from(f));
+      }
+    } catch (err) {
+      debugPrint("Field load error: $err");
+    }
+
+    // 2) Then try load entries (can fail without breaking the dialog)
+    try {
+      final currentTable = _getTableName();
       final e = await supabase
           .from(currentTable)
           .select()
+          .eq('user_id', supabase.auth.currentUser!.id)
           .order('day', ascending: _sortAscending);
 
       if (mounted) {
-        setState(() {
-          fields = List<Map<String, dynamic>>.from(f);
-          entries = List<Map<String, dynamic>>.from(e);
-          loading = false;
-        });
+        setState(() => entries = List<Map<String, dynamic>>.from(e));
       }
     } catch (err) {
-      debugPrint("Load error: $err");
-      if (mounted) setState(() => loading = false);
+      debugPrint("Entries load error: $err");
+      // keep entries empty, but fields still exist ✅
     }
+
+    if (mounted) setState(() => loading = false);
   }
 
   List<Map<String, dynamic>> get _filteredEntries {
@@ -407,12 +420,20 @@ class _StickyLogTable extends StatelessWidget {
                   if (key == 'amount' ||
                       key == 'amount_ml' ||
                       key == 'cost' ||
-                      key == 'estimated_price') {
+                      key == 'estimated_price' ||
+                      key == 'weight_kg') {
                     final unit = (entry['unit'] ?? entry['currency'] ?? '')
                         .toString();
-                    final shownUnit = unit.isEmpty
-                        ? (key == 'amount_ml' ? 'ml' : '')
-                        : unit;
+
+                    // If no unit is found in DB, use 'kg' for weight or 'ml' for water
+                    String shownUnit = unit;
+                    if (unit.isEmpty) {
+                      if (key == 'weight_kg')
+                        shownUnit = 'kg';
+                      else if (key == 'amount_ml')
+                        shownUnit = 'ml';
+                    }
+
                     return DataCell(Text('${val ?? ''} $shownUnit'));
                   }
 
@@ -470,6 +491,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       'energy_level',
       'severity',
       'intensity',
+      'rating',
     ];
 
     final numericKeys = [
@@ -479,7 +501,8 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       //   'amount_ml',
       'duration_minutes',
       'intensity',
-      'weight_kg',
+      //'weight_kg',
+      //'weight'
       'price',
       'priority',
       'sets',
@@ -589,41 +612,49 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       ),
       actions: [
         FilledButton(
-          // Inside your Save Entry FilledButton
           onPressed: () {
-            // 1. Start with a copy of the special values (sliders, dates, etc.)
             final data = Map<String, dynamic>.from(values);
-
-            // 2. Overwrite/Add text values from controllers
             controllers.forEach((k, c) => data[k] = c.text);
 
-            // 1. DYNAMIC CURRENCY FIX:
-            // If the user picked a currency from your dropdown, make sure it's in the data
-            // We check for 'currency' and 'unit' as these are the common dropdown keys
+            // This prevents the "0.0" reset issue
+            if (controllers.containsKey('weight_kg')) {
+              final weightText = controllers['weight_kg']!.text;
+              data['weight_kg'] = (weightText.isEmpty)
+                  ? 0.0
+                  : (double.tryParse(weightText) ?? 0.0);
+            }
+
+            // 5. Template specific cleanup
+            final tKey = widget.templateKey.toLowerCase();
+            if (tKey == 'workout') {
+              if (data.containsKey('exercises')) {
+                data['exercise'] = data['exercises'];
+                data.remove('exercises');
+              }
+              data.remove('amount');
+              data.remove('cost');
+            }
+
+            debugPrint("CHECK THIS IN CONSOLE: ${data['weight_kg']}");
+
             if (values.containsKey('currency'))
               data['currency'] = values['currency'];
             if (values.containsKey('unit')) data['unit'] = values['unit'];
 
-            // CRITICAL FIXES:
-            // 1. Force Quality/Rating to Integer
             if (data.containsKey('quality')) {
               data['quality'] = (data['quality'] as num?)?.toInt() ?? 0;
             }
 
-            // 2. Format Date for Supabase (YYYY-MM-DD)
-            // Ensure we aren't sending 'target_date' if it's empty
             if (data.containsKey('target_date') &&
                 data['target_date'].toString().isEmpty) {
               data.remove('target_date');
             }
 
-            // 3. Ensure numeric fields are actually numbers
             if (data.containsKey('hours_slept')) {
               data['hours_slept'] =
                   double.tryParse(data['hours_slept'].toString()) ?? 0.0;
             }
 
-            // 3. CRITICAL: Force integers for DB compatibility (Fixes the 11.0 error)
             final intKeys = [
               'rating',
               'quality',
@@ -633,20 +664,29 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
               'severity',
               'libido',
               'energy_level',
+              'sets',
+              'reps',
             ];
+            //
 
-            // Force integer columns safely
             for (final k in intKeys) {
-              final v = data[k];
-              if (v == null) continue;
-
-              final parsed = (v is num) ? v : num.tryParse(v.toString());
-              if (parsed != null) data[k] = parsed.toInt();
+              if (data.containsKey(k)) {
+                final v = data[k];
+                data[k] = (v is num)
+                    ? v.toInt()
+                    : (num.tryParse(v.toString())?.toInt() ?? 0);
+              }
             }
 
-            // Decimal safety for numeric columns like amount/price
-            // Decimal safety for numeric money fields
-            for (final k in ['amount', 'price', 'cost', 'estimated_price']) {
+            for (final k in [
+              'amount',
+              'price',
+              'cost',
+              'estimated_price',
+              // 'weight',
+              'weight_kg',
+              'amount_ml',
+            ]) {
               if (!data.containsKey(k)) continue;
               final v = data[k];
               data[k] = (v == null || v.toString().isEmpty)
@@ -654,48 +694,34 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                   : (double.tryParse(v.toString()) ?? 0.0);
             }
 
-            // ✅ Water fix: parse amount_ml too
-            if (data.containsKey('amount_ml')) {
-              final v = data['amount_ml'];
-              data['amount_ml'] = (v == null || v.toString().isEmpty)
-                  ? 0.0
-                  : (double.tryParse(v.toString()) ?? 0.0);
+            if (tKey == 'workout') {
+              if (data.containsKey('exercises')) {
+                data['exercise'] = data['exercises'];
+                data.remove('exercises');
+              }
+              data.remove('amount');
+              data.remove('cost');
+              data.remove('price');
             }
-            // ---- EXPENSES: map amount -> cost (because expense_logs uses 'cost' not 'amount')
 
-            // 4. Ensure date fields aren't empty strings (Fixes the date error)
-            if (data['target_date'] == null ||
-                data['target_date'].toString().isEmpty) {
-              // Optional: remove it or set a default if the column allows nulls
-              data.remove('target_date');
-            }
-            // ✅ Only enforce 'amount' for tables that actually have an 'amount' column
-            final tKey = widget.templateKey.toLowerCase();
-
-            // ✅ EXPENSES: ensure we only send 'cost' (never 'amount')
             if (tKey == 'expenses') {
-              // If UI field is 'amount', convert it -> cost
               if (data.containsKey('amount') && !data.containsKey('cost')) {
                 data['cost'] = data['amount'];
               }
               data.remove('amount');
-
-              // Parse cost to double
               final v = data['cost'];
               data['cost'] = (v == null || v.toString().trim().isEmpty)
                   ? 0.0
                   : (double.tryParse(v.toString()) ?? 0.0);
-            } else {
-              // Expenses table uses 'cost'
-              if (data.containsKey('cost')) {
-                final v = data['cost'];
-                data['cost'] = (v == null || v.toString().isEmpty)
-                    ? 0.0
-                    : (double.tryParse(v.toString()) ?? 0.0);
-              }
             }
-            debugPrint("SAVING (${widget.templateKey}): $data");
+            // Clean up target_date
+            if (data.containsKey('target_date') &&
+                (data['target_date'] == null ||
+                    data['target_date'].toString().isEmpty)) {
+              data.remove('target_date');
+            }
 
+            debugPrint("SAVING (${widget.templateKey}): $data");
             Navigator.pop(context, _NewEntryResult(day: day, data: data));
           },
           child: const Text('Save Entry'),
@@ -741,6 +767,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           'status',
           'genre',
           'subject',
+          'location',
           'study_methods',
           'people',
           'currency',
@@ -933,6 +960,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           'severity',
           'focus_rating',
           'quality',
+          'rating',
           'libido', // Added for Menstrual
           'energy_level', // Added for Menstrual
           'stress_level', // Added for Menstrual
@@ -960,13 +988,13 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         _FieldLabel(label: f['label']),
         TextField(
           controller: controllers[key],
-
           keyboardType:
               (key == 'amount' ||
+                  key == 'weight_kg' ||
                   key == 'cost' ||
                   key == 'price' ||
                   key == 'estimated_price' ||
-                  key == 'weight_kg' ||
+                  key == 'amount_ml' ||
                   key == 'current_page' ||
                   key == 'sets' ||
                   key == 'reps')
@@ -978,8 +1006,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
               (key == 'notes' || key == 'note' || key == 'action_plan')
               ? TextInputAction.newline
               : TextInputAction.done,
-
-          // If it's a "time" field, we make it read-only so they have to use our picker
+          // Read-only for time pickers
           readOnly:
               f['field_type'] == 'time' ||
               key == 'bedtime' ||
@@ -1000,6 +1027,14 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
               : 1,
           decoration: InputDecoration(
             hintText: hint,
+            // Added suffixText for units
+            suffixText: key == 'weight_kg'
+                ? 'kg'
+                : (key == 'amount_ml' ? 'ml' : null),
+            suffixStyle: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.grey,
+            ),
             suffixIcon:
                 (f['field_type'] == 'time' ||
                     key == 'bedtime' ||
@@ -1012,7 +1047,6 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           ),
         ),
-
         const SizedBox(height: 16),
       ],
     );
@@ -1079,7 +1113,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     else if (key == 'status') {
       if (tKey == 'expenses') {
         options = ['✅ Paid', '⏳ Pending', '🟡 Cleared', '❌ Cancelled'];
-      } else if (tKey == 'movies' || tKey == 'tv') {
+      } else if (tKey == 'movies' || tKey == 'tv_log') {
         options = ['⏳ Watchlist', '🍿 Watching', '✅ Finished', '❌ Abandoned'];
       } else if (tKey == 'wishlist') {
         options = ['🛍️ To Buy', '📦 Ordered', '⏳ Waiting', '✅ Received'];
@@ -1208,7 +1242,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         '🥙 Middle Eastern',
         '🍷 Steakhouse',
       ];
-    } else if (key == 'location' && tKey == 'movies') {
+    } else if (key == 'location' && (tKey == 'movies' || tKey == 'tv_log')) {
       options = [
         '🏠 Home',
         '🎬 Cinema',
@@ -1216,7 +1250,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         '✈️ Airplane',
         '🚌 Commute',
       ];
-    } else if (key == 'genre' && tKey == 'movies') {
+    } else if (key == 'genre' && (tKey == 'movies' || tKey == 'tv_log')) {
       options = [
         'Action',
         'Comedy',
