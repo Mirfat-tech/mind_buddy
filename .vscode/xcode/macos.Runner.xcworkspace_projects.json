@@ -1,0 +1,1592 @@
+{
+    "dataType": "Map",
+    "value": [
+        [
+            "macos/Runner.xcodeproj",
+            {
+                "timestamp": 1764953223388.1301,
+                "list": {
+                    "dataType": "Set",
+                    "value": [
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Configs/Debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Configs/Release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/AppDelegate.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/MainFlutterWindow.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/DebugProfile.entitlements",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Release.entitlements",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Base.lproj/MainMenu.xib",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Configs/AppInfo.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Configs/Warnings.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/GeneratedPluginRegistrant.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/Flutter-Debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/Flutter-Release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/Flutter-Generated.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/RunnerTests/RunnerTests.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Assets.xcassets",
+                            "isFolder": true,
+                            "includeAllSubfolders": true
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Runner/Configs",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/RunnerTests",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        }
+                    ]
+                }
+            }
+        ],
+        [
+            "macos/Pods/Pods.xcodeproj",
+            {
+                "timestamp": 1765135318047.6487,
+                "list": {
+                    "dataType": "Set",
+                    "value": [
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Podfile",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/app_links-6.4.1/macos/app_links/Sources/app_links/AppLinksMacosPlugin.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/app_links-6.4.1/macos/app_links/Sources/app_links/PrivacyInfo.xcprivacy",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/app_links-6.4.1/macos/app_links.podspec",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/app_links-6.4.1/LICENSE",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links/app_links.modulemap",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links/app_links-dummy.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links/app_links-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links/app_links-prefix.pch",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links/app_links-umbrella.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links/app_links.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links/app_links.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links/ResourceBundle-app_links_macos_privacy-app_links-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/macos/Classes/FlutterSecureStorage.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/macos/Classes/FlutterSecureStoragePlugin.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/macos/Resources/PrivacyInfo.xcprivacy",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/macos/flutter_secure_storage_macos.podspec",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/LICENSE",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos/flutter_secure_storage_macos.modulemap",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos/flutter_secure_storage_macos-dummy.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos/flutter_secure_storage_macos-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos/flutter_secure_storage_macos-prefix.pch",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos/flutter_secure_storage_macos-umbrella.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos/flutter_secure_storage_macos.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos/flutter_secure_storage_macos.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos/ResourceBundle-flutter_secure_storage_macos-flutter_secure_storage_macos-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/FlutterMacOS.podspec",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/FlutterMacOS/FlutterMacOS.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/FlutterMacOS/FlutterMacOS.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/macos/package_info_plus/Sources/package_info_plus/FPPPackageInfoPlusPlugin.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/macos/package_info_plus/Sources/package_info_plus/PrivacyInfo.xcprivacy",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/macos/package_info_plus/Sources/package_info_plus/include/package_info_plus/FPPPackageInfoPlusPlugin.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/LICENSE",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/macos/package_info_plus.podspec",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus/package_info_plus.modulemap",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus/package_info_plus-dummy.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus/package_info_plus-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus/package_info_plus-prefix.pch",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus/package_info_plus-umbrella.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus/package_info_plus.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus/package_info_plus.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus/ResourceBundle-package_info_plus_privacy-package_info_plus-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1/darwin/path_provider_foundation/Sources/path_provider_foundation/Resources/PrivacyInfo.xcprivacy",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1/darwin/path_provider_foundation/Sources/path_provider_foundation/messages.g.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1/darwin/path_provider_foundation/Sources/path_provider_foundation/PathProviderPlugin.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1/LICENSE",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1/darwin/path_provider_foundation.podspec",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation/path_provider_foundation.modulemap",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation/path_provider_foundation-dummy.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation/path_provider_foundation-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation/path_provider_foundation-prefix.pch",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation/path_provider_foundation-umbrella.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation/path_provider_foundation.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation/path_provider_foundation.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation/ResourceBundle-path_provider_foundation_privacy-path_provider_foundation-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/darwin/shared_preferences_foundation/Sources/shared_preferences_foundation/Resources/PrivacyInfo.xcprivacy",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/darwin/shared_preferences_foundation/Sources/shared_preferences_foundation/messages.g.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/darwin/shared_preferences_foundation/Sources/shared_preferences_foundation/SharedPreferencesPlugin.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/LICENSE",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/darwin/shared_preferences_foundation.podspec",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation/ResourceBundle-shared_preferences_foundation_privacy-shared_preferences_foundation-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation/shared_preferences_foundation.modulemap",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation/shared_preferences_foundation-dummy.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation/shared_preferences_foundation-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation/shared_preferences_foundation-prefix.pch",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation/shared_preferences_foundation-umbrella.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation/shared_preferences_foundation.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation/shared_preferences_foundation.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/macos/url_launcher_macos/Sources/url_launcher_macos/Resources/PrivacyInfo.xcprivacy",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/macos/url_launcher_macos/Sources/url_launcher_macos/messages.g.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/macos/url_launcher_macos/Sources/url_launcher_macos/UrlLauncherPlugin.swift",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/LICENSE",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/macos/url_launcher_macos.podspec",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos/ResourceBundle-url_launcher_macos_privacy-url_launcher_macos-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos/url_launcher_macos.modulemap",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos/url_launcher_macos-dummy.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos/url_launcher_macos-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos/url_launcher_macos-prefix.pch",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos/url_launcher_macos-umbrella.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos/url_launcher_macos.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos/url_launcher_macos.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner.modulemap",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner-acknowledgements.markdown",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner-acknowledgements.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner-dummy.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner-frameworks.sh",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner-umbrella.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests.modulemap",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests-acknowledgements.markdown",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests-acknowledgements.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests-dummy.m",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests-Info.plist",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests-umbrella.h",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests.profile.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/app_links/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/app_links-6.4.1/macos/app_links/Sources",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/app_links-6.4.1/macos/app_links",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/app_links-6.4.1/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/app_links-6.4.1",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/app_links",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/app_links/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/app_links/macos/app_links",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/app_links/macos/app_links/Sources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/app_links/macos/app_links/Sources/app_links",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/app_links/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/app_links",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/flutter_secure_storage_macos-3.1.3",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos/Classes",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos/Resources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/flutter_secure_storage_macos/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/flutter_secure_storage_macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/FlutterMacOS",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/macos/package_info_plus/Sources",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/macos/package_info_plus",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/package_info_plus-8.3.1",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos/package_info_plus",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos/package_info_plus/Sources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos/package_info_plus/Sources/package_info_plus",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos/package_info_plus/Sources/package_info_plus/include",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos/package_info_plus/Sources/package_info_plus/include/package_info_plus",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/package_info_plus",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1/darwin/path_provider_foundation/Sources",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1/darwin/path_provider_foundation",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1/darwin",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/path_provider_foundation-2.5.1",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin/path_provider_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin/path_provider_foundation/Sources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin/path_provider_foundation/Sources/path_provider_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin/path_provider_foundation/Sources/path_provider_foundation/Resources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin/path_provider_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin/path_provider_foundation/Sources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin/path_provider_foundation/Sources/path_provider_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/path_provider_foundation/darwin",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/path_provider_foundation",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/darwin/shared_preferences_foundation/Sources",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/darwin/shared_preferences_foundation",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/darwin",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin/shared_preferences_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin/shared_preferences_foundation/Sources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin/shared_preferences_foundation/Sources/shared_preferences_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin/shared_preferences_foundation/Sources/shared_preferences_foundation/Resources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin/shared_preferences_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin/shared_preferences_foundation/Sources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin/shared_preferences_foundation/Sources/shared_preferences_foundation",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/shared_preferences_foundation/darwin",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/shared_preferences_foundation",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/macos/url_launcher_macos/Sources",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/macos/url_launcher_macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted/pub.dev",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache/hosted",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/.pub-cache",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos/url_launcher_macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos/url_launcher_macos/Sources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos/url_launcher_macos/Sources/url_launcher_macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos/url_launcher_macos/Sources/url_launcher_macos/Resources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos/url_launcher_macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos/url_launcher_macos/Sources",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos/url_launcher_macos/Sources/url_launcher_macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos",
+                            "isFolder": false,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/url_launcher_macos",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-Runner",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        },
+                        {
+                            "path": "/Users/mirfatal-ghaithy/mind_buddy/macos/Pods/Target Support Files/Pods-RunnerTests",
+                            "isFolder": true,
+                            "includeAllSubfolders": false
+                        }
+                    ]
+                }
+            }
+        ]
+    ]
+}

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 //import 'package:mind_buddy/router.dart';
+import 'package:flutter/cupertino.dart';
 
 class LogTableScreen extends StatefulWidget {
   const LogTableScreen({
@@ -365,6 +366,870 @@ class _StickyLogTable extends StatelessWidget {
     required this.onDelete,
   });
 
+  // ✅ ADD THIS METHOD HERE (after constructor, before _buildColumns)
+  String _detectTemplate(Map<String, dynamic> entry) {
+    if (entry.containsKey('currency') && entry.containsKey('is_paid'))
+      return 'bills';
+    if (entry.containsKey('book_title') || entry.containsKey('author'))
+      return 'books';
+    if (entry.containsKey('flow') && entry.containsKey('symptoms'))
+      return 'cycle';
+    if (entry.containsKey('cost') && entry.containsKey('category'))
+      return 'expenses';
+    if (entry.containsKey('duration_hours') && entry.containsKey('feeling'))
+      return 'fast';
+    if (entry.containsKey('goal_title')) return 'goals';
+    if (entry.containsKey('source') && !entry.containsKey('currency'))
+      return 'income';
+    if (entry.containsKey('duration_minutes') && entry.containsKey('technique'))
+      return 'meditation';
+    if (entry.containsKey('feeling') && entry.containsKey('intensity'))
+      return 'mood';
+    if (entry.containsKey('movie_title')) return 'movies';
+    if (entry.containsKey('place_name') && entry.containsKey('location'))
+      return 'places';
+    if (entry.containsKey('restaurant_name') &&
+        entry.containsKey('cuisine_type'))
+      return 'restaurants';
+    if (entry.containsKey('routine_type') && entry.containsKey('products'))
+      return 'skin_care';
+    if (entry.containsKey('hours_slept') && entry.containsKey('quality'))
+      return 'sleep';
+    if (entry.containsKey('person_event') && entry.containsKey('activity_type'))
+      return 'social';
+    if (entry.containsKey('subject') && entry.containsKey('focus_rating'))
+      return 'study';
+    if (entry.containsKey('task_name') && entry.containsKey('is_done'))
+      return 'tasks';
+    if (entry.containsKey('title') && entry.containsKey('thoughts'))
+      return 'tv_log';
+    if (entry.containsKey('amount') && entry.containsKey('unit'))
+      return 'water';
+    if (entry.containsKey('item_name') && !entry.containsKey('source'))
+      return 'wishlist';
+    if (entry.containsKey('exercise') && entry.containsKey('sets'))
+      return 'workout';
+    return 'other';
+  }
+
+  List<DataColumn> _buildColumns() {
+    // Detect template by checking unique field combinations
+    String templateKey = 'other';
+
+    if (entries.isNotEmpty) {
+      final firstEntry = entries.first;
+
+      // Bills: has currency + is_paid
+      if (firstEntry.containsKey('currency') &&
+          firstEntry.containsKey('is_paid')) {
+        templateKey = 'bills';
+      }
+      // Books: has book_title or author
+      else if (firstEntry.containsKey('book_title') ||
+          firstEntry.containsKey('author')) {
+        templateKey = 'books';
+      }
+      // Cycle: has flow + symptoms
+      else if (firstEntry.containsKey('flow') &&
+          firstEntry.containsKey('symptoms')) {
+        templateKey = 'cycle';
+      }
+      // Expenses: has cost (not amount)
+      else if (firstEntry.containsKey('cost') &&
+          firstEntry.containsKey('category')) {
+        templateKey = 'expenses';
+      }
+      // Fast: has duration_hours + feeling
+      else if (firstEntry.containsKey('duration_hours') &&
+          firstEntry.containsKey('feeling')) {
+        templateKey = 'fast';
+      }
+      // Goals: has goal_title
+      else if (firstEntry.containsKey('goal_title')) {
+        templateKey = 'goals';
+      }
+      // Income: has source + amount (but no currency)
+      else if (firstEntry.containsKey('source') &&
+          !firstEntry.containsKey('currency')) {
+        templateKey = 'income';
+      }
+      // Meditation: has duration_minutes + technique
+      else if (firstEntry.containsKey('duration_minutes') &&
+          firstEntry.containsKey('technique')) {
+        templateKey = 'meditation';
+      }
+      // Mood: has feeling + intensity
+      else if (firstEntry.containsKey('feeling') &&
+          firstEntry.containsKey('intensity')) {
+        templateKey = 'mood';
+      }
+      // Movies: has movie_title
+      else if (firstEntry.containsKey('movie_title')) {
+        templateKey = 'movies';
+      }
+      // Places: has place_name + location
+      else if (firstEntry.containsKey('place_name') &&
+          firstEntry.containsKey('location')) {
+        templateKey = 'places';
+      }
+      // Restaurants: has restaurant_name + cuisine_type
+      else if (firstEntry.containsKey('restaurant_name') &&
+          firstEntry.containsKey('cuisine_type')) {
+        templateKey = 'restaurants';
+      }
+      // Skin Care: has routine_type + products
+      else if (firstEntry.containsKey('routine_type') &&
+          firstEntry.containsKey('products')) {
+        templateKey = 'skin_care';
+      }
+      // Sleep: has hours_slept + quality
+      else if (firstEntry.containsKey('hours_slept') &&
+          firstEntry.containsKey('quality')) {
+        templateKey = 'sleep';
+      }
+      // Social: has person_event + activity_type
+      else if (firstEntry.containsKey('person_event') &&
+          firstEntry.containsKey('activity_type')) {
+        templateKey = 'social';
+      }
+      // Study: has subject + focus_rating
+      else if (firstEntry.containsKey('subject') &&
+          firstEntry.containsKey('focus_rating')) {
+        templateKey = 'study';
+      }
+      // Tasks: has task_name + is_done
+      else if (firstEntry.containsKey('task_name') &&
+          firstEntry.containsKey('is_done')) {
+        templateKey = 'tasks';
+      }
+      // TV Shows: has title + thoughts (not movie_title)
+      else if (firstEntry.containsKey('title') &&
+          firstEntry.containsKey('thoughts')) {
+        templateKey = 'tv_log';
+      }
+      // Water: has amount + unit
+      else if (firstEntry.containsKey('amount') &&
+          firstEntry.containsKey('unit')) {
+        templateKey = 'water';
+      }
+      // Wishlist: has item_name + price (but no source)
+      else if (firstEntry.containsKey('item_name') &&
+          !firstEntry.containsKey('source')) {
+        templateKey = 'wishlist';
+      }
+      // Workout: has exercise + sets + reps
+      else if (firstEntry.containsKey('exercise') &&
+          firstEntry.containsKey('sets')) {
+        templateKey = 'workout';
+      }
+    }
+
+    // BILLS
+    if (templateKey == 'bills') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('BILL NAME')),
+        const DataColumn(label: Text('CATEGORY')),
+        const DataColumn(label: Text('CURRENCY')),
+        const DataColumn(label: Text('AMOUNT')),
+        const DataColumn(label: Text('IS PAID?')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // BOOKS
+    if (templateKey == 'books') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('BOOK TITLE')),
+        const DataColumn(label: Text('AUTHOR')),
+        const DataColumn(label: Text('CATEGORY')),
+        const DataColumn(label: Text('CURRENT PAGE')),
+        const DataColumn(label: Text('RATING')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // CYCLE
+    if (templateKey == 'cycle') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('FLOW')),
+        const DataColumn(label: Text('SYMPTOMS')),
+        const DataColumn(label: Text('CRAMPS')),
+        const DataColumn(label: Text('LIBIDO')),
+        const DataColumn(label: Text('ENERGY')),
+        const DataColumn(label: Text('STRESS')),
+        const DataColumn(label: Text('PREGNANCY TEST')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // EXPENSES
+    if (templateKey == 'expenses') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('ITEM/SERVICE')),
+        const DataColumn(label: Text('CATEGORY')),
+        const DataColumn(label: Text('CURRENCY')),
+        const DataColumn(label: Text('COST')),
+        const DataColumn(label: Text('STATUS')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // FAST
+    if (templateKey == 'fast') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('HOURS FASTED')),
+        const DataColumn(label: Text('FEELING')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // GOALS
+    if (templateKey == 'goals') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('GOAL TITLE')),
+        const DataColumn(label: Text('CATEGORY')),
+        const DataColumn(label: Text('PRIORITY')),
+        const DataColumn(label: Text('COMPLETED?')),
+        const DataColumn(label: Text('TARGET DATE')),
+        const DataColumn(label: Text('ACTION PLAN')),
+      ];
+    }
+
+    // INCOME
+    if (templateKey == 'income') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('SOURCE')),
+        const DataColumn(label: Text('AMOUNT')),
+        const DataColumn(label: Text('CATEGORY')),
+        const DataColumn(label: Text('STATUS')),
+        const DataColumn(label: Text('CURRENCY')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // MEDITATION
+    if (templateKey == 'meditation') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('DURATION')),
+        const DataColumn(label: Text('TECHNIQUE')),
+        const DataColumn(label: Text('FOCUS RATING')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // MOOD
+    if (templateKey == 'mood') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('FEELING')),
+        const DataColumn(label: Text('INTENSITY')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // MOVIES
+    if (templateKey == 'movies') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('MOVIE TITLE')),
+        const DataColumn(label: Text('GENRE')),
+        const DataColumn(label: Text('RATING')),
+        const DataColumn(label: Text('LOCATION')),
+        const DataColumn(label: Text('STATUS')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // PLACES
+    if (templateKey == 'places') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('PLACE NAME')),
+        const DataColumn(label: Text('LOCATION')),
+        const DataColumn(label: Text('RATING')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // RESTAURANTS
+    if (templateKey == 'restaurants') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('RESTAURANT')),
+        const DataColumn(label: Text('CUISINE TYPE')),
+        const DataColumn(label: Text('LOCATION')),
+        const DataColumn(label: Text('RATING')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // SKIN CARE
+    if (templateKey == 'skin_care') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('ROUTINE TYPE')),
+        const DataColumn(label: Text('PRODUCTS')),
+        const DataColumn(label: Text('SKIN CONDITION')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // SLEEP
+    if (templateKey == 'sleep') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('HOURS SLEPT')),
+        const DataColumn(label: Text('QUALITY')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // SOCIAL
+    if (templateKey == 'social') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('PERSON/EVENT')),
+        const DataColumn(label: Text('ACTIVITY TYPE')),
+        const DataColumn(label: Text('PEOPLE')),
+        const DataColumn(label: Text('SOCIAL ENERGY')),
+        const DataColumn(label: Text('LOCATION')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // STUDY
+    if (templateKey == 'study') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('SUBJECT')),
+        const DataColumn(label: Text('DURATION (HOURS)')),
+        const DataColumn(label: Text('STUDY METHODS')),
+        const DataColumn(label: Text('FOCUS RATING')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // TASKS
+    if (templateKey == 'tasks') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('TASK NAME')),
+        const DataColumn(label: Text('PRIORITY')),
+        const DataColumn(label: Text('DONE?')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // TV SHOWS
+    if (templateKey == 'tv_log') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('SHOW TITLE')),
+        const DataColumn(label: Text('GENRE')),
+        const DataColumn(label: Text('RATING')),
+        const DataColumn(label: Text('STATUS')),
+        const DataColumn(label: Text('THOUGHTS')),
+      ];
+    }
+
+    // WATER
+    if (templateKey == 'water') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('AMOUNT')),
+        const DataColumn(label: Text('UNIT')),
+        const DataColumn(label: Text('GOAL REACHED?')),
+      ];
+    }
+
+    // WISHLIST
+    if (templateKey == 'wishlist') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('ITEM NAME')),
+        const DataColumn(label: Text('CURRENCY')),
+        const DataColumn(label: Text('ESTIMATED PRICE')),
+        const DataColumn(label: Text('PRIORITY')),
+        const DataColumn(label: Text('STATUS')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // WORKOUT
+    if (templateKey == 'workout') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('EXERCISE')),
+        const DataColumn(label: Text('SETS')),
+        const DataColumn(label: Text('REPS')),
+        const DataColumn(label: Text('WEIGHT (KG)')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    // Default order for other templates
+    return [
+      const DataColumn(label: Text('DATE')),
+      ...tableFields.map(
+        (f) => DataColumn(label: Text(f['label'].toString().toUpperCase())),
+      ),
+    ];
+  }
+
+  List<DataCell> _buildCellsForTemplate(
+    String template,
+    Map<String, dynamic> entry,
+  ) {
+    // BILLS (7 columns)
+    if (template == 'bills') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['name']?.toString() ?? '-')),
+        DataCell(Text(entry['category']?.toString() ?? '-')),
+        DataCell(Text(entry['currency']?.toString() ?? '-')),
+        DataCell(Text('${entry['amount'] ?? ''} ${entry['currency'] ?? ''}')),
+        DataCell(Text(formatValue('bool', entry['is_paid']))),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // BOOKS (7 columns)
+    if (template == 'books') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['book_title']?.toString() ?? '-')),
+        DataCell(Text(entry['author']?.toString() ?? '-')),
+        DataCell(Text(entry['category']?.toString() ?? '-')),
+        DataCell(Text(entry['current_page']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['rating']))),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // CYCLE (9 columns)
+    if (template == 'cycle') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['flow']?.toString() ?? '-')),
+        DataCell(Text(entry['symptoms']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['cramps']))),
+        DataCell(Text(formatValue('rating', entry['libido']))),
+        DataCell(Text(formatValue('rating', entry['energy_level']))),
+        DataCell(Text(formatValue('rating', entry['stress_level']))),
+        DataCell(Text(entry['pregnancy_test']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // EXPENSES (7 columns)
+    if (template == 'expenses') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(
+          Text(entry['notes']?.toString() ?? '-'),
+        ), // Item/Service is stored in notes
+        DataCell(Text(entry['category']?.toString() ?? '-')),
+        DataCell(Text(entry['currency']?.toString() ?? '-')),
+        DataCell(Text('${entry['cost'] ?? ''}')),
+        DataCell(Text(entry['status']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // FAST (4 columns)
+    if (template == 'fast') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['duration_hours']?.toString() ?? '-')),
+        DataCell(Text(entry['feeling']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // GOALS (7 columns)
+    if (template == 'goals') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['goal_title']?.toString() ?? '-')),
+        DataCell(Text(entry['category']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['priority']))),
+        DataCell(Text(formatValue('bool', entry['is_completed']))),
+        DataCell(Text(entry['target_date']?.toString() ?? '-')),
+        DataCell(Text(entry['action_plan']?.toString() ?? '-')),
+      ];
+    }
+
+    // INCOME (7 columns)
+    if (template == 'income') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['source']?.toString() ?? '-')),
+        DataCell(Text(entry['amount']?.toString() ?? '-')),
+        DataCell(Text(entry['category']?.toString() ?? '-')),
+        DataCell(Text(entry['status']?.toString() ?? '-')),
+        DataCell(Text(entry['currency']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // MEDITATION (5 columns)
+    if (template == 'meditation') {
+      final durMins = entry['duration_minutes'];
+      String durStr = '-';
+      if (durMins != null) {
+        final mins = (durMins is num)
+            ? durMins.toDouble()
+            : double.tryParse(durMins.toString()) ?? 0.0;
+        final d = Duration(seconds: (mins * 60).round());
+        durStr =
+            '${d.inMinutes.toString().padLeft(2, '0')}:${(d.inSeconds % 60).toString().padLeft(2, '0')}';
+      }
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(durStr)),
+        DataCell(Text(entry['technique']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['focus_rating']))),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // MOOD (4 columns)
+    if (template == 'mood') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['feeling']?.toString() ?? '-')),
+        DataCell(Text(entry['intensity']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // MOVIES (7 columns)
+    if (template == 'movies') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['movie_title']?.toString() ?? '-')),
+        DataCell(Text(entry['genre']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['rating']))),
+        DataCell(Text(entry['location']?.toString() ?? '-')),
+        DataCell(Text(entry['status']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // PLACES (5 columns)
+    if (template == 'places') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['place_name']?.toString() ?? '-')),
+        DataCell(Text(entry['location']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['rating']))),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // RESTAURANTS (6 columns)
+    if (template == 'restaurants') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['restaurant_name']?.toString() ?? '-')),
+        DataCell(Text(entry['cuisine_type']?.toString() ?? '-')),
+        DataCell(Text(entry['location']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['rating']))),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // SKIN CARE (5 columns)
+    if (template == 'skin_care') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['routine_type']?.toString() ?? '-')),
+        DataCell(Text(entry['products']?.toString() ?? '-')),
+        DataCell(Text(entry['skin_condition']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // SLEEP (4 columns)
+    if (template == 'sleep') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['hours_slept']?.toString() ?? '-')),
+        DataCell(Text(entry['quality']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // SOCIAL (7 columns)
+    if (template == 'social') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['person_event']?.toString() ?? '-')),
+        DataCell(Text(entry['activity_type']?.toString() ?? '-')),
+        DataCell(Text(entry['people']?.toString() ?? '-')),
+        DataCell(Text(entry['social_energy']?.toString() ?? '-')),
+        DataCell(Text(entry['location']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // STUDY (6 columns)
+    if (template == 'study') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['subject']?.toString() ?? '-')),
+        DataCell(Text(entry['duration_hours']?.toString() ?? '-')),
+        DataCell(Text(entry['study_methods']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['focus_rating']))),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // TASKS (5 columns)
+    if (template == 'tasks') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['task_name']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['priority']))),
+        DataCell(Text(formatValue('bool', entry['is_done']))),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // TV SHOWS (6 columns)
+    if (template == 'tv_log') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['title']?.toString() ?? '-')),
+        DataCell(Text(entry['genre']?.toString() ?? '-')),
+        DataCell(Text(formatValue('rating', entry['rating']))),
+        DataCell(Text(entry['status']?.toString() ?? '-')),
+        DataCell(Text(entry['thoughts']?.toString() ?? '-')),
+      ];
+    }
+
+    // WATER (4 columns)
+    if (template == 'water') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text('${entry['amount'] ?? ''}')),
+        DataCell(Text(entry['unit']?.toString() ?? '-')),
+        DataCell(Text(formatValue('bool', entry['goal_reached']))),
+      ];
+    }
+
+    // WISHLIST (6 columns)
+    // WISHLIST (7 columns)
+    if (template == 'wishlist') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['item_name']?.toString() ?? '-')),
+        DataCell(Text(entry['currency']?.toString() ?? '-')),
+        DataCell(
+          Text(
+            '${entry['price'] ?? entry['estimated_price'] ?? ''} ${entry['currency'] ?? ''}'
+                .trim(),
+          ),
+        ),
+        DataCell(Text(formatValue('rating', entry['priority']))),
+        DataCell(Text(entry['status']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // WORKOUT (6 columns)
+    if (template == 'workout') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['exercise']?.toString() ?? '-')),
+        DataCell(Text(entry['sets']?.toString() ?? '-')),
+        DataCell(Text(entry['reps']?.toString() ?? '-')),
+        DataCell(Text('${entry['weight_kg'] ?? ''} kg')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    // DEFAULT: Use tableFields for any unhandled templates
+    return [
+      DataCell(
+        Text(
+          fmtEntryDate(entry),
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        onTap: () => onEdit(entry),
+      ),
+      ...tableFields.map((f) {
+        final key = f['field_key'];
+        final val = entry.containsKey(key) ? entry[key] : null;
+
+        if (key == 'amount' ||
+            key == 'amount_ml' ||
+            key == 'cost' ||
+            key == 'estimated_price' ||
+            key == 'weight_kg') {
+          final unit = (entry['unit'] ?? entry['currency'] ?? '').toString();
+          String shownUnit = unit.isEmpty
+              ? (key == 'weight_kg'
+                    ? 'kg'
+                    : key == 'amount_ml'
+                    ? 'ml'
+                    : '')
+              : unit;
+
+          if (key == 'duration_minutes' && val != null) {
+            final mins = (val is num)
+                ? val.toDouble()
+                : double.tryParse(val.toString()) ?? 0.0;
+            final d = Duration(seconds: (mins * 60).round());
+            return DataCell(
+              Text(
+                '${d.inMinutes.toString().padLeft(2, '0')}:${(d.inSeconds % 60).toString().padLeft(2, '0')}',
+              ),
+            );
+          }
+
+          return DataCell(Text('${val ?? ''} $shownUnit'));
+        }
+
+        return DataCell(Text(formatValue(f['field_type'], val)));
+      }),
+    ];
+  }
+
   final List<Map<String, dynamic>> entries;
   final List<Map<String, dynamic>> tableFields;
   final String Function(Map<String, dynamic>) fmtEntryDate;
@@ -377,6 +1242,9 @@ class _StickyLogTable extends StatelessWidget {
     final theme = Theme.of(context);
     if (entries.isEmpty)
       return const Center(child: Text("No matching logs found."));
+
+    // ✅ Detect template ONCE for all rows
+    final template = _detectTemplate(entries.first);
 
     return Container(
       decoration: BoxDecoration(
@@ -396,50 +1264,14 @@ class _StickyLogTable extends StatelessWidget {
           headingRowColor: MaterialStateProperty.all(
             theme.colorScheme.surfaceVariant.withOpacity(0.4),
           ),
-          columns: [
-            const DataColumn(label: Text('DATE')),
-            ...tableFields.map(
-              (f) =>
-                  DataColumn(label: Text(f['label'].toString().toUpperCase())),
-            ),
-          ],
+          columns: _buildColumns(),
           rows: entries.map((entry) {
             return DataRow(
               onLongPress: () => onDelete(entry),
-              cells: [
-                DataCell(
-                  Text(
-                    fmtEntryDate(entry),
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  onTap: () => onEdit(entry),
-                ),
-                ...tableFields.map((f) {
-                  final key = f['field_key'];
-                  final val = entry.containsKey(key) ? entry[key] : null;
-                  if (key == 'amount' ||
-                      key == 'amount_ml' ||
-                      key == 'cost' ||
-                      key == 'estimated_price' ||
-                      key == 'weight_kg') {
-                    final unit = (entry['unit'] ?? entry['currency'] ?? '')
-                        .toString();
-
-                    // If no unit is found in DB, use 'kg' for weight or 'ml' for water
-                    String shownUnit = unit;
-                    if (unit.isEmpty) {
-                      if (key == 'weight_kg')
-                        shownUnit = 'kg';
-                      else if (key == 'amount_ml')
-                        shownUnit = 'ml';
-                    }
-
-                    return DataCell(Text('${val ?? ''} $shownUnit'));
-                  }
-
-                  return DataCell(Text(formatValue(f['field_type'], val)));
-                }),
-              ],
+              cells: _buildCellsForTemplate(
+                template,
+                entry,
+              ), // ✅ Using new method
             );
           }).toList(),
         ),
@@ -467,15 +1299,77 @@ class _NewEntryDialog extends StatefulWidget {
 }
 
 class _NewEntryDialogState extends State<_NewEntryDialog> {
-  late DateTime day;
+  DateTime day = DateTime.now(); // ✅ default, no LateInitializationError
   final Map<String, TextEditingController> controllers = {};
   final Map<String, dynamic> values = {};
+  Duration _durationFromMinutes(dynamic v) {
+    final mins = (v is num)
+        ? v.toDouble()
+        : double.tryParse(v?.toString() ?? '') ?? 0.0;
+    return Duration(seconds: (mins * 60).round());
+  }
+
+  String _fmtDuration(Duration d) {
+    final m = d.inMinutes;
+    final s = d.inSeconds % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _pickDuration(String key) async {
+    final initial = values[key] is Duration
+        ? values[key] as Duration
+        : Duration.zero;
+
+    Duration temp = initial;
+
+    await showModalBottomSheet(
+      context: context,
+      builder: (_) {
+        return SizedBox(
+          height: 260,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        setState(() => values[key] = temp);
+                        Navigator.pop(context);
+                      },
+                      child: const Text('Done'),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: CupertinoTimerPicker(
+                  mode: CupertinoTimerPickerMode.ms,
+                  initialTimerDuration: initial,
+                  onTimerDurationChanged: (d) => temp = d,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   @override
   void initState() {
     super.initState();
 
-    day = widget.initialDay ?? DateTime.now();
+    day = widget.initialDay ?? DateTime.now(); // ✅ FIRST
 
     // Define which types are NOT text-based
     final specialTypes = ['rating', 'bool', 'dropdown', 'time', 'scale'];
@@ -499,7 +1393,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       'duration_hours',
       'energy_level',
       //   'amount_ml',
-      'duration_minutes',
+      // 'duration_minutes',
       'intensity',
       //'weight_kg',
       //'weight'
@@ -512,6 +1406,12 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     for (var f in widget.fields) {
       final key = f['field_key'];
       final initVal = widget.initialData?[key];
+
+      if (key == 'duration_minutes') {
+        values[key] = _durationFromMinutes(initVal);
+        continue;
+      }
+
       // ✅ Always treat money inputs as text (so decimals like 12.50 work)
       if (key == 'amount' ||
           key == 'cost' ||
@@ -615,6 +1515,11 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           onPressed: () {
             final data = Map<String, dynamic>.from(values);
             controllers.forEach((k, c) => data[k] = c.text);
+
+            if (data['duration_minutes'] is Duration) {
+              final d = data['duration_minutes'] as Duration;
+              data['duration_minutes'] = d.inSeconds / 60.0;
+            }
 
             // This prevents the "0.0" reset issue
             if (controllers.containsKey('weight_kg')) {
@@ -721,6 +1626,10 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
               data.remove('target_date');
             }
 
+            debugPrint(
+              "FINAL duration_minutes -> ${data['duration_minutes']} (${data['duration_minutes'].runtimeType})",
+            );
+
             debugPrint("SAVING (${widget.templateKey}): $data");
             Navigator.pop(context, _NewEntryResult(day: day, data: data));
           },
@@ -732,6 +1641,40 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
 
   Widget _buildField(Map<String, dynamic> f, ThemeData theme) {
     final key = f['field_key'];
+    debugPrint("FIELD KEY: $key");
+
+    // ✅ TIMER PICKER FOR MEDITATION DURATION
+    if (key == 'duration_minutes') {
+      final d = (values[key] is Duration)
+          ? values[key] as Duration
+          : Duration.zero;
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(label: f['label']),
+          InkWell(
+            onTap: () => _pickDuration(key),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: theme.colorScheme.outlineVariant),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_fmtDuration(d), style: const TextStyle(fontSize: 16)),
+                  const Icon(Icons.timer),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      );
+    }
 
     if (f['field_type'] == 'date') {
       return ListTile(
@@ -752,6 +1695,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         },
       );
     }
+
     // 1. CONSOLIDATED DROPDOWN & MULTI-SELECT
     if (f['field_type'] == 'dropdown' ||
         f['field_type'] == 'multi_select' ||
@@ -1124,13 +2068,26 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     // --- 3. EXERCISE LOGIC (Fixes Multi-select) ---
     else if (key == 'exercise' || key == 'exercises') {
       options = [
-        'Bench Press',
-        'Squat',
-        'Deadlift',
-        'Pushups',
-        'Pullups',
-        'Plank',
-        'Running',
+        'running 🏃',
+        'jogging 🏃',
+        'walking 🚶',
+        'strength 💪',
+        'weightlifting 💪',
+        'weight 💪',
+        'plank 💪',
+        'bench 💪',
+        'squat 🦵',
+        'leg 🦵',
+        'yoga 🧘',
+        'stretching 🧘',
+        'swimming 🏊',
+        'cycling 🚴',
+        'bike 🚴',
+        'pilates 🤸',
+        'gymnastics 🤸',
+        'hiit ⚡',
+        'boxing 🥊',
+        'martial 🥋',
       ];
     } else if (key == 'skin_condition') {
       options = [
@@ -1242,7 +2199,8 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         '🥙 Middle Eastern',
         '🍷 Steakhouse',
       ];
-    } else if (key == 'location' && (tKey == 'movies' || tKey == 'tv_log')) {
+    } else if (key == 'location' &&
+        (tKey == 'movies' || tKey == 'tv_log' || tKey == 'social')) {
       options = [
         '🏠 Home',
         '🎬 Cinema',
@@ -1333,7 +2291,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       ];
     }
     if (key == 'flow') {
-      options = ['Spotting', 'Light', 'Medium', 'Heavy', 'Very Heavy', 'Other'];
+      options = ['Spotting', 'Light', 'Medium', 'Heavy', 'Other'];
     }
     if (key == 'pregnancy_test') {
       options = ['Not Done', 'Positive', 'Negative', 'Inconclusive', 'Other'];

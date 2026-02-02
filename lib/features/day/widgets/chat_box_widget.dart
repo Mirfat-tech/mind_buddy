@@ -1,14 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-
-import 'package:mind_buddy/services/mind_buddy_api.dart'; // if HobonichiRepo is defined/exported here
+import 'package:mind_buddy/services/mind_buddy_api.dart'; // ✅ CHANGED
 
 class ChatBoxWidget extends StatelessWidget {
-  const ChatBoxWidget({super.key, required this.dayId, required this.box});
+  const ChatBoxWidget({
+    super.key,
+    required this.dayId,
+    required this.box,
+    required this.api, // ✅ ADDED - pass API from parent
+  });
 
   final String dayId;
   final Map<String, dynamic> box;
+  final MindBuddyEnhancedApi api; // ✅ ADDED
 
   int? _readChatId(Map<String, dynamic> content) {
     final raw = content['chat_id'];
@@ -51,19 +56,18 @@ class ChatBoxWidget extends StatelessWidget {
               onPressed: user == null
                   ? null
                   : () async {
-                      final repo = HobonichiRepo(supabase);
-
+                      // ✅ CHANGED - use the passed API instead of creating HobonichiRepo
                       // ensure chatId exists
                       var ensuredChatId = chatId;
                       if (ensuredChatId == null) {
-                        ensuredChatId = await repo.createChat(userId: user.id);
+                        ensuredChatId = await api.createChat(userId: user.id);
 
                         final newContent = <String, dynamic>{
                           ...content,
                           'chat_id': ensuredChatId,
                         };
 
-                        await repo.updateBoxContent(
+                        await api.updateBoxContent(
                           boxId: boxId,
                           content: newContent,
                         );

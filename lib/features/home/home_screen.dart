@@ -8,6 +8,8 @@ import 'widgets/templates_section.dart';
 import 'package:mind_buddy/app/app_theme_controller.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
+import 'package:supabase_flutter/supabase_flutter.dart'; // Fixes 'Supabase' error
+import 'package:intl/intl.dart'; // Fixes 'DateFormat' error
 //import 'widgets/pomodoro_box_widget.dart';
 
 class HomeScreen extends ConsumerWidget {
@@ -178,15 +180,56 @@ class _HomeBody extends StatelessWidget {
               _HomeBubble(
                 title: 'Vent bubble',
                 icon: Icons.chat_bubble_outline,
-                onTap: () {
-                  final now = DateTime.now();
-                  final y = now.year.toString().padLeft(4, '0');
-                  final m = now.month.toString().padLeft(2, '0');
-                  final d = now.day.toString().padLeft(2, '0');
-                  final dayId = '$y-$m-$d';
 
-                  // If chatId is always 1 for now:
-                  context.go('/chat/$dayId/1');
+                onTap: () async {
+                  final supabase = Supabase.instance.client;
+                  final user = supabase.auth.currentUser;
+
+                  if (user == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('You are not logged in.')),
+                    );
+                    return;
+                  }
+
+                  try {
+                    final dayId = DateFormat(
+                      'yyyy-MM-dd',
+                    ).format(DateTime.now());
+
+                    // 1️⃣ Try to get today's existing chat
+                    final existing = await supabase
+                        .from('chats')
+                        .select('id, day_id')
+                        .eq('user_id', user.id)
+                        .eq('day_id', dayId)
+                        .eq('is_archived', false)
+                        .maybeSingle();
+
+                    // 2️⃣ If none exists, create one
+                    final chat =
+                        existing ??
+                        await supabase
+                            .from('chats')
+                            .insert({
+                              'user_id': user.id,
+                              'day_id': dayId,
+                              'is_archived': false,
+                              'title': null,
+                            })
+                            .select('id, day_id')
+                            .single();
+
+                    if (!context.mounted) return;
+
+                    // 3️⃣ Navigate
+                    context.push('/chat/${chat['day_id']}/${chat['id']}');
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Could not open Vent bubble: $e')),
+                    );
+                  }
                 },
               ),
               _HomeBubble(

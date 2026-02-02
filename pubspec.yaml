@@ -9,6 +9,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  speech_to_text: ^6.6.0  # For voice input
+  permission_handler: ^11.0.0  # For microphone permissions
+  fl_chart: ^0.66.0
 
   flutter_quill: ^11.5.0
   image_picker: ^1.1.2

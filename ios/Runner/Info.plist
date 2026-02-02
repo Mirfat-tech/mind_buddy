@@ -56,5 +56,9 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSSpeechRecognitionUsageDescription</key>
+<string>We need access to transcribe your voice messages</string>
+<key>NSMicrophoneUsageDescription</key>
+<string>We need access to record voice messages</string>
 </dict>
 </plist>

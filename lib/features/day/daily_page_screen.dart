@@ -14,6 +14,8 @@ import 'widgets/pomodoro_box_widget.dart';
 import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'widgets/checklist_box_widget.dart';
 
+import 'package:mind_buddy/services/mind_buddy_api.dart';
+
 class DailyPageScreen extends StatefulWidget {
   const DailyPageScreen({super.key, required this.dayId});
   final String dayId;
@@ -31,6 +33,8 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
   String? coverId;
 
   List<Map<String, dynamic>> boxes = [];
+
+  late final MindBuddyEnhancedApi _api;
 
   @override
   void initState() {
@@ -279,8 +283,8 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                                 title: 'JOURNAL',
                                 child: JournalBoxWidget(
                                   box: box,
-                                  initialText:
-                                      (content['text'] ?? '').toString(),
+                                  initialText: (content['text'] ?? '')
+                                      .toString(),
                                   onSave: (text) async {
                                     final newContent = <String, dynamic>{
                                       ...content,
@@ -305,6 +309,7 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                                 child: ChatBoxWidget(
                                   dayId: widget.dayId,
                                   box: box,
+                                  api: _api,
                                 ),
                               ),
                             );
@@ -319,9 +324,11 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                                     context: context,
                                     builder: (_) => AlertDialog(
                                       title: const Text(
-                                          'Delete this checklist box?'),
+                                        'Delete this checklist box?',
+                                      ),
                                       content: const Text(
-                                          'This removes the whole checklist box from the page.'),
+                                        'This removes the whole checklist box from the page.',
+                                      ),
                                       actions: [
                                         TextButton(
                                           onPressed: () =>
@@ -339,7 +346,8 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
 
                                   if (ok == true) {
                                     await repo.deleteBox(
-                                        boxId: box['id'] as String);
+                                      boxId: box['id'] as String,
+                                    );
                                     await _load();
                                   }
                                 },
@@ -350,8 +358,11 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                                     box: box,
                                     initialItems:
                                         (content['items'] as List? ?? [])
-                                            .map((x) => ChecklistItem.fromJson(
-                                                Map<String, dynamic>.from(x)))
+                                            .map(
+                                              (x) => ChecklistItem.fromJson(
+                                                Map<String, dynamic>.from(x),
+                                              ),
+                                            )
                                             .toList(),
                                     onSaveItems: (items) async {
                                       final newContent = <String, dynamic>{

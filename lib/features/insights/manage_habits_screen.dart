@@ -1,9 +1,8 @@
-// lib/features/insights/manage_habit_streaks.dart
+// lib/features/insights/manage_habits_screen.dart
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
-import 'package:mind_buddy/router.dart';
 
 class ManageHabitsScreen extends StatefulWidget {
   const ManageHabitsScreen({super.key});
@@ -17,12 +16,17 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
 
   bool _loading = true;
   final List<Map<String, dynamic>> _habits = [];
+  final List<Map<String, dynamic>> _categories = [];
   final Map<String, ({int current, int best})> _streaksByHabitName = {};
+
+  // ✅ MISSING STATE YOU REFERENCED IN UI
+  bool _isSelectionMode = false;
+  final Set<String> _selectedHabitIds = {};
 
   @override
   void initState() {
     super.initState();
-    _loadHabits();
+    _loadData();
   }
 
   // --- GLOWING UI HELPERS ---
@@ -58,45 +62,40 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
 
   ({int current, int best}) _computeStreak(Set<DateTime> doneDates) {
     if (doneDates.isEmpty) return (current: 0, best: 0);
+
     final dates = doneDates.toList()..sort();
     int best = 1;
     int run = 1;
+
     for (int i = 1; i < dates.length; i++) {
-      if (dates[i].difference(dates[i - 1]).inDays == 1) {
+      final diff = dates[i].difference(dates[i - 1]).inDays;
+      if (diff == 1) {
         run++;
         if (run > best) best = run;
-      } else if (dates[i].difference(dates[i - 1]).inDays > 1) {
+      } else if (diff > 1) {
         run = 1;
       }
     }
-    final today = DateTime(
-      DateTime.now().year,
-      DateTime.now().month,
-      DateTime.now().day,
-    );
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
     int current = 0;
     DateTime cursor = today;
+
     while (doneDates.contains(cursor)) {
       current++;
       cursor = cursor.subtract(const Duration(days: 1));
     }
+
     return (current: current, best: best);
   }
 
-  Future<void> _loadHabits() async {
-    setState(() => _loading = true);
+  Future<void> _loadData() async {
+    if (mounted) setState(() => _loading = true);
     try {
-      final user = supabase.auth.currentUser;
-      if (user == null) return;
-      final rows = await supabase
-          .from('user_habits')
-          .select()
-          .eq('user_id', user.id)
-          .order('sort_order');
-      _habits.clear();
-      _habits.addAll(
-        (rows as List).map((e) => Map<String, dynamic>.from(e as Map)),
-      );
+      await _loadCategories();
+      await _loadHabits();
       await _loadStreaks();
     } catch (e) {
       debugPrint('Load error: $e');
@@ -104,9 +103,40 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     if (mounted) setState(() => _loading = false);
   }
 
+  Future<void> _loadCategories() async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+    final rows = await supabase
+        .from('habit_categories')
+        .select()
+        .eq('user_id', user.id)
+        .order('sort_order');
+
+    _categories
+      ..clear()
+      ..addAll((rows as List).map((e) => Map<String, dynamic>.from(e as Map)));
+  }
+
+  Future<void> _loadHabits() async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+    final rows = await supabase
+        .from('user_habits')
+        .select()
+        .eq('user_id', user.id)
+        .order('sort_order');
+
+    _habits
+      ..clear()
+      ..addAll((rows as List).map((e) => Map<String, dynamic>.from(e as Map)));
+  }
+
   Future<void> _loadStreaks() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
+
     final tpl = await supabase
         .from('log_templates_v2')
         .select('id')
@@ -119,6 +149,7 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
         .subtract(const Duration(days: 370))
         .toIso8601String()
         .substring(0, 10);
+
     final rows = await supabase
         .from('log_entries')
         .select('day, data')
@@ -126,17 +157,20 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
         .gte('day', fromStr);
 
     final Map<String, Set<DateTime>> doneDatesByHabit = {};
+
     for (final r in (rows as List)) {
-      final data = Map<String, dynamic>.from(r['data'] ?? {});
+      final data = Map<String, dynamic>.from((r as Map)['data'] ?? {});
       final habit = (data['habit'] ?? data['habit_name'] ?? data['name'] ?? '')
           .toString()
           .trim();
-      if (habit.isEmpty || data['done'] != true) continue;
 
-      final day = DateTime.parse(r['day'].toString());
-      doneDatesByHabit
-          .putIfAbsent(habit, () => <DateTime>{})
-          .add(DateTime(day.year, day.month, day.day));
+      if (habit.isEmpty) continue;
+      if (data['done'] != true) continue;
+
+      final day = DateTime.parse((r)['day'].toString());
+      final normalized = DateTime(day.year, day.month, day.day);
+
+      doneDatesByHabit.putIfAbsent(habit, () => <DateTime>{}).add(normalized);
     }
 
     _streaksByHabitName.clear();
@@ -146,42 +180,108 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     }
   }
 
-  Future<void> _showHabitDialog({
+  // --- CATEGORY DIALOGS ---
+
+  Future<void> _showCategoryDialog({
     String? initialName,
-    required String title,
-    required Function(String) onSave,
+    String? initialIcon,
+    String? categoryId,
   }) async {
-    final controller = TextEditingController(text: initialName);
+    final nameController = TextEditingController(text: initialName);
+    final iconController = TextEditingController(text: initialIcon);
     final scheme = Theme.of(context).colorScheme;
 
     await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text(title),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: 'e.g. Morning Yoga',
-            filled: true,
-            fillColor: scheme.surface,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+        title: Text(categoryId == null ? 'Add Category' : 'Edit Category'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Category Name',
+                hintText: 'e.g. Morning Routine',
+                filled: true,
+                fillColor: scheme.surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: iconController,
+              decoration: InputDecoration(
+                labelText: 'Icon (emoji)',
+                hintText: 'e.g. 🌅',
+                filled: true,
+                fillColor: scheme.surface,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ],
         ),
         actions: [
+          if (categoryId != null)
+            TextButton(
+              onPressed: () async {
+                try {
+                  // ✅ safer delete: uncategorize habits first (avoids FK constraint errors)
+                  await supabase
+                      .from('user_habits')
+                      .update({'category_id': null})
+                      .eq('category_id', categoryId);
+
+                  await supabase
+                      .from('habit_categories')
+                      .delete()
+                      .eq('id', categoryId);
+
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  await _loadData();
+                } catch (e) {
+                  debugPrint('Delete category error: $e');
+                  if (ctx.mounted) {
+                    Navigator.pop(ctx);
+                  }
+                }
+              },
+              child: Text('Delete', style: TextStyle(color: scheme.error)),
+            ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () {
-              if (controller.text.trim().isNotEmpty) {
-                onSave(controller.text.trim());
-                Navigator.pop(ctx);
+            onPressed: () async {
+              if (nameController.text.trim().isEmpty) return;
+
+              if (categoryId == null) {
+                await supabase.from('habit_categories').insert({
+                  'user_id': supabase.auth.currentUser!.id,
+                  'name': nameController.text.trim(),
+                  'icon': iconController.text.trim(),
+                  'sort_order': _categories.length,
+                });
+              } else {
+                await supabase
+                    .from('habit_categories')
+                    .update({
+                      'name': nameController.text.trim(),
+                      'icon': iconController.text.trim(),
+                    })
+                    .eq('id', categoryId);
               }
+
+              if (ctx.mounted) Navigator.pop(ctx);
+              await _loadData();
             },
             child: const Text('Save'),
           ),
@@ -190,32 +290,108 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     );
   }
 
-  Future<void> _addHabit() async {
-    await _showHabitDialog(
-      title: 'Add Habit',
-      onSave: (name) async {
-        await supabase.from('user_habits').insert({
-          'user_id': supabase.auth.currentUser!.id,
-          'name': name,
-          'sort_order': _habits.length,
-          'is_active': true,
-        });
-        _loadHabits();
-      },
-    );
-  }
+  // --- HABIT DIALOGS ---
 
-  Future<void> _renameHabit(Map<String, dynamic> habit) async {
-    await _showHabitDialog(
-      initialName: habit['name'],
-      title: 'Rename Habit',
-      onSave: (name) async {
-        await supabase
-            .from('user_habits')
-            .update({'name': name})
-            .eq('id', habit['id']);
-        _loadHabits();
-      },
+  Future<void> _showHabitDialog({
+    String? initialName,
+    String? initialCategoryId,
+    String? habitId,
+  }) async {
+    final nameController = TextEditingController(text: initialName);
+    String? selectedCategoryId = initialCategoryId;
+    final scheme = Theme.of(context).colorScheme;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(habitId == null ? 'Add Habit' : 'Edit Habit'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Habit Name',
+                  hintText: 'e.g. Morning Yoga',
+                  filled: true,
+                  fillColor: scheme.surface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // ✅ FIX: must be DropdownButtonFormField<String?> to allow null values
+              DropdownButtonFormField<String?>(
+                value: selectedCategoryId,
+                decoration: InputDecoration(
+                  labelText: 'Category',
+                  filled: true,
+                  fillColor: scheme.surface,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('No Category'),
+                  ),
+                  ..._categories.map(
+                    (cat) => DropdownMenuItem<String?>(
+                      value: (cat['id'] ?? '').toString(),
+                      child: Text(
+                        '${cat['icon'] ?? '📁'} ${cat['name'] ?? ''}',
+                      ),
+                    ),
+                  ),
+                ],
+                onChanged: (val) {
+                  setDialogState(() => selectedCategoryId = val);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                if (nameController.text.trim().isEmpty) return;
+
+                if (habitId == null) {
+                  await supabase.from('user_habits').insert({
+                    'user_id': supabase.auth.currentUser!.id,
+                    'name': nameController.text.trim(),
+                    'category_id': selectedCategoryId,
+                    'sort_order': _habits.length,
+                    'is_active': true,
+                  });
+                } else {
+                  await supabase
+                      .from('user_habits')
+                      .update({
+                        'name': nameController.text.trim(),
+                        'category_id': selectedCategoryId,
+                      })
+                      .eq('id', habitId);
+                }
+
+                if (ctx.mounted) Navigator.pop(ctx);
+                await _loadData();
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -224,151 +400,283 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
         .from('user_habits')
         .update({'is_active': !(habit['is_active'] == true)})
         .eq('id', habit['id']);
-    _loadHabits();
+    await _loadData();
   }
+
+  // ✅ DELETE SELECTED HABITS (you referenced this in AppBar actions)
+  Future<void> _deleteSelectedHabits() async {
+    if (_selectedHabitIds.isEmpty) return;
+
+    final scheme = Theme.of(context).colorScheme;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete habits?'),
+        content: Text(
+          'This will delete ${_selectedHabitIds.length} habit(s). This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: scheme.error,
+              foregroundColor: scheme.onError,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await supabase
+          .from('user_habits')
+          .delete()
+          .inFilter('id', _selectedHabitIds.toList());
+
+      if (!mounted) return;
+      setState(() {
+        _selectedHabitIds.clear();
+        _isSelectionMode = false;
+      });
+
+      await _loadData();
+    } catch (e) {
+      debugPrint('Delete selected habits error: $e');
+    }
+  }
+
+  // --- BUILD UI ---
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
+    // Group habits by category_id (including null)
+    final Map<String?, List<Map<String, dynamic>>> habitsByCategory = {};
+    for (final habit in _habits) {
+      final String? catId = habit['category_id']?.toString();
+      habitsByCategory.putIfAbsent(catId, () => []).add(habit);
+    }
+
     return MbScaffold(
       applyBackground: false,
       appBar: AppBar(
-        leading: _glowingIconButton(
-          icon: Icons.arrow_back,
-          onPressed: () => Navigator.of(context).canPop()
-              ? Navigator.of(context).pop()
-              : context.go('/home'),
-          scheme: scheme,
+        leading: _isSelectionMode
+            ? IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () {
+                  setState(() {
+                    _isSelectionMode = false;
+                    _selectedHabitIds.clear();
+                  });
+                },
+              )
+            : _glowingIconButton(
+                icon: Icons.arrow_back,
+                onPressed: () => context.go('/habits'),
+                scheme: scheme,
+              ),
+        title: Text(
+          _isSelectionMode
+              ? '${_selectedHabitIds.length} Selected'
+              : 'Manage Habits',
         ),
-        title: const Text('Manage Habits'),
         centerTitle: true,
+        actions: [
+          if (_isSelectionMode)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              onPressed: _deleteSelectedHabits,
+            )
+          else
+            _glowingIconButton(
+              icon: Icons.category,
+              onPressed: () => _showCategoryDialog(),
+              scheme: scheme,
+            ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _showHabitDialog(),
+        icon: const Icon(Icons.add),
+        label: const Text('Add Habit'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
+          : _habits.isEmpty
+          ? _buildEmptyState()
+          : ListView(
+              padding: const EdgeInsets.all(16),
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Drag rows to reorder',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: scheme.onSurface.withValues(
-                              alpha: 0.7,
-                            ), // Use .withValues for the latest Flutter
-                          ),
-                        ),
-                      ),
-                      _glowingIconButton(
-                        icon: Icons.add,
-                        onPressed: _addHabit,
-                        scheme: scheme,
-                      ),
-                    ],
+                if (habitsByCategory[null]?.isNotEmpty ?? false)
+                  _buildCategorySection(
+                    categoryName: 'Uncategorized',
+                    categoryIcon: '📋',
+                    habits: habitsByCategory[null]!,
+                    scheme: scheme,
                   ),
-                ),
-                Expanded(
-                  child: _habits.isEmpty
-                      ? _buildEmptyState()
-                      : ReorderableListView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
-                          itemCount: _habits.length,
-                          onReorder: (oldIndex, newIndex) async {
-                            setState(() {
-                              if (newIndex > oldIndex) newIndex -= 1;
-                              final item = _habits.removeAt(oldIndex);
-                              _habits.insert(newIndex, item);
-                            });
-                            for (int i = 0; i < _habits.length; i++) {
-                              await supabase
-                                  .from('user_habits')
-                                  .update({'sort_order': i})
-                                  .eq('id', _habits[i]['id']);
-                            }
-                          },
-                          itemBuilder: (context, index) {
-                            final h = _habits[index];
-                            final active = h['is_active'] == true;
-                            final streak =
-                                _streaksByHabitName[h['name']] ??
-                                (current: 0, best: 0);
-
-                            return Padding(
-                              key: ValueKey(h['id']),
-                              padding: const EdgeInsets.only(bottom: 12),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: scheme.surface,
-                                  borderRadius: BorderRadius.circular(20),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: scheme.primary.withOpacity(0.05),
-                                      blurRadius: 10,
-                                    ),
-                                  ],
-                                  border: Border.all(
-                                    color: scheme.outline.withOpacity(0.1),
-                                  ),
-                                ),
-                                child: ListTile(
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 4,
-                                  ),
-                                  leading: Icon(
-                                    Icons.drag_handle,
-                                    color: scheme.outline,
-                                  ),
-                                  title: Text(
-                                    h['name'],
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      decoration: active
-                                          ? null
-                                          : TextDecoration.lineThrough,
-                                      color: active
-                                          ? scheme.onSurface
-                                          : scheme.onSurface.withOpacity(0.4),
-                                    ),
-                                  ),
-                                  subtitle: _buildSubtitle(
-                                    active,
-                                    streak,
-                                    scheme,
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.edit_outlined,
-                                          size: 20,
-                                        ),
-                                        onPressed: () => _renameHabit(h),
-                                      ),
-                                      IconButton(
-                                        icon: Icon(
-                                          active
-                                              ? Icons.visibility_off_outlined
-                                              : Icons.visibility_outlined,
-                                          size: 20,
-                                        ),
-                                        onPressed: () => _toggleActive(h),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
+                for (final category in _categories)
+                  if (habitsByCategory[category['id']?.toString()]
+                          ?.isNotEmpty ??
+                      false)
+                    _buildCategorySection(
+                      categoryName: (category['name'] ?? '').toString(),
+                      categoryIcon: (category['icon'] ?? '📁').toString(),
+                      habits: habitsByCategory[category['id']?.toString()]!,
+                      scheme: scheme,
+                      categoryId: category['id']?.toString(),
+                      onEditCategory: () => _showCategoryDialog(
+                        initialName: category['name']?.toString(),
+                        initialIcon: category['icon']?.toString(),
+                        categoryId: category['id']?.toString(),
+                      ),
+                    ),
               ],
             ),
+    );
+  }
+
+  Widget _buildCategorySection({
+    required String categoryName,
+    required String categoryIcon,
+    required List<Map<String, dynamic>> habits,
+    required ColorScheme scheme,
+    String? categoryId,
+    VoidCallback? onEditCategory,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 16, 8, 8),
+          child: Row(
+            children: [
+              Text(categoryIcon, style: const TextStyle(fontSize: 20)),
+              const SizedBox(width: 8),
+              Text(
+                categoryName,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: scheme.primary,
+                ),
+              ),
+              if (onEditCategory != null) ...[
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.edit, size: 18),
+                  onPressed: onEditCategory,
+                ),
+              ],
+            ],
+          ),
+        ),
+        ...habits.map((habit) => _buildHabitTile(habit, scheme)),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _buildHabitTile(Map<String, dynamic> habit, ColorScheme scheme) {
+    final active = habit['is_active'] == true;
+    final habitId = habit['id'].toString();
+    final isSelected = _selectedHabitIds.contains(habitId);
+    final habitName = (habit['name'] ?? '').toString();
+    final streak = _streaksByHabitName[habitName] ?? (current: 0, best: 0);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isSelected
+              ? scheme.primaryContainer.withOpacity(0.3)
+              : scheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected
+                ? scheme.primary
+                : scheme.outline.withOpacity(0.1),
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: ListTile(
+          onLongPress: () {
+            setState(() {
+              _isSelectionMode = true;
+              _selectedHabitIds.add(habitId);
+            });
+          },
+          onTap: () {
+            if (_isSelectionMode) {
+              setState(() {
+                if (isSelected) {
+                  _selectedHabitIds.remove(habitId);
+                } else {
+                  _selectedHabitIds.add(habitId);
+                }
+                if (_selectedHabitIds.isEmpty) _isSelectionMode = false;
+              });
+            } else {
+              _showHabitDialog(
+                initialName: habitName,
+                initialCategoryId: habit['category_id']?.toString(),
+                habitId: habit['id']?.toString(),
+              );
+            }
+          },
+          leading: _isSelectionMode
+              ? Checkbox(
+                  value: isSelected,
+                  activeColor: scheme.primary,
+                  onChanged: (val) {
+                    setState(() {
+                      if (val == true) {
+                        _selectedHabitIds.add(habitId);
+                      } else {
+                        _selectedHabitIds.remove(habitId);
+                      }
+                      if (_selectedHabitIds.isEmpty) _isSelectionMode = false;
+                    });
+                  },
+                )
+              : null,
+          title: Text(
+            habitName,
+            style: TextStyle(
+              fontWeight: FontWeight.w600,
+              decoration: active ? null : TextDecoration.lineThrough,
+              color: active
+                  ? scheme.onSurface
+                  : scheme.onSurface.withOpacity(0.4),
+            ),
+          ),
+          subtitle: _buildSubtitle(active, streak, scheme),
+          trailing: _isSelectionMode
+              ? null
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        active
+                            ? Icons.visibility_off_outlined
+                            : Icons.visibility_outlined,
+                        size: 20,
+                      ),
+                      onPressed: () => _toggleActive(habit),
+                    ),
+                  ],
+                ),
+        ),
+      ),
     );
   }
 
@@ -414,7 +722,7 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
           ),
           const SizedBox(height: 8),
           TextButton(
-            onPressed: _addHabit,
+            onPressed: () => _showHabitDialog(),
             child: const Text('Add your first habit'),
           ),
         ],

@@ -30,6 +30,8 @@ import 'package:mind_buddy/features/templates/create_templates_screen.dart';
 import 'features/pomodoro/pomodoro_screen.dart';
 
 import 'package:mind_buddy/features/brain_fog/brain_fog_screen.dart';
+import 'package:mind_buddy/features/chat/chat_archive_screen.dart';
+import 'package:mind_buddy/features/subscription/subscription_screen.dart';
 
 //
 
@@ -183,6 +185,15 @@ GoRouter createRouter() {
         },
       ),
 
+      GoRoute(
+        path: '/chat-archive/:dayId',
+        builder: (context, state) {
+          final dayId = state.pathParameters['dayId']!;
+          // Add themed() here to match your other screens
+          return themed(ChatArchiveScreen(dayId: dayId));
+        },
+      ),
+
       // TODAY -> /day/yyyy-MM-dd
       // GoRoute(
       //path: '/today',
@@ -200,7 +211,10 @@ GoRouter createRouter() {
         path: '/templates',
         builder: (_, __) => themed(TemplatesScreen()),
       ),
-
+      GoRoute(
+        path: '/subscription',
+        builder: (_, __) => themed(const SubscriptionScreen()),
+      ),
       GoRoute(
         path: '/pomodoro',
         builder: (context, state) => themed(const PomodoroScreen()),
