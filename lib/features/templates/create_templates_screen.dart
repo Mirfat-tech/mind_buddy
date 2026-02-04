@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
 
 class CreateLogTemplateScreen extends StatefulWidget {
   const CreateLogTemplateScreen({super.key});
@@ -20,6 +21,7 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
   final fields = <_FieldDraft>[
     _FieldDraft(label: 'Item', key: '', type: 'text'),
   ];
+  String _examplePreset = 'None';
 
   static const tTemplates = 'log_templates_v2';
   static const tFields = 'log_template_fields_v2';
@@ -94,6 +96,47 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     );
   }
 
+  void _applyExamplePreset(String preset) {
+    setState(() {
+      _examplePreset = preset;
+      final presetFields = _exampleFields(preset);
+      if (presetFields.isNotEmpty) {
+        fields
+          ..clear()
+          ..addAll(presetFields);
+      }
+      if (nameCtrl.text.trim().isEmpty) {
+        nameCtrl.text = preset;
+      }
+    });
+  }
+
+  List<_FieldDraft> _exampleFields(String preset) {
+    switch (preset) {
+      case 'Mood log':
+        return [
+          _FieldDraft(label: 'Feeling', key: 'feeling', type: 'text'),
+          _FieldDraft(label: 'Intensity', key: 'intensity', type: 'rating'),
+          _FieldDraft(label: 'Notes', key: 'notes', type: 'text'),
+        ];
+      case 'Budget':
+        return [
+          _FieldDraft(label: 'Category', key: 'category', type: 'text'),
+          _FieldDraft(label: 'Amount', key: 'amount', type: 'number'),
+          _FieldDraft(label: 'Notes', key: 'notes', type: 'text'),
+        ];
+      case 'Workout':
+        return [
+          _FieldDraft(label: 'Exercise', key: 'exercise', type: 'text'),
+          _FieldDraft(label: 'Sets', key: 'sets', type: 'number'),
+          _FieldDraft(label: 'Reps', key: 'reps', type: 'number'),
+          _FieldDraft(label: 'Notes', key: 'notes', type: 'text'),
+        ];
+      default:
+        return [];
+    }
+  }
+
   // --- LOGIC ---
 
   String _slugify(String s) {
@@ -122,6 +165,16 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
   Future<void> _save() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
+    final info = await SubscriptionLimits.fetchForCurrentUser();
+    if (info.isPending) {
+      if (mounted) {
+        await SubscriptionLimits.showTrialUpgradeDialog(
+          context,
+          onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
+        );
+      }
+      return;
+    }
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
 
@@ -182,7 +235,7 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     final scheme = Theme.of(context).colorScheme;
 
     return MbScaffold(
-      applyBackground: false,
+      applyBackground: true,
       appBar: AppBar(
         leading: _glowingIconButton(
           icon: Icons.arrow_back,
@@ -207,76 +260,136 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          24,
-          24,
-          24,
-          40,
-        ), // Bottom padding added
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
         children: [
-          Center(
-            child: Container(
-              width: 80,
-              height: 80,
-              decoration: BoxDecoration(
-                color: scheme.primary.withOpacity(0.05),
-                shape: BoxShape.circle,
-                border: Border.all(color: scheme.primary.withOpacity(0.1)),
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                _getEmoji(nameCtrl.text),
-                style: const TextStyle(fontSize: 40),
-              ),
-            ),
-          ),
-          const SizedBox(height: 32),
-          _inputWrapper(
-            scheme,
-            child: TextField(
-              controller: nameCtrl,
-              onChanged: (v) => setState(() {}),
-              decoration: const InputDecoration(
-                hintText: 'Template Name',
-                border: InputBorder.none, // Removes default pink border
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
+          _GlowPanel(
+            child: Column(
+              children: [
+                Center(
+                  child: Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      color: scheme.primary.withOpacity(0.05),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: scheme.primary.withOpacity(0.1)),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      _getEmoji(nameCtrl.text),
+                      style: const TextStyle(fontSize: 40),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 32),
-          const Text(
-            'FIELDS',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-              letterSpacing: 1.2,
+                const SizedBox(height: 10),
+                Text(
+                  'Create your own table in 3 steps:',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 6),
+                _StepsRow(scheme: scheme),
+                const SizedBox(height: 24),
+                _inputWrapper(
+                  scheme,
+                  child: DropdownButtonFormField<String>(
+                    value: _examplePreset,
+                    decoration: const InputDecoration(
+                      hintText: 'Field examples',
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'None', child: Text('Examples')),
+                      DropdownMenuItem(
+                        value: 'Mood log',
+                        child: Text('Mood log'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Budget',
+                        child: Text('Budget'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Workout',
+                        child: Text('Workout'),
+                      ),
+                    ],
+                    onChanged: (v) {
+                      if (v == null || v == 'None') return;
+                      _applyExamplePreset(v);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _inputWrapper(
+                  scheme,
+                  child: TextField(
+                    controller: nameCtrl,
+                    onChanged: (v) => setState(() {}),
+                    decoration: const InputDecoration(
+                      hintText: 'Template Name',
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
-          for (int i = 0; i < fields.length; i++) ...[
-            _FieldEditor(
-              field: fields[i],
-              onChanged: (f) => setState(() => fields[i] = f),
-              onDelete: () => setState(() {
-                fields.removeAt(i);
-                if (fields.isEmpty)
-                  fields.add(_FieldDraft(label: 'Item', key: '', type: 'text'));
-              }),
-            ),
-            const SizedBox(height: 12),
-          ],
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton.icon(
-              onPressed: () => setState(
-                () => fields.add(_FieldDraft(label: '', key: '', type: 'text')),
-              ),
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add Field'),
+          _GlowPanel(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'FIELDS',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Add columns your table should track (e.g. "Cost", "Mood", "Duration").',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                for (int i = 0; i < fields.length; i++) ...[
+                  _FieldEditor(
+                    field: fields[i],
+                    onChanged: (f) => setState(() => fields[i] = f),
+                    onDelete: () => setState(() {
+                      fields.removeAt(i);
+                      if (fields.isEmpty)
+                        fields.add(
+                          _FieldDraft(label: 'Item', key: '', type: 'text'),
+                        );
+                    }),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () => setState(
+                      () => fields.add(
+                        _FieldDraft(label: '', key: '', type: 'text'),
+                      ),
+                    ),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add Field'),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _PreviewTable(fields: fields),
+              ],
             ),
           ),
         ],
@@ -468,6 +581,192 @@ class _FieldEditor extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _GlowPanel extends StatelessWidget {
+  const _GlowPanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.15),
+            blurRadius: 24,
+            spreadRadius: 2,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+}
+
+class _StepsRow extends StatelessWidget {
+  const _StepsRow({required this.scheme});
+
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _StepChip(
+          number: '1',
+          label: 'Name it',
+          scheme: scheme,
+        ),
+        const SizedBox(width: 8),
+        _StepChip(
+          number: '2',
+          label: 'Add fields',
+          scheme: scheme,
+        ),
+        const SizedBox(width: 8),
+        _StepChip(
+          number: '3',
+          label: 'Save',
+          scheme: scheme,
+        ),
+      ],
+    );
+  }
+}
+
+class _StepChip extends StatelessWidget {
+  const _StepChip({
+    required this.number,
+    required this.label,
+    required this.scheme,
+  });
+
+  final String number;
+  final String label;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: scheme.primary.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: scheme.primary.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              color: scheme.primary,
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              number,
+              style: TextStyle(
+                color: scheme.onPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PreviewTable extends StatelessWidget {
+  const _PreviewTable({required this.fields});
+
+  final List<_FieldDraft> fields;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final previewFields = fields.where((f) => f.label.trim().isNotEmpty).toList();
+    if (previewFields.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        ),
+        child: Text(
+          'Preview will appear here once you add fields.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Preview',
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: previewFields
+                .take(4)
+                .map(
+                  (f) => Expanded(
+                    child: Container(
+                      margin: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: scheme.primary.withOpacity(0.2),
+                        ),
+                      ),
+                      child: Text(
+                        f.label,
+                        style: Theme.of(context).textTheme.bodySmall,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            previewFields.length > 4
+                ? '+${previewFields.length - 4} more columns'
+                : 'Example row will appear when you start logging.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         ],
       ),
     );

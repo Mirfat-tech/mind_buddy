@@ -33,6 +33,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <!-- Handles mindbuddy://reset -->
                 <data android:scheme="mindbuddy" android:host="reset" />
+                <!-- Handles mindbuddy://login-callback -->
+                <data android:scheme="mindbuddy" android:host="login-callback" />
         </intent-filter>
 
         </activity>

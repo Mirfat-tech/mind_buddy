@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CalendarScreen extends StatelessWidget {
   const CalendarScreen({super.key});
@@ -79,6 +81,8 @@ class _CalendarBodyState extends State<_CalendarBody> {
 
   bool _loadingDots = false;
   bool _loadingData = false;
+  bool _isPending = false;
+  bool _trialBannerVisible = true;
 
   final Set<String> _activeDays = <String>{};
   List<Map<String, dynamic>> _displayList = <Map<String, dynamic>>[];
@@ -90,7 +94,22 @@ class _CalendarBodyState extends State<_CalendarBody> {
     super.initState();
     // Initialize with something so the build doesn't crash before load finishes
     _currentFilters = ['Reminders Only'];
+    _loadTrialBannerState();
     _loadUserPreferences();
+  }
+
+  Future<void> _loadTrialBannerState() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _trialBannerVisible = !(prefs.getBool('trial_banner_dismissed') ?? false);
+    });
+  }
+
+  Future<void> _dismissTrialBanner() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('trial_banner_dismissed', true);
+    if (!mounted) return;
+    setState(() => _trialBannerVisible = false);
   }
 
   // --- NEW: LOAD FROM SUPABASE ---
@@ -99,6 +118,8 @@ class _CalendarBodyState extends State<_CalendarBody> {
     if (user == null) return;
 
     try {
+      final info = await SubscriptionLimits.fetchForCurrentUser();
+      _isPending = info.isPending;
       final data = await supabase
           .from('user_calendar_preferences')
           .select('visible_filters')
@@ -123,6 +144,15 @@ class _CalendarBodyState extends State<_CalendarBody> {
   Future<void> _saveFilterPreferences() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
+    if (_isPending) {
+      if (mounted) {
+        await SubscriptionLimits.showTrialUpgradeDialog(
+          context,
+          onUpgrade: () => context.go('/subscription'),
+        );
+      }
+      return;
+    }
 
     try {
       await supabase.from('user_calendar_preferences').upsert({
@@ -182,6 +212,13 @@ class _CalendarBodyState extends State<_CalendarBody> {
 
     final user = supabase.auth.currentUser;
     if (user == null) return;
+    if (_isPending) {
+      setState(() {
+        _loadingDots = false;
+        _activeDays.clear();
+      });
+      return;
+    }
 
     setState(() {
       _loadingDots = true;
@@ -224,6 +261,11 @@ class _CalendarBodyState extends State<_CalendarBody> {
     try {
       final user = supabase.auth.currentUser;
       if (user == null) {
+        if (!mounted) return;
+        setState(() => _displayList = <Map<String, dynamic>>[]);
+        return;
+      }
+      if (_isPending) {
         if (!mounted) return;
         setState(() => _displayList = <Map<String, dynamic>>[]);
         return;
@@ -382,6 +424,11 @@ class _CalendarBodyState extends State<_CalendarBody> {
 
     return Column(
       children: [
+        if (_isPending && _trialBannerVisible)
+          _TrialBanner(
+            onUpgrade: () => context.go('/subscription'),
+            onSkip: () => _dismissTrialBanner(),
+          ),
         // 1) FILTER CHIPS
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
@@ -898,6 +945,55 @@ class _CalendarBodyState extends State<_CalendarBody> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _TrialBanner extends StatelessWidget {
+  const _TrialBanner({required this.onUpgrade, required this.onSkip});
+
+  final VoidCallback onUpgrade;
+  final VoidCallback onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: scheme.outline.withOpacity(0.25)),
+          boxShadow: [
+            BoxShadow(
+              color: scheme.primary.withOpacity(0.12),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.auto_awesome, color: scheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Trial mode: explore freely. Nothing is saved until you choose a plan.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: onSkip,
+              child: const Text('Skip for now'),
+            ),
+            const SizedBox(width: 6),
+            FilledButton(onPressed: onUpgrade, child: const Text('Choose plan')),
+          ],
+        ),
       ),
     );
   }

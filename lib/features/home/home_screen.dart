@@ -5,18 +5,61 @@ import 'package:go_router/go_router.dart';
 
 import 'widgets/templates_section.dart';
 
-import 'package:mind_buddy/app/app_theme_controller.dart';
+import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; // Fixes 'Supabase' error
 import 'package:intl/intl.dart'; // Fixes 'DateFormat' error
+import 'package:mind_buddy/features/auth/device_session_service.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 //import 'widgets/pomodoro_box_widget.dart';
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
+  @override
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  bool _checkedDevice = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _enforceDeviceLimit();
+  }
+
+  Future<void> _enforceDeviceLimit() async {
+    if (_checkedDevice) return;
+    _checkedDevice = true;
+
+    final ok = await DeviceSessionService.recordSession();
+    if (!ok && mounted) {
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Device limit reached'),
+          content: const Text(
+            'Light Support allows only 1 device. Upgrade to use more devices.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      await Supabase.instance.client.auth.signOut();
+      if (!mounted) return;
+      context.go('/signin');
+    }
+  }
+
   Future<void> _openThemePicker(BuildContext context, WidgetRef ref) async {
-    final controller = ref.read(appThemeControllerProvider);
+    final controller = ref.read(settingsControllerProvider);
 
     final selected = await showModalBottomSheet<String>(
       context: context,
@@ -34,7 +77,7 @@ class HomeScreen extends ConsumerWidget {
 
               // Make sure paperStyles exists in paper_styles.dart
               ...paperStyles.map((s) {
-                final isSelected = controller.themeId == s.id;
+                final isSelected = controller.settings.themeId == s.id;
                 return ListTile(
                   title: Text(s.name),
                   trailing: isSelected ? const Icon(Icons.check) : null,
@@ -53,7 +96,7 @@ class HomeScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     return MbScaffold(
       applyBackground: true, // ✅ Home background changes with theme
       appBar: AppBar(
@@ -64,6 +107,11 @@ class HomeScreen extends ConsumerWidget {
             tooltip: 'Theme',
             icon: const Icon(Icons.palette_outlined),
             onPressed: () => _openThemePicker(context, ref),
+          ),
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => context.go('/settings'),
           ),
         ],
       ),
@@ -127,16 +175,68 @@ class _HomeBubble extends StatelessWidget {
   }
 }
 
-class _HomeBody extends StatelessWidget {
+final _trialBannerControllerProvider =
+    StateNotifierProvider<_TrialBannerController, bool>((ref) {
+  return _TrialBannerController();
+});
+
+class _TrialBannerController extends StateNotifier<bool> {
+  _TrialBannerController() : super(true) {
+    _load();
+  }
+
+  static const _prefsKey = 'trial_banner_dismissed';
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    state = !(prefs.getBool(_prefsKey) ?? false);
+  }
+
+  Future<void> dismiss() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefsKey, true);
+    state = false;
+  }
+
+  Future<void> show() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefsKey, false);
+    state = true;
+  }
+}
+
+final _pendingTierProvider = FutureProvider<bool>((ref) async {
+  final info = await SubscriptionLimits.fetchForCurrentUser();
+  return info.isPending;
+});
+
+class _HomeBody extends ConsumerWidget {
   const _HomeBody();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pendingAsync = ref.watch(_pendingTierProvider);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          pendingAsync.when(
+            data: (isPending) {
+              final showBanner =
+                  ref.watch(_trialBannerControllerProvider) && isPending;
+              return showBanner
+                  ? _TrialBanner(
+                      onUpgrade: () => context.go('/subscription'),
+                      onSkip: () => ref
+                          .read(_trialBannerControllerProvider.notifier)
+                          .dismiss(),
+                    )
+                  : const SizedBox.shrink();
+            },
+            loading: () => const SizedBox.shrink(),
+            error: (_, __) => const SizedBox.shrink(),
+          ),
           const SizedBox(height: 8),
 
           const SizedBox(height: 12),
@@ -193,6 +293,16 @@ class _HomeBody extends StatelessWidget {
                   }
 
                   try {
+                    final info =
+                        await SubscriptionLimits.fetchForCurrentUser();
+                    if (info.isPending) {
+                      if (!context.mounted) return;
+                      await SubscriptionLimits.showTrialUpgradeDialog(
+                        context,
+                        onUpgrade: () => context.go('/subscription'),
+                      );
+                      return;
+                    }
                     final dayId = DateFormat(
                       'yyyy-MM-dd',
                     ).format(DateTime.now());
@@ -204,6 +314,8 @@ class _HomeBody extends StatelessWidget {
                         .eq('user_id', user.id)
                         .eq('day_id', dayId)
                         .eq('is_archived', false)
+                        .order('created_at', ascending: false)
+                        .limit(1)
                         .maybeSingle();
 
                     // 2️⃣ If none exists, create one
@@ -241,7 +353,7 @@ class _HomeBody extends StatelessWidget {
               _HomeBubble(
                 title: 'Journal bubble',
                 icon: Icons.menu_book_outlined,
-                onTap: () => context.go('/journal/new'),
+                onTap: () => context.go('/journals'),
 
                 // ✅ navigate to your existing Journal screen (whatever route you already use)
                 // e.g. context.go('/journal?dayId=...');
@@ -301,5 +413,52 @@ class _HomeBody extends StatelessWidget {
     final m = now.month.toString().padLeft(2, '0');
     final d = now.day.toString().padLeft(2, '0');
     return '$y-$m-$d';
+  }
+}
+
+class _TrialBanner extends StatelessWidget {
+  const _TrialBanner({required this.onUpgrade, required this.onSkip});
+
+  final VoidCallback onUpgrade;
+  final VoidCallback onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.auto_awesome, color: scheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Trial mode: explore freely. Nothing is saved until you choose a plan.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: onSkip,
+            child: const Text('Skip for now'),
+          ),
+          const SizedBox(width: 6),
+          FilledButton(onPressed: onUpgrade, child: const Text('Choose plan')),
+        ],
+      ),
+    );
   }
 }

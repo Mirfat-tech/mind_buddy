@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class ManageHabitsScreen extends StatefulWidget {
   const ManageHabitsScreen({super.key});
@@ -15,6 +17,8 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   bool _loading = true;
+  bool _isPending = false;
+  bool _trialBannerVisible = true;
   final List<Map<String, dynamic>> _habits = [];
   final List<Map<String, dynamic>> _categories = [];
   final Map<String, ({int current, int best})> _streaksByHabitName = {};
@@ -26,7 +30,23 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   @override
   void initState() {
     super.initState();
+    _loadTrialBannerState();
     _loadData();
+  }
+
+  Future<void> _loadTrialBannerState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _trialBannerVisible = !(prefs.getBool('trial_banner_dismissed') ?? false);
+    });
+  }
+
+  Future<void> _dismissTrialBanner() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('trial_banner_dismissed', true);
+    if (!mounted) return;
+    setState(() => _trialBannerVisible = false);
   }
 
   // --- GLOWING UI HELPERS ---
@@ -94,6 +114,8 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   Future<void> _loadData() async {
     if (mounted) setState(() => _loading = true);
     try {
+      final info = await SubscriptionLimits.fetchForCurrentUser();
+      _isPending = info.isPending;
       await _loadCategories();
       await _loadHabits();
       await _loadStreaks();
@@ -262,6 +284,16 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
           FilledButton(
             onPressed: () async {
               if (nameController.text.trim().isEmpty) return;
+              final info = await SubscriptionLimits.fetchForCurrentUser();
+              if (info.isPending) {
+                if (ctx.mounted) {
+                  await SubscriptionLimits.showTrialUpgradeDialog(
+                    ctx,
+                    onUpgrade: () => ctx.go('/subscription'),
+                  );
+                }
+                return;
+              }
 
               if (categoryId == null) {
                 await supabase.from('habit_categories').insert({
@@ -365,6 +397,16 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
             FilledButton(
               onPressed: () async {
                 if (nameController.text.trim().isEmpty) return;
+                final info = await SubscriptionLimits.fetchForCurrentUser();
+              if (info.isPending) {
+                if (ctx.mounted) {
+                  await SubscriptionLimits.showTrialUpgradeDialog(
+                    ctx,
+                    onUpgrade: () => ctx.go('/subscription'),
+                  );
+                }
+                return;
+              }
 
                 if (habitId == null) {
                   await supabase.from('user_habits').insert({
@@ -396,6 +438,16 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   }
 
   Future<void> _toggleActive(Map<String, dynamic> habit) async {
+    final info = await SubscriptionLimits.fetchForCurrentUser();
+    if (info.isPending) {
+      if (mounted) {
+        await SubscriptionLimits.showTrialUpgradeDialog(
+          context,
+          onUpgrade: () => context.go('/subscription'),
+        );
+      }
+      return;
+    }
     await supabase
         .from('user_habits')
         .update({'is_active': !(habit['is_active'] == true)})
@@ -406,6 +458,16 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   // ✅ DELETE SELECTED HABITS (you referenced this in AppBar actions)
   Future<void> _deleteSelectedHabits() async {
     if (_selectedHabitIds.isEmpty) return;
+    final info = await SubscriptionLimits.fetchForCurrentUser();
+    if (info.isPending) {
+      if (mounted) {
+        await SubscriptionLimits.showTrialUpgradeDialog(
+          context,
+          onUpgrade: () => context.go('/subscription'),
+        );
+      }
+      return;
+    }
 
     final scheme = Theme.of(context).colorScheme;
 
@@ -516,6 +578,11 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                if (_isPending && _trialBannerVisible)
+                  _TrialBanner(
+                    onUpgrade: () => context.go('/subscription'),
+                    onSkip: () => _dismissTrialBanner(),
+                  ),
                 if (habitsByCategory[null]?.isNotEmpty ?? false)
                   _buildCategorySection(
                     categoryName: 'Uncategorized',
@@ -725,6 +792,53 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
             onPressed: () => _showHabitDialog(),
             child: const Text('Add your first habit'),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrialBanner extends StatelessWidget {
+  const _TrialBanner({required this.onUpgrade, required this.onSkip});
+
+  final VoidCallback onUpgrade;
+  final VoidCallback onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.auto_awesome, color: scheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Trial mode: explore freely. Nothing is saved until you choose a plan.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: onSkip,
+            child: const Text('Skip for now'),
+          ),
+          const SizedBox(width: 6),
+          FilledButton(onPressed: onUpgrade, child: const Text('Choose plan')),
         ],
       ),
     );

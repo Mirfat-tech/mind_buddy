@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
+import 'package:mind_buddy/features/auth/device_session_service.dart';
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -36,6 +37,20 @@ class _SignInScreenState extends State<SignInScreen> {
         password: _password.text,
       );
 
+      final ok = await DeviceSessionService.recordSession();
+      if (!ok) {
+        await Supabase.instance.client.auth.signOut();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'This plan allows only 1 device. Upgrade to use more devices.',
+            ),
+          ),
+        );
+        return;
+      }
+
       if (!mounted) return;
 
       // Preserve the intended route if present
@@ -55,6 +70,26 @@ class _SignInScreenState extends State<SignInScreen> {
       );
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _signInWithOAuth(OAuthProvider provider) async {
+    try {
+      await Supabase.instance.client.auth.signInWithOAuth(
+        provider,
+        redirectTo: 'mindbuddy://login-callback',
+        authScreenLaunchMode: LaunchMode.externalApplication,
+      );
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('OAuth failed: $e')),
+      );
     }
   }
 
@@ -163,6 +198,40 @@ class _SignInScreenState extends State<SignInScreen> {
                           )
                         : const Text('Continue'),
                   ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: const [
+                    Expanded(child: Divider()),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: Text('OR'),
+                    ),
+                    Expanded(child: Divider()),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.g_mobiledata),
+                    label: const Text('Continue with Google'),
+                    onPressed: () => _signInWithOAuth(OAuthProvider.google),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.apple),
+                    label: const Text('Continue with Apple'),
+                    onPressed: () => _signInWithOAuth(OAuthProvider.apple),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () => context.go('/signup'),
+                  child: const Text('Create an account'),
                 ),
               ],
             ),

@@ -75,8 +75,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           SnackBar(
             content: Text(
               newTier == 'full'
-                  ? '🏆 Welcome to Full Support! Enjoy unlimited chats and 100 messages per day!'
-                  : 'Switched back to Light Support',
+                  ? '🏆 Welcome to Full Support! Unlimited chats, 100 messages/day, 10 journals/day, templates + insights.'
+                  : 'Switched to Light Support: 1 chat/day, 10 messages/day.',
             ),
             backgroundColor: newTier == 'full'
                 ? Colors.amber.shade700
@@ -104,6 +104,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final isFull = _currentTier == 'full';
+    final isLight = _currentTier == 'light';
+    final isPending = _currentTier == 'pending' || _currentTier.isEmpty;
 
     return MbScaffold(
       applyBackground: true,
@@ -123,7 +125,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   // Current Status Bubble (smaller)
-                  _buildStatusBubble(cs, isFull),
+                  _buildStatusBubble(cs, isFull, isPending),
 
                   const SizedBox(height: 30),
 
@@ -132,9 +134,17 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     cs: cs,
                     title: 'Light Support',
                     price: '\$3.99/mo',
-                    features: ['1 chat/day', '10 msg/day'],
+                    features: [
+                      '1 chat/day',
+                      '10 msg/day',
+                      '3 journal entries/day',
+                      'Built-in templates only',
+                      '1 device',
+                      'No insights',
+                      'No data saved on trial',
+                    ],
                     isGold: false,
-                    isCurrent: !isFull,
+                    isCurrent: isLight,
                     onTap: isFull ? () => _showDowngradeDialog() : null,
                   ),
 
@@ -145,7 +155,15 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                     cs: cs,
                     title: 'Full Support',
                     price: '\$9.99/mo',
-                    features: ['Unlimited chats', '100 msg/day'],
+                    features: [
+                      'Unlimited chats',
+                      '100 msg/day',
+                      '10 journal entries/day',
+                      'Create templates',
+                      'Up to 5 devices',
+                      'Insights access',
+                      'Data is saved',
+                    ],
                     isGold: true,
                     isCurrent: isFull,
                     onTap: !isFull ? () => _upgradeTier('full') : null,
@@ -156,7 +174,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     );
   }
 
-  Widget _buildStatusBubble(ColorScheme cs, bool isGold) {
+  Widget _buildStatusBubble(ColorScheme cs, bool isGold, bool isPending) {
     return Container(
       width: 120,
       height: 120,
@@ -174,9 +192,11 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
           ),
         ],
         border: Border.all(
-          color: isGold
-              ? Colors.amber.withOpacity(0.3)
-              : cs.primary.withOpacity(0.2),
+          color: isPending
+              ? cs.outline.withOpacity(0.3)
+              : isGold
+                  ? Colors.amber.withOpacity(0.3)
+                  : cs.primary.withOpacity(0.2),
           width: 2,
         ),
       ),
@@ -185,13 +205,21 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            isGold ? Icons.workspace_premium : Icons.person_outline,
-            color: isGold ? Colors.amber.shade700 : cs.primary,
+            isPending
+                ? Icons.lock_outline
+                : isGold
+                    ? Icons.workspace_premium
+                    : Icons.person_outline,
+            color: isPending
+                ? cs.onSurface.withOpacity(0.6)
+                : isGold
+                    ? Colors.amber.shade700
+                    : cs.primary,
             size: 24,
           ),
           const SizedBox(height: 4),
           Text(
-            isGold ? 'Full Support 🏆' : 'Light Support',
+            isPending ? 'Choose a Plan' : (isGold ? 'Full Support 🏆' : 'Light Support'),
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 11,

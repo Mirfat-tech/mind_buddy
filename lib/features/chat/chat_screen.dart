@@ -5,11 +5,13 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'package:mind_buddy/common/mb_scaffold.dart';
+//import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/services/mind_buddy_api.dart';
-import 'package:mind_buddy/features/chat/chat_archive_screen.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
+//import 'package:mind_buddy/features/chat/chat_archive_screen.dart';
 import 'package:mind_buddy/paper/themed_page.dart';
-import 'package:mind_buddy/features/chat/voice_input_widget.dart';
+//import 'package:mind_buddy/features/chat/voice_input_widget.dart';
+
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class ChatScreen extends StatefulWidget {
@@ -36,13 +38,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-
-    // ADDED: Initialize the enhanced API here
-    _api = MindBuddyEnhancedApi(
-      apiKey:
-          'REDACTED', // Replace with your actual OpenAI API key
-    );
-    _speech = stt.SpeechToText();
+    _api = MindBuddyEnhancedApi(); // uses Supabase.instance.client
   }
 
   @override
@@ -79,36 +75,45 @@ class _ChatScreenState extends State<ChatScreen> {
         throw Exception('User not authenticated');
       }
 
-      // Check subscription tier
-      final userProfile = await Supabase.instance.client
-          .from('profiles')
-          .select('subscription_tier')
-          .eq('id', user.id)
-          .maybeSingle();
+      final info = await SubscriptionLimits.fetchForCurrentUser();
+      final isFull = info.isFull;
+      if (info.isPending) {
+        if (mounted) {
+          await SubscriptionLimits.showTrialUpgradeDialog(
+            context,
+            onUpgrade: () => context.go('/subscription'),
+          );
+        }
+        setState(() => _busy = false);
+        return;
+      }
 
-      final isFull = userProfile?['subscription_tier'] == 'full';
+      // Count today's user messages across all chats (local day)
+      final now = DateTime.now();
+      final startOfDay = DateTime(now.year, now.month, now.day);
+      final endOfDay = startOfDay.add(const Duration(days: 1));
 
-      // Check message count for all users
       final messageCountResponse = await Supabase.instance.client
           .from('chat_messages')
           .select()
-          .eq('chat_id', widget.chatId)
-          .eq('role', 'user')
+          .eq('user_id', user.id)
+          .gte('created_at', startOfDay.toIso8601String())
+          .lt('created_at', endOfDay.toIso8601String())
           .count();
 
-      final userMessageCount = messageCountResponse.count;
+      final totalMessageCount = messageCountResponse.count ?? 0;
 
       // Apply limits based on tier
-      final messageLimit = isFull ? 100 : 10;
+      final messageLimit = info.messageLimit;
 
-      if (userMessageCount >= messageLimit) {
+      if (totalMessageCount >= messageLimit - 1) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
                 isFull
-                    ? 'You\'ve reached your 100 message limit for today. Come back tomorrow!'
-                    : 'You\'ve reached your 10 message limit for today. Upgrade to Full Support 🏆 for 100 messages per day!',
+                    ? 'You\'ve reached your 100 message limit for today (including replies). Come back tomorrow!'
+                    : 'You\'ve reached your 10 message limit for today (including replies). Upgrade to Full Support 🏆 for 100 messages per day!',
               ),
               duration: const Duration(seconds: 4),
             ),
@@ -127,30 +132,32 @@ class _ChatScreenState extends State<ChatScreen> {
           .limit(20);
 
       // Build conversation history - handle both 'text' and 'content' fields
+      // Build conversation history
       final conversationHistory = (previousMessages as List)
           .map(
             (msg) => {
               'role': msg['role'] as String,
-              'content': (msg['text'] ?? '') as String, // ✅ Use 'text' field
+              'content': (msg['text'] ?? '') as String,
             },
           )
-          .where(
-            (msg) => (msg['content'] as String).isNotEmpty,
-          ) // ✅ Keep this (OpenAI expects 'content')
+          .where((msg) => (msg['content'] as String).isNotEmpty)
           .toList();
+
+      // 🔍 ADD THIS DEBUG LOG
+      debugPrint('📤 Sending to API:');
+      debugPrint('Message: $text');
+      debugPrint('History: $conversationHistory');
 
       // Save user message to database first
       await Supabase.instance.client.from('chat_messages').insert({
         'chat_id': widget.chatId,
         'role': 'user',
         'text': text,
-        'text': text,
         'user_id': user.id,
       });
 
       // Send message to enhanced API with conversation history
       final response = await _api.sendMessage(text, conversationHistory);
-
       // Save AI response to database
       await Supabase.instance.client.from('chat_messages').insert({
         'chat_id': widget.chatId,
@@ -362,19 +369,22 @@ class _ChatScreenState extends State<ChatScreen> {
                         setState(() => _isCreatingChat = true);
 
                         try {
-                          // 1. Check user subscription tier
-                          final userProfile = await supabase
-                              .from('profiles')
-                              .select('subscription_tier')
-                              .eq('id', user.id)
-                              .maybeSingle();
-
-                          final isFull =
-                              userProfile?['subscription_tier'] == 'full';
+                          final info =
+                              await SubscriptionLimits.fetchForCurrentUser();
+                          final isFull = info.isFull;
+                          if (info.isPending) {
+                            if (context.mounted) {
+                              await SubscriptionLimits.showTrialUpgradeDialog(
+                                context,
+                                onUpgrade: () => context.go('/subscription'),
+                              );
+                            }
+                            return;
+                          }
 
                           // Debug log
                           debugPrint(
-                            'User subscription tier: ${userProfile?['subscription_tier']}',
+                            'User subscription tier: ${info.rawTier}',
                           );
                           debugPrint('Is Full: $isFull');
 
@@ -448,10 +458,17 @@ class _ChatScreenState extends State<ChatScreen> {
                         } catch (e) {
                           debugPrint("Error: $e");
                           if (context.mounted) {
+                            String msg = 'Failed to create chat.';
+                            if (e is PostgrestException &&
+                                e.code == '23505') {
+                              msg =
+                                  'Light Support allows only 1 chat per day. Upgrade to Full Support 🏆 for unlimited chats.';
+                            } else if (e.toString().contains('23505')) {
+                              msg =
+                                  'Light Support allows only 1 chat per day. Upgrade to Full Support 🏆 for unlimited chats.';
+                            }
                             ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Failed to create chat: $e'),
-                              ),
+                              SnackBar(content: Text(msg)),
                             );
                           }
                         } finally {

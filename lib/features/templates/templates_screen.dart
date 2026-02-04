@@ -3,6 +3,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'log_table_screen.dart';
 import 'create_templates_screen.dart';
 import 'package:mind_buddy/router.dart';
+import 'package:go_router/go_router.dart';
+import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class TemplatesScreen extends StatefulWidget {
   const TemplatesScreen({super.key});
@@ -16,6 +20,11 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
   final TextEditingController _searchController = TextEditingController();
   bool loading = true;
   List<Map<String, dynamic>> templates = [];
+  bool _showHidden = false;
+  Set<String> _hiddenTemplateIds = {};
+  bool _isFull = false;
+  bool _isPending = false;
+  late final _TrialBannerController _trialBannerController;
 
   // Updated to match the template_keys we inserted via SQL
   final List<String> _builtInTemplates = [
@@ -51,7 +60,13 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
   @override
   void initState() {
     super.initState();
+    _trialBannerController = _TrialBannerController()..init();
     _load();
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 
   String _today() => DateTime.now().toIso8601String().substring(0, 10);
@@ -76,13 +91,26 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     try {
       final user = supabase.auth.currentUser;
       if (user == null) return;
+      final info = await SubscriptionLimits.fetchForCurrentUser();
+      _isFull = info.isFull;
+      _isPending = info.isPending;
+
+      final hiddenRows = await supabase
+          .from('user_template_settings')
+          .select('template_id')
+          .eq('user_id', user.id)
+          .eq('is_hidden', true);
+      _hiddenTemplateIds = (hiddenRows as List)
+          .map((r) => (r['template_id'] ?? '').toString())
+          .where((id) => id.isNotEmpty)
+          .toSet();
 
       // FIX: Fetch where user_id is the current user OR user_id is NULL (System Templates)
-      final rows = await supabase
+      final base = supabase
           .from('log_templates_v2')
           .select()
-          .or('user_id.eq.${user.id},user_id.is.null')
-          .order('name', ascending: true);
+          .or('user_id.eq.${user.id},user_id.is.null');
+      final rows = await base.order('name', ascending: true);
 
       debugPrint('--- TEMPLATE KEYS FROM DB (${rows.length}) ---');
       for (final r in rows) {
@@ -95,9 +123,19 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       if (mounted) {
         setState(() {
           // Filter out 'habits' if you want it hidden from this view
-          templates = List<Map<String, dynamic>>.from(
-            rows,
-          ).where((t) => (t['template_key'] ?? '') != 'habits').toList();
+          final all = List<Map<String, dynamic>>.from(rows)
+              .where((t) => (t['template_key'] ?? '') != 'habits')
+              .where((t) => _isFull || t['user_id'] == null)
+              .toList();
+          templates = _showHidden
+              ? all.where((t) => _hiddenTemplateIds.contains(
+                    (t['id'] ?? '').toString(),
+                  ))
+                  .toList()
+              : all.where((t) => !_hiddenTemplateIds.contains(
+                    (t['id'] ?? '').toString(),
+                  ))
+                  .toList();
           loading = false;
         });
       }
@@ -118,6 +156,27 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       _load();
     } catch (e) {
       debugPrint('Delete failed: $e');
+    }
+  }
+
+  Future<void> _setHidden(String templateId, bool hidden) async {
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+      await supabase.from('user_template_settings').upsert({
+        'user_id': user.id,
+        'template_id': templateId,
+        'is_hidden': hidden,
+        'updated_at': DateTime.now().toIso8601String(),
+      });
+      _load();
+    } catch (e) {
+      debugPrint('Hide failed: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Hide failed: $e')),
+        );
+      }
     }
   }
 
@@ -147,6 +206,32 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     if (t.contains('goals')) return '🎊';
     // if (t.contains('meal prep')) return '🍱';
     return '📋';
+  }
+
+  IconData _getIcon(String title) {
+    final t = title.toLowerCase();
+    if (t.contains('menstrual') || t.contains('cycle')) return Icons.water_drop;
+    if (t.contains('sleep')) return Icons.bedtime_outlined;
+    if (t.contains('bill')) return Icons.receipt_long_outlined;
+    if (t.contains('income')) return Icons.payments_outlined;
+    if (t.contains('expense')) return Icons.shopping_cart_outlined;
+    if (t.contains('task')) return Icons.task_alt_outlined;
+    if (t.contains('wishlist')) return Icons.card_giftcard_outlined;
+    if (t.contains('music')) return Icons.music_note_outlined;
+    if (t.contains('mood')) return Icons.mood_outlined;
+    if (t.contains('water')) return Icons.water_drop_outlined;
+    if (t.contains('movie')) return Icons.movie_outlined;
+    if (t.contains('tv log')) return Icons.tv_outlined;
+    if (t.contains('place')) return Icons.place_outlined;
+    if (t.contains('restaurant')) return Icons.restaurant_outlined;
+    if (t.contains('book')) return Icons.book_outlined;
+    if (t.contains('workout')) return Icons.fitness_center_outlined;
+    if (t.contains('fast')) return Icons.hourglass_bottom_outlined;
+    if (t.contains('skin care')) return Icons.spa_outlined;
+    if (t.contains('meditation')) return Icons.self_improvement_outlined;
+    if (t.contains('study')) return Icons.school_outlined;
+    if (t.contains('goals')) return Icons.emoji_events_outlined;
+    return Icons.table_chart_outlined;
   }
 
   Widget _glowingIconButton({
@@ -191,7 +276,8 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
               )
               .toList();
 
-    return Scaffold(
+    return MbScaffold(
+      applyBackground: true,
       appBar: AppBar(
         leading: _glowingIconButton(
           icon: Icons.arrow_back,
@@ -213,6 +299,14 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
+                if (_isPending && _trialBannerController.visible)
+                  _TrialBanner(
+                    onUpgrade: () => context.go('/subscription'),
+                    onSkip: () async {
+                      await _trialBannerController.dismiss();
+                      if (mounted) setState(() {});
+                    },
+                  ),
                 Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Container(
@@ -242,6 +336,22 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
                     ),
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Row(
+                    children: [
+                      Switch(
+                        value: _showHidden,
+                        onChanged: (v) => setState(() {
+                          _showHidden = v;
+                          _load();
+                        }),
+                      ),
+                      const SizedBox(width: 6),
+                      const Text('Show hidden'),
+                    ],
+                  ),
+                ),
                 Expanded(
                   child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 40),
@@ -253,68 +363,136 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
                           .toString();
                       final templateId = t['id'].toString();
 
+                      final isHidden = _hiddenTemplateIds.contains(templateId);
                       final tileContent = Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(16),
                           boxShadow: [
                             BoxShadow(
-                              color: scheme.primary.withOpacity(0.05),
-                              blurRadius: 10,
+                              color: scheme.primary.withOpacity(0.08),
+                              blurRadius: 15,
                               spreadRadius: 0,
                             ),
                           ],
                         ),
-                        child: ListTile(
-                          tileColor: scheme.surface,
-                          shape: RoundedRectangleBorder(
+                        child: Material(
+                          color: Theme.of(context).scaffoldBackgroundColor,
+                          borderRadius: BorderRadius.circular(16),
+                          child: InkWell(
                             borderRadius: BorderRadius.circular(16),
-                            side: BorderSide(
-                              color: scheme.outline.withOpacity(0.1),
-                            ),
-                          ),
-                          leading: Text(
-                            _getEmoji(title),
-                            style: const TextStyle(fontSize: 24),
-                          ),
-                          title: Text(
-                            title,
-                            style: TextStyle(
-                              color: scheme.onSurface,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          trailing: const Icon(Icons.chevron_right, size: 18),
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => themed(
-                                  LogTableScreen(
-                                    templateId: templateId,
-                                    templateKey: t['template_key'],
-                                    dayId: _today(),
+                            onTap: () {
+                              if (isHidden) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'This template is hidden. Unhide to open.',
+                                    ),
+                                  ),
+                                );
+                                return;
+                              }
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => themed(
+                                    LogTableScreen(
+                                      templateId: templateId,
+                                      templateKey: t['template_key'],
+                                      dayId: _today(),
+                                    ),
                                   ),
                                 ),
+                              );
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
                               ),
-                            );
-                          },
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: scheme.primary.withOpacity(0.35),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 34,
+                                    height: 34,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: scheme.primary.withOpacity(0.35),
+                                      ),
+                                    ),
+                                    child: Icon(
+                                      _getIcon(title),
+                                      size: 18,
+                                      color: scheme.primary,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      title,
+                                      style: TextStyle(
+                                        color: scheme.onSurface,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ),
+                                  if (isHidden)
+                                    IconButton(
+                                      tooltip: 'Unhide',
+                                      icon: const Icon(Icons.visibility),
+                                      onPressed: () =>
+                                          _setHidden(templateId, false),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
                       );
-
-                      if (!_isDeletable(t)) return tileContent;
 
                       return Dismissible(
                         key: ValueKey(templateId),
                         direction: DismissDirection.endToStart,
-                        onDismissed: (_) => _deleteTemplate(templateId),
+                        confirmDismiss: (_) async {
+                          final ok = await showDialog<bool>(
+                            context: context,
+                            builder: (_) => AlertDialog(
+                              title: const Text('Hide template?'),
+                              content: const Text(
+                                'You can unhide it later from the list.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, false),
+                                  child: const Text('Cancel'),
+                                ),
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  child: Text(
+                                    'Hide',
+                                    style: TextStyle(color: scheme.primary),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                          return ok == true;
+                        },
+                        onDismissed: (_) => _setHidden(templateId, true),
                         background: Container(
                           alignment: Alignment.centerRight,
                           padding: const EdgeInsets.only(right: 20),
                           decoration: BoxDecoration(
-                            color: scheme.errorContainer,
+                            color: scheme.primary.withOpacity(0.15),
                             borderRadius: BorderRadius.circular(16),
                           ),
-                          child: Icon(Icons.delete, color: scheme.error),
+                          child: Icon(Icons.visibility_off, color: scheme.primary),
                         ),
                         child: tileContent,
                       );
@@ -327,6 +505,44 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
   }
 
   void _openAddMenu() async {
+    final info = await SubscriptionLimits.fetchForCurrentUser();
+    if (info.isPending) {
+      if (mounted) {
+        await SubscriptionLimits.showTrialUpgradeDialog(
+          context,
+          onUpgrade: () => context.go('/subscription'),
+        );
+      }
+      return;
+    }
+    if (!info.isFull) {
+      if (mounted) {
+        final goUpgrade = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Upgrade to create templates'),
+            content: const Text(
+              'Light Support includes only built-in templates. Upgrade to Full Support to create your own.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Not now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Upgrade'),
+              ),
+            ],
+          ),
+        );
+        if (goUpgrade == true && context.mounted) {
+          context.go('/subscription');
+        }
+      }
+      return;
+    }
+
     final ok = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
@@ -334,5 +550,68 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       ),
     );
     if (ok == true) _load();
+  }
+}
+
+class _TrialBanner extends StatelessWidget {
+  const _TrialBanner({required this.onUpgrade, required this.onSkip});
+
+  final VoidCallback onUpgrade;
+  final VoidCallback onSkip;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.auto_awesome, color: scheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Trial mode: explore freely. Nothing is saved until you choose a plan.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: onSkip,
+            child: const Text('Skip for now'),
+          ),
+          const SizedBox(width: 6),
+          FilledButton(onPressed: onUpgrade, child: const Text('Choose plan')),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrialBannerController {
+  static const _prefsKey = 'trial_banner_dismissed';
+  bool visible = true;
+
+  Future<void> init() async {
+    final prefs = await SharedPreferences.getInstance();
+    visible = !(prefs.getBool(_prefsKey) ?? false);
+  }
+
+  Future<void> dismiss() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_prefsKey, true);
+    visible = false;
   }
 }

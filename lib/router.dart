@@ -10,14 +10,20 @@ import 'package:mind_buddy/features/templates/template_screen.dart';
 // screens
 import 'features/splash/splash_screen.dart';
 import 'features/auth/sign_in_screen.dart';
+import 'features/auth/sign_up_screen.dart';
 import 'features/auth/reset_password_screen.dart';
 import 'package:mind_buddy/features/home/home_screen.dart';
 import 'calendar/calendar_screen.dart';
 import 'features/journal/new_journal_screen.dart';
+import 'features/journal/journals_list_screen.dart';
+import 'features/journal/journal_view_screen.dart';
+import 'features/journal/journal_share_view_screen.dart';
+import 'features/journal/edit_journal_screen.dart';
 import 'features/day/daily_page_screen.dart';
 import 'features/chat/chat_screen.dart';
 import 'package:mind_buddy/features/templates/log_table_screen.dart';
-import 'package:mind_buddy/features/insights/insights_screen.dart';
+import 'package:mind_buddy/features/insights/insights_gate_screen.dart';
+import 'package:mind_buddy/features/onboarding/plan_selection_screen.dart';
 //import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'package:mind_buddy/features/insights/manage_habits_screen.dart'
     show ManageHabitsScreen;
@@ -32,6 +38,10 @@ import 'features/pomodoro/pomodoro_screen.dart';
 import 'package:mind_buddy/features/brain_fog/brain_fog_screen.dart';
 import 'package:mind_buddy/features/chat/chat_archive_screen.dart';
 import 'package:mind_buddy/features/subscription/subscription_screen.dart';
+import 'package:mind_buddy/features/settings/settings_screen.dart';
+import 'package:mind_buddy/features/settings/appearance_settings_screen.dart';
+import 'package:mind_buddy/features/settings/notifications_settings_screen.dart';
+import 'package:mind_buddy/features/settings/usage_settings_screen.dart';
 
 //
 
@@ -115,21 +125,43 @@ GoRouter createRouter() {
     // Re-run redirect when auth changes
     refreshListenable: GoRouterRefreshStream(supabase.auth.onAuthStateChange),
 
-    redirect: (context, state) {
+    redirect: (context, state) async {
       final session = supabase.auth.currentSession;
 
       final loggingIn = state.matchedLocation == '/signin';
       final onSplash = state.matchedLocation == '/splash';
       final onReset = state.matchedLocation == '/reset';
+      final onOnboarding = state.matchedLocation == '/onboarding/plan';
+      final onSubscription = state.matchedLocation == '/subscription';
+      final onShare = state.matchedLocation.startsWith('/share/');
 
       // let splash/reset handle themselves
-      if (onSplash || onReset) return null;
+      if (onSplash || onReset || onShare) return null;
 
       // not logged in -> go signin
       if (session == null && !loggingIn) return '/signin';
 
-      // logged in but on signin -> go home
-      if (session != null && loggingIn) return '/home';
+      if (session != null) {
+        // pending plan -> force onboarding choice
+        final profile = await supabase
+            .from('profiles')
+            .select('subscription_tier')
+            .eq('id', session.user.id)
+            .maybeSingle();
+        final tier =
+            (profile?['subscription_tier'] ?? '').toString().trim().toLowerCase();
+        final pending = tier.isEmpty || tier == 'pending';
+
+        if (pending &&
+            !onOnboarding &&
+            !onSubscription &&
+            !loggingIn) {
+          return '/onboarding/plan';
+        }
+
+        // logged in but on signin -> go home
+        if (loggingIn) return '/home';
+      }
 
       return null;
     },
@@ -147,8 +179,16 @@ GoRouter createRouter() {
         builder: (_, __) => themed(const SignInScreen()),
       ),
       GoRoute(
+        path: '/signup',
+        builder: (_, __) => themed(const SignUpScreen()),
+      ),
+      GoRoute(
         path: '/reset',
         builder: (_, __) => themed(const ResetPasswordScreen()),
+      ),
+      GoRoute(
+        path: '/onboarding/plan',
+        builder: (_, __) => themed(const PlanSelectionScreen()),
       ),
 
       // HOME
@@ -164,6 +204,35 @@ GoRouter createRouter() {
       GoRoute(
         path: '/journal/new',
         builder: (_, __) => themed(const NewJournalScreen()),
+      ),
+      GoRoute(
+        path: '/journals',
+        builder: (_, __) => themed(const JournalsListScreen()),
+      ),
+      GoRoute(
+        path: '/journals/new',
+        builder: (_, __) => themed(const NewJournalScreen()),
+      ),
+      GoRoute(
+        path: '/journals/view/:id',
+        builder: (context, state) {
+          final id = state.pathParameters['id']!;
+          return themed(JournalViewScreen(journalId: id));
+        },
+      ),
+      GoRoute(
+        path: '/journals/edit/:id',
+        builder: (context, state) {
+          final id = state.pathParameters['id']!;
+          return themed(EditJournalScreen(journalId: id));
+        },
+      ),
+      GoRoute(
+        path: '/share/:shareId',
+        builder: (context, state) {
+          final shareId = state.pathParameters['shareId']!;
+          return themed(JournalShareViewScreen(shareId: shareId));
+        },
       ),
 
       //DAY PAGE
@@ -216,6 +285,22 @@ GoRouter createRouter() {
         builder: (_, __) => themed(const SubscriptionScreen()),
       ),
       GoRoute(
+        path: '/settings',
+        builder: (_, __) => themed(const SettingsScreen()),
+      ),
+      GoRoute(
+        path: '/settings/appearance',
+        builder: (_, __) => themed(const AppearanceSettingsScreen()),
+      ),
+      GoRoute(
+        path: '/settings/notifications',
+        builder: (_, __) => themed(const NotificationsSettingsScreen()),
+      ),
+      GoRoute(
+        path: '/settings/usage',
+        builder: (_, __) => themed(const UsageSettingsScreen()),
+      ),
+      GoRoute(
         path: '/pomodoro',
         builder: (context, state) => themed(const PomodoroScreen()),
       ),
@@ -260,7 +345,7 @@ GoRouter createRouter() {
 
       GoRoute(
         path: '/insights',
-        builder: (context, state) => themed(const InsightsScreen()),
+        builder: (context, state) => themed(const InsightsGateScreen()),
       ),
 
       GoRoute(

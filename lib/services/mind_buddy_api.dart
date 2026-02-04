@@ -1,11 +1,17 @@
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
 
 class MindBuddyEnhancedApi {
-  final String apiKey;
+  final SupabaseClient _supabase;
 
-  MindBuddyEnhancedApi({required this.apiKey});
+  MindBuddyEnhancedApi({SupabaseClient? supabase})
+    : _supabase = supabase ?? Supabase.instance.client;
+
+  //MindBuddyEnhancedApi({required this.apiKey, SupabaseClient? supabase})
+  // : _supabase = supabase ?? Supabase.instance.client;
 
   // ============================================
   // AVAILABLE FUNCTIONS FOR OPENAI
@@ -610,7 +616,7 @@ class MindBuddyEnhancedApi {
       },
     },
 
-    // FASTING - ADD
+    // FASTING - ADD (schema fix)
     {
       'type': 'function',
       'function': {
@@ -619,19 +625,15 @@ class MindBuddyEnhancedApi {
         'parameters': {
           'type': 'object',
           'properties': {
-            'start_time': {
-              'type': 'string',
-              'description': 'Start time ISO 8601',
+            'date': {'type': 'string', 'description': 'Date YYYY-MM-DD'},
+            'duration_hours': {
+              'type': 'number',
+              'description': 'Duration in hours',
             },
-            'end_time': {'type': 'string', 'description': 'End time ISO 8601'},
-            'type': {
-              'type': 'string',
-              'enum': ['intermittent', 'water', 'dry', 'other'],
-              'description': 'Type',
-            },
+            'feeling': {'type': 'string', 'description': 'How you felt'},
             'notes': {'type': 'string', 'description': 'Notes'},
           },
-          'required': ['start_time', 'end_time'],
+          'required': ['duration_hours'],
         },
       },
     },
@@ -1474,36 +1476,270 @@ class MindBuddyEnhancedApi {
     },
   ];
 
-  // ============================================
-  // SEND MESSAGE WITH FUNCTION CALLING
-  // ============================================
+  String _normalizeTier(dynamic tier) {
+    return (tier ?? '').toString().trim().toLowerCase();
+  }
+
+  bool _isFullTier(String normalizedTier) {
+    return normalizedTier == 'full' ||
+        normalizedTier == 'full_support' ||
+        normalizedTier == 'full support' ||
+        normalizedTier == 'full_support_mode' ||
+        normalizedTier == 'full support mode';
+  }
+
+  bool _isUsageQuestion(String message) {
+    final m = message.toLowerCase();
+    return m.contains('how many messages') ||
+        m.contains('messages left') ||
+        m.contains('message limit') ||
+        m.contains('messages can i') ||
+        m.contains('how many chats') ||
+        m.contains('chat limit') ||
+        m.contains('usage') ||
+        m.contains('quota');
+  }
+
+  Future<Map<String, dynamic>> getChatUsageSummary() async {
+    final session = _supabase.auth.currentSession;
+    if (session == null) {
+      throw Exception('User is not logged in (no Supabase session)');
+    }
+
+    final userId = session.user.id;
+
+    final info = await SubscriptionLimits.fetchForCurrentUser();
+    final rawTier = info.rawTier;
+    final normalizedTier = _normalizeTier(rawTier);
+    final isFull = info.isFull;
+
+    final now = DateTime.now();
+    final startOfDay = DateTime(now.year, now.month, now.day);
+    final endOfDay = startOfDay.add(const Duration(days: 1));
+    final dayId =
+        '${now.year.toString().padLeft(4, '0')}-'
+        '${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+
+    final messageCountResponse = await _supabase
+        .from('chat_messages')
+        .select()
+        .eq('user_id', userId)
+        .gte('created_at', startOfDay.toIso8601String())
+        .lt('created_at', endOfDay.toIso8601String())
+        .count();
+
+    final chatCountResponse = await _supabase
+        .from('chats')
+        .select()
+        .eq('user_id', userId)
+        .eq('day_id', dayId)
+        .eq('is_archived', false)
+        .count();
+
+    final journalCountResponse = await _supabase
+        .from('journals')
+        .select()
+        .eq('user_id', userId)
+        .gte('created_at', startOfDay.toIso8601String())
+        .lt('created_at', endOfDay.toIso8601String())
+        .count();
+
+    final deviceCountResponse = await _supabase
+        .from('user_sessions')
+        .select()
+        .eq('user_id', userId)
+        .count();
+
+    final messageLimit = info.messageLimit;
+    final chatLimit = isFull ? null : 1;
+    final journalLimit = info.journalLimit;
+    final deviceLimit = info.deviceLimit;
+
+    return {
+      'rawTier': rawTier,
+      'normalizedTier': normalizedTier,
+      'isFull': isFull,
+      'isPending': info.isPending,
+      'messageCount': messageCountResponse.count ?? 0,
+      'messageLimit': messageLimit,
+      'chatCount': chatCountResponse.count ?? 0,
+      'chatLimit': chatLimit,
+      'journalCount': journalCountResponse.count ?? 0,
+      'journalLimit': journalLimit,
+      'deviceCount': deviceCountResponse.count ?? 0,
+      'deviceLimit': deviceLimit,
+      'dayId': dayId,
+    };
+  }
 
   Future<String> sendMessage(
     String message,
     List<Map<String, dynamic>> conversationHistory,
   ) async {
-    try {
-      final response = await http.post(
-        Uri.parse('https://api.openai.com/v1/chat/completions'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $apiKey',
-        },
-        body: jsonEncode({
-          'model': 'gpt-4-turbo-preview',
-          'messages': [
-            {
-              'role': 'system',
-              'content':
-                  '''You are a helpful wellbeing assistant for Mind Buddy app. 
+    final session = _supabase.auth.currentSession;
+    if (session == null) {
+      throw Exception('User is not logged in (no Supabase session)');
+    }
 
-TODAY'S DATE: ${DateTime.now().toIso8601String().split('T')[0]} (January 30, 2026)
-CURRENT YEAR: 2026
+    try {
+      if (_isUsageQuestion(message)) {
+        final usage = await getChatUsageSummary();
+        final isFull = usage['isFull'] == true;
+        final messageCount = usage['messageCount'] as int;
+        final messageLimit = usage['messageLimit'] as int;
+        final chatCount = usage['chatCount'] as int;
+        final chatLimit = usage['chatLimit'] as int?;
+        final journalCount = usage['journalCount'] as int? ?? 0;
+        final journalLimit = usage['journalLimit'] as int? ?? 0;
+        final deviceCount = usage['deviceCount'] as int? ?? 0;
+        final deviceLimit = usage['deviceLimit'] as int? ?? 0;
+
+        final isPending = usage['isPending'] == true;
+        final tierLabel = isPending
+            ? 'Choose a plan'
+            : (isFull ? 'Full Support' : 'Light Support');
+        final chatLimitText =
+            isPending ? 'Pick a plan to start chats' : (isFull ? 'Unlimited chats per day' : '1 chat per day');
+
+        return 'You are on $tierLabel. '
+            'Messages today (including replies): $messageCount / $messageLimit. '
+            'Chats started today: $chatCount / '
+            '${chatLimit ?? 'Unlimited'}. '
+            '$chatLimitText. '
+            'Journal entries today: $journalCount / $journalLimit. '
+            'Devices: $deviceCount / $deviceLimit.';
+      }
+
+      final res = await _supabase.functions.invoke(
+        'mindbuddy-chat',
+        body: {
+          'message': message,
+          'history': conversationHistory,
+          'tools': availableFunctions, // ✅ enable tools
+          // Optional but nice: pass your system prompt if you want server to use it
+          // 'system_prompt': buildSystemPrompt(),
+        },
+      );
+
+      if (res.data == null) {
+        throw Exception('Edge Function returned null data');
+      }
+
+      final data = Map<String, dynamic>.from(res.data as Map);
+      debugPrint('Raw API response: $data');
+
+      // Tool call branch
+      if (data['tool_calls'] != null && data['assistant_message'] != null) {
+        final toolCalls = (data['tool_calls'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+
+        final assistantMessage = Map<String, dynamic>.from(
+          data['assistant_message'] as Map,
+        );
+
+        return await _handleFunctionCalls(
+          toolCalls,
+          conversationHistory,
+          assistantMessage,
+        );
+      }
+
+      // Normal reply branch (with fallback)
+      final reply = (data['reply'] ?? data['message'] ?? '').toString().trim();
+      if (reply.isEmpty) {
+        throw Exception('Edge Function returned empty reply: $data');
+      }
+      return reply;
+    } on FunctionException catch (e) {
+      // This is the most useful error for Edge Functions
+      debugPrint('FunctionException status=${e.status} details=${e.details}');
+      rethrow;
+    } catch (e) {
+      debugPrint('Unexpected error: $e');
+      rethrow;
+    }
+  }
+
+  // ============================================
+  // HANDLE FUNCTION CALLS
+  // ============================================
+
+  Future<String> _handleFunctionCalls(
+    List<Map<String, dynamic>> toolCalls,
+    List<Map<String, dynamic>> conversationHistory,
+    Map<String, dynamic> assistantMessage,
+  ) async {
+    final functionResults = <Map<String, dynamic>>[];
+
+    for (final toolCall in toolCalls) {
+      final function = toolCall['function'] as Map;
+      final argsValue = function['arguments'];
+
+      final Map<String, dynamic> args;
+      if (argsValue is String) {
+        args = Map<String, dynamic>.from(jsonDecode(argsValue) as Map);
+      } else if (argsValue is Map) {
+        args = Map<String, dynamic>.from(argsValue as Map);
+      } else {
+        throw Exception('Unexpected arguments type: ${argsValue.runtimeType}');
+      }
+
+      final functionName = (toolCall['function'] as Map)['name'] as String;
+      // final rawArgs = (toolCall['function'] as Map)['arguments'] as String;
+
+      //final parsed = jsonDecode(rawArgs);
+
+      /// final args = Map<String, dynamic>.from(parsed as Map);
+
+      final result = await _executeFunction(functionName, args);
+
+      functionResults.add({
+        'tool_call_id': toolCall['id'],
+        'role': 'tool',
+        'name': functionName,
+        'content': jsonEncode(result),
+      });
+    }
+
+    final res = await _supabase.functions.invoke(
+      'mindbuddy-chat',
+      body: {
+        'history': conversationHistory,
+        'assistant_message': assistantMessage,
+        'tool_results': functionResults,
+      },
+    );
+
+    if (res.data == null) {
+      throw Exception('No final response from server');
+    }
+
+    final data = Map<String, dynamic>.from(res.data as Map);
+    return (data['reply'] ?? 'Done!').toString();
+  }
+
+  // ============================================
+  // SYSTEM PROMPT (kept in one place)
+  // ============================================
+
+  String buildSystemPrompt() {
+    final today = DateTime.now().toIso8601String().split('T')[0];
+    final yesterday = DateTime.now()
+        .subtract(const Duration(days: 1))
+        .toIso8601String()
+        .split('T')[0];
+
+    return '''You are a helpful wellbeing assistant for Mind Buddy app. 
+
+TODAY'S DATE: $today
+CURRENT YEAR: ${DateTime.now().year}
 
 CRITICAL DATE HANDLING RULES:
-- When user says "today", use: ${DateTime.now().toIso8601String().split('T')[0]}
-- When user says "yesterday", use: ${DateTime.now().subtract(const Duration(days: 1)).toIso8601String().split('T')[0]}
-- When user mentions a month/day without a year (e.g., "December 10th"), ALWAYS assume it's in the current year (2026) or the most recent occurrence
+- When user says "today", use: $today
+- When user says "yesterday", use: $yesterday
+- When user mentions a month/day without a year (e.g., "December 10th"), ALWAYS assume it's in the current year (${DateTime.now().year}) or the most recent occurrence
 - NEVER use dates from 2023 or other past years unless explicitly stated
 - Always use YYYY-MM-DD format for dates
 - Default to today's date if no date is mentioned
@@ -1519,91 +1755,14 @@ CONFIRMATION BEFORE LOGGING:
 - Examples that need confirmation:
   * Typos: "i also meditaded for 10 mins" → Confirm: "meditation for 10 minutes"
   * Informal: "did 30 min cardio" → Confirm: "cardio workout for 30 minutes"
-  * Ambiguous dates: "2 days ago" → Confirm: "January 28th, 2026"
+  * Ambiguous dates: "2 days ago" → Confirm: "January 28th, ${DateTime.now().year}"
   * Missing details: "read 48 Laws of power up until page 31" → Confirm book title, author if known, and ask if they want to track page number in notes
 - Only call functions AFTER user confirms with "yes", "correct", "yep", "yeah", etc.
 - If user says "no" or corrects you, adjust and ask for confirmation again
 - For very clear requests (like "log 500ml water"), you can proceed without confirmation
 
 When users mention logging, updating, or deleting activities (movies, habits, moods, water, etc.), use the appropriate function.
-Be conversational and encouraging. Confirm what you've logged/updated/deleted.''',
-            },
-            ...conversationHistory,
-            {'role': 'user', 'content': message},
-          ],
-          'tools': availableFunctions,
-          'tool_choice': 'auto',
-        }),
-      );
-
-      if (response.statusCode != 200) {
-        throw Exception('OpenAI API error: ${response.body}');
-      }
-
-      final data = jsonDecode(response.body);
-      final choice = data['choices'][0];
-
-      // Check if AI wants to call functions
-      if (choice['message']['tool_calls'] != null) {
-        return await _handleFunctionCalls(
-          choice['message']['tool_calls'],
-          conversationHistory,
-          choice['message'],
-        );
-      }
-
-      // Regular text response
-      return choice['message']['content'] ?? 'No response';
-    } catch (e) {
-      return 'Sorry, I encountered an error: $e';
-    }
-  }
-
-  // ============================================
-  // HANDLE FUNCTION CALLS
-  // ============================================
-
-  Future<String> _handleFunctionCalls(
-    List<dynamic> toolCalls,
-    List<Map<String, dynamic>> conversationHistory,
-    Map<String, dynamic> assistantMessage,
-  ) async {
-    final functionResults = <Map<String, dynamic>>[];
-
-    // Execute all function calls
-    for (final toolCall in toolCalls) {
-      final functionName = toolCall['function']['name'];
-      final arguments = jsonDecode(toolCall['function']['arguments']);
-
-      final result = await _executeFunction(functionName, arguments);
-
-      functionResults.add({
-        'tool_call_id': toolCall['id'],
-        'role': 'tool',
-        'name': functionName,
-        'content': jsonEncode(result),
-      });
-    }
-
-    // Send results back to OpenAI for final response
-    final response = await http.post(
-      Uri.parse('https://api.openai.com/v1/chat/completions'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $apiKey',
-      },
-      body: jsonEncode({
-        'model': 'gpt-4-turbo-preview',
-        'messages': [
-          ...conversationHistory,
-          assistantMessage,
-          ...functionResults,
-        ],
-      }),
-    );
-
-    final data = jsonDecode(response.body);
-    return data['choices'][0]['message']['content'] ?? 'Done!';
+Be conversational and encouraging. Confirm what you've logged/updated/deleted.''';
   }
 
   // ============================================
@@ -1614,14 +1773,13 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
     String functionName,
     Map<String, dynamic> args,
   ) async {
-    final supabase = Supabase.instance.client;
+    final supabase = _supabase;
     final user = supabase.auth.currentUser;
 
     if (user == null) {
       return {'success': false, 'error': 'User not authenticated'};
     }
 
-    // Helper to get today's date in YYYY-MM-DD
     String getDate(String? dateStr) {
       if (dateStr == null || dateStr.isEmpty) {
         return DateTime.now().toIso8601String().split('T')[0];

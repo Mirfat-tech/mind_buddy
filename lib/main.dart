@@ -5,9 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'app/app_theme_controller.dart';
 import 'app.dart';
 import 'router.dart';
+import 'features/auth/device_session_service.dart';
+import 'features/settings/settings_provider.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,7 +22,7 @@ Future<void> main() async {
   //eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpudGZ4bmpydGdsaXl6aGVmYXloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MjIzMDgsImV4cCI6MjA4MDQ5ODMwOH0.TgMtKwjswRTbMESjpep2FWq37_OG20Z8VCb6aR03Bo8
   // ✅ create router AFTER Supabase is initialized
   final appRouter = createRouter();
-
+  //await dotenv.load();
   runApp(ProviderScope(child: _Bootstrap(router: appRouter)));
 }
 
@@ -42,14 +43,19 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
   void initState() {
     super.initState();
 
-    // Load theme
-    Future.microtask(() => ref.read(appThemeControllerProvider).load());
+    // Load settings (includes theme)
+    Future.microtask(() => ref.read(settingsControllerProvider).init());
 
     // Password recovery deep link handling
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (data.event == AuthChangeEvent.passwordRecovery) {
         widget.router.go('/reset');
       }
+      if (data.event == AuthChangeEvent.signedIn ||
+          data.event == AuthChangeEvent.tokenRefreshed) {
+        DeviceSessionService.recordSession();
+      }
+      ref.read(settingsControllerProvider).handleAuthChange();
     });
   }
 

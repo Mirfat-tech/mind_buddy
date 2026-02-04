@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 //import 'package:mind_buddy/router.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
 
 class LogTableScreen extends StatefulWidget {
   const LogTableScreen({
@@ -24,6 +25,8 @@ class _LogTableScreenState extends State<LogTableScreen> {
   bool _sortAscending = false;
   final SupabaseClient supabase = Supabase.instance.client;
   bool loading = true;
+  bool _isPending = false;
+  int _localIdCounter = -1;
 
   List<Map<String, dynamic>> fields = [];
   List<Map<String, dynamic>> entries = [];
@@ -103,6 +106,8 @@ class _LogTableScreenState extends State<LogTableScreen> {
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => loading = true);
+    final info = await SubscriptionLimits.fetchForCurrentUser();
+    _isPending = info.isPending;
 
     // 1) Always load fields first
     try {
@@ -121,20 +126,24 @@ class _LogTableScreenState extends State<LogTableScreen> {
     }
 
     // 2) Then try load entries (can fail without breaking the dialog)
-    try {
-      final currentTable = _getTableName();
-      final e = await supabase
-          .from(currentTable)
-          .select()
-          .eq('user_id', supabase.auth.currentUser!.id)
-          .order('day', ascending: _sortAscending);
+    if (_isPending) {
+      if (mounted) setState(() => entries = []);
+    } else {
+      try {
+        final currentTable = _getTableName();
+        final e = await supabase
+            .from(currentTable)
+            .select()
+            .eq('user_id', supabase.auth.currentUser!.id)
+            .order('day', ascending: _sortAscending);
 
-      if (mounted) {
-        setState(() => entries = List<Map<String, dynamic>>.from(e));
+        if (mounted) {
+          setState(() => entries = List<Map<String, dynamic>>.from(e));
+        }
+      } catch (err) {
+        debugPrint("Entries load error: $err");
+        // keep entries empty, but fields still exist ✅
       }
-    } catch (err) {
-      debugPrint("Entries load error: $err");
-      // keep entries empty, but fields still exist ✅
     }
 
     if (mounted) setState(() => loading = false);
@@ -166,6 +175,24 @@ class _LogTableScreenState extends State<LogTableScreen> {
     );
     if (result == null) return;
 
+    if (_isPending) {
+      final localEntry = {
+        'id': _localIdCounter--,
+        'day': result.day.toIso8601String().substring(0, 10),
+        ...result.data,
+      };
+      if (mounted) {
+        setState(() {
+          entries = [localEntry, ...entries];
+        });
+        await SubscriptionLimits.showTrialUpgradeDialog(
+          context,
+          onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
+        );
+      }
+      return;
+    }
+
     try {
       await supabase.from(_getTableName()).insert({
         'user_id': supabase.auth.currentUser!.id,
@@ -195,6 +222,30 @@ class _LogTableScreenState extends State<LogTableScreen> {
       ),
     );
     if (result == null) return;
+
+    if (_isPending) {
+      final id = entry['id'];
+      final updated = {
+        ...entry,
+        'day': result.day.toIso8601String().substring(0, 10),
+        ...result.data,
+      };
+      if (mounted) {
+        setState(() {
+          final idx = entries.indexWhere((e) => e['id'] == id);
+          if (idx != -1) {
+            final copy = List<Map<String, dynamic>>.from(entries);
+            copy[idx] = updated;
+            entries = copy;
+          }
+        });
+        await SubscriptionLimits.showTrialUpgradeDialog(
+          context,
+          onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
+        );
+      }
+      return;
+    }
 
     try {
       await supabase
@@ -236,6 +287,19 @@ class _LogTableScreenState extends State<LogTableScreen> {
       ),
     );
     if (ok == true) {
+      if (_isPending) {
+        if (mounted) {
+          setState(() {
+            entries =
+                entries.where((e) => e['id'] != entry['id']).toList();
+          });
+          await SubscriptionLimits.showTrialUpgradeDialog(
+            context,
+            onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
+          );
+        }
+        return;
+      }
       await supabase.from(_getTableName()).delete().eq('id', entry['id']);
       _load();
     }
@@ -262,7 +326,7 @@ class _LogTableScreenState extends State<LogTableScreen> {
   @override
   Widget build(BuildContext context) {
     return MbScaffold(
-      applyBackground: false,
+      applyBackground: true,
       appBar: AppBar(
         title: Text(widget.templateKey.toUpperCase()),
         centerTitle: true,
@@ -309,38 +373,35 @@ class _LogTableScreenState extends State<LogTableScreen> {
                     horizontal: 16.0,
                     vertical: 8.0,
                   ),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: "Search logs...",
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () => _searchController.clear(),
-                            )
-                          : null,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(30),
-                        borderSide: BorderSide.none,
+                  child: _GlowPanel(
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: "Search logs...",
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _searchQuery.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear),
+                                onPressed: () => _searchController.clear(),
+                              )
+                            : null,
+                        border: InputBorder.none,
                       ),
-                      filled: true,
-                      fillColor: Theme.of(
-                        context,
-                      ).colorScheme.surfaceVariant.withOpacity(0.3),
                     ),
                   ),
                 ),
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: _StickyLogTable(
-                      entries: _filteredEntries,
-                      tableFields: fields,
-                      fmtEntryDate: _fmtEntryDate,
-                      formatValue: _formatValue,
-                      onEdit: _editEntry,
-                      onDelete: _confirmDelete,
+                    child: _GlowPanel(
+                      child: _StickyLogTable(
+                        entries: _filteredEntries,
+                        tableFields: fields,
+                        fmtEntryDate: _fmtEntryDate,
+                        formatValue: _formatValue,
+                        onEdit: _editEntry,
+                        onDelete: _confirmDelete,
+                      ),
                     ),
                   ),
                 ),
@@ -1276,6 +1337,34 @@ class _StickyLogTable extends StatelessWidget {
           }).toList(),
         ),
       ),
+    );
+  }
+}
+
+class _GlowPanel extends StatelessWidget {
+  const _GlowPanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.12),
+            blurRadius: 16,
+            spreadRadius: 0,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }

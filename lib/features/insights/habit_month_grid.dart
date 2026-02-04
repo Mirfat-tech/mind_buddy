@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
 
 class HabitMonthGrid extends StatefulWidget {
   const HabitMonthGrid({
@@ -189,6 +190,15 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
     widget.onChanged?.call();
 
     try {
+      final info = await SubscriptionLimits.fetchForCurrentUser();
+      if (info.isPending && mounted) {
+        await SubscriptionLimits.showTrialUpgradeDialog(
+          context,
+          onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
+        );
+        return;
+      }
+
       final existing = await supabase
           .from('habit_logs')
           .select('id')

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../app/app_theme_controller.dart';
+import '../features/settings/settings_provider.dart';
 import 'paper_canvas.dart';
 import 'paper_styles.dart';
 
@@ -12,7 +12,7 @@ class ThemedPage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final themeId = ref.watch(appThemeControllerProvider).themeId;
+    final themeId = ref.watch(settingsControllerProvider).settings.themeId;
     final style = styleById(themeId);
 
     final theme = _themeFromPaperStyle(style);

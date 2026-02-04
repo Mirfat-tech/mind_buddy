@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'package:mind_buddy/features/insights/habit_streaks_summary.dart';
+import 'package:mind_buddy/common/mb_scaffold.dart';
 
 class HabitsScreen extends StatefulWidget {
   const HabitsScreen({super.key});
@@ -37,7 +38,8 @@ class _HabitsScreenState extends State<HabitsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return MbScaffold(
+      applyBackground: true,
       appBar: AppBar(
         title: const Text('Habits'),
         leading: IconButton(
@@ -65,30 +67,56 @@ class _HabitsScreenState extends State<HabitsScreen> {
             'Habit tracker',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
           ),
-          const SizedBox(height: 8),
-
-          // ✅ Key forces rebuild when refreshTick changes
-          HabitStreaksSummary(
-            key: ValueKey(
-              'summary_${refreshTick}_${month.year}-${month.month}',
+          const SizedBox(height: 10),
+          _GlowPanel(
+            child: HabitStreaksSummary(
+              key: ValueKey(
+                'summary_${refreshTick}_${month.year}-${month.month}',
+              ),
+              month: month,
+              onManageTap: () => context.go('/habits/manage'),
             ),
-            month: month,
-            onManageTap: () => context.go('/habits/manage'),
           ),
-
-          const SizedBox(height: 6),
-
-          HabitMonthGrid(
-            month: month,
-            onPrevMonth: _prevMonth,
-            onNextMonth: _nextMonth,
-            onManageTap: () => context.go('/habits/manage'),
-
-            // ✅ when user taps dots, refresh summary
-            onChanged: _refreshSummary,
+          const SizedBox(height: 12),
+          _GlowPanel(
+            child: HabitMonthGrid(
+              month: month,
+              onPrevMonth: _prevMonth,
+              onNextMonth: _nextMonth,
+              onManageTap: () => context.go('/habits/manage'),
+              onChanged: _refreshSummary,
+            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+class _GlowPanel extends StatelessWidget {
+  const _GlowPanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.15),
+            blurRadius: 24,
+            spreadRadius: 2,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }

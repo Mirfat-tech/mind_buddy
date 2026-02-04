@@ -4,9 +4,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 final journalsProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>(
   (ref) async {
     final supa = Supabase.instance.client;
+    final user = supa.auth.currentUser;
+    if (user == null) return [];
     final response = await supa
         .from('journals')
         .select()
+        .eq('user_id', user.id)
         .order('created_at', ascending: false);
     // Return as a list of maps; UI accesses by key
     return (response as List).cast<Map<String, dynamic>>();

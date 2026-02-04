@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mind_buddy/common/mb_scaffold.dart';
 
 class TemplateScreen extends StatelessWidget {
   final String templateId;
@@ -9,64 +10,90 @@ class TemplateScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final config = _TemplateConfig.fromId(templateId);
 
-    return Scaffold(
+    return MbScaffold(
+      applyBackground: true,
       appBar: AppBar(title: Text(config.title)),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(config.icon),
-                const SizedBox(width: 10),
-                Text(
-                  config.title,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              config.calendarLinked ? 'Daily template' : 'Log template',
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
-            const SizedBox(height: 20),
-
-            // Placeholder content (we’ll replace each with real UI next)
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outlineVariant,
+        child: _GlowPanel(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(config.icon),
+                  const SizedBox(width: 10),
+                  Text(
+                    config.title,
+                    style: Theme.of(context).textTheme.titleLarge,
                   ),
-                ),
-                child: Text(
-                  config.description,
-                  style: Theme.of(context).textTheme.bodyLarge,
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                config.calendarLinked ? 'Daily template' : 'Log template',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const SizedBox(height: 20),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                  child: Text(
+                    config.description,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
                 ),
               ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // A clear "next action" button (we’ll wire to saving later)
-            FilledButton(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Next: build ${config.title} form + save'),
-                  ),
-                );
-              },
-              child: Text(config.primaryCta),
-            ),
-          ],
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Next: build ${config.title} form + save'),
+                    ),
+                  );
+                },
+                child: Text(config.primaryCta),
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _GlowPanel extends StatelessWidget {
+  const _GlowPanel({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.15),
+            blurRadius: 24,
+            spreadRadius: 2,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: child,
     );
   }
 }
