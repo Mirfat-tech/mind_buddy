@@ -4,14 +4,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'app.dart';
 import 'router.dart';
 import 'features/auth/device_session_service.dart';
 import 'features/settings/settings_provider.dart';
+import 'config/app_env.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await dotenv.load(fileName: '.env');
 
   // ✅ MUST happen before any Supabase.instance usage (router + auth listener)
   await Supabase.initialize(
@@ -38,6 +42,7 @@ class _Bootstrap extends ConsumerStatefulWidget {
 
 class _BootstrapState extends ConsumerState<_Bootstrap> {
   StreamSubscription<AuthState>? _authSub;
+  bool _envWarned = false;
 
   @override
   void initState() {
@@ -45,6 +50,28 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
 
     // Load settings (includes theme)
     Future.microtask(() => ref.read(settingsControllerProvider).init());
+
+    if (AppEnv.openAiApiKey.isEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _envWarned) return;
+        _envWarned = true;
+        showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Missing OpenAI key'),
+            content: const Text(
+              'OPENAI_API_KEY is not set in .env. If you use the Supabase Edge Function with secrets, this is OK.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      });
+    }
 
     // Password recovery deep link handling
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {

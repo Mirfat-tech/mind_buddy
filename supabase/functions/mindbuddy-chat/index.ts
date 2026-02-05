@@ -3,21 +3,60 @@
 // This enables autocomplete, go to definition, etc.
 
 // Setup type definitions for built-in Supabase Runtime APIs
-import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-console.log("Hello from Functions!")
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+const OPENAI_MODEL = Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini";
 
 Deno.serve(async (req) => {
-  const { name } = await req.json()
-  const data = {
-    message: `Hello ${name}!`,
+  if (!OPENAI_API_KEY) {
+    return new Response(
+      JSON.stringify({ error: "Missing OPENAI_API_KEY" }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
   }
 
+  const body = await req.json();
+  const message = body?.message ?? "";
+  const history = Array.isArray(body?.history) ? body.history : [];
+
+  const messages = [
+    ...history.map((m: { role: string; content: string }) => ({
+      role: m.role,
+      content: m.content,
+    })),
+    { role: "user", content: message },
+  ];
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      messages,
+      temperature: 0.7,
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    return new Response(
+      JSON.stringify({ error: errText }),
+      { status: res.status, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const data = await res.json();
+  const assistantMessage = data?.choices?.[0]?.message?.content ?? "";
+
   return new Response(
-    JSON.stringify(data),
+    JSON.stringify({ assistant_message: assistantMessage }),
     { headers: { "Content-Type": "application/json" } },
-  )
-})
+  );
+});
 
 /* To invoke locally:
 
