@@ -7,6 +7,9 @@ import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 class TemplatesScreen extends StatefulWidget {
   const TemplatesScreen({super.key});
@@ -234,35 +237,6 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     return Icons.table_chart_outlined;
   }
 
-  Widget _glowingIconButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-    required ColorScheme scheme,
-  }) {
-    return Container(
-      margin: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withOpacity(0.15),
-            blurRadius: 20,
-            spreadRadius: 0,
-            offset: const Offset(0, 0),
-          ),
-        ],
-      ),
-      child: CircleAvatar(
-        backgroundColor: scheme.surface,
-        radius: 20,
-        child: IconButton(
-          icon: Icon(icon, color: scheme.primary, size: 20),
-          onPressed: onPressed,
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -279,26 +253,32 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
-        leading: _glowingIconButton(
-          icon: Icons.arrow_back,
+        leading: MbGlowBackButton(
           onPressed: () => Navigator.pop(context),
-          scheme: scheme,
         ),
         title: Text('Templates (${templates.length})'),
         centerTitle: true,
         actions: [
-          _glowingIconButton(
+          MbGlowIconButton(
+            icon: Icons.notifications_outlined,
+            onPressed: () =>
+                context.push('/settings/notifications?from=templates'),
+          ),
+          MbGlowIconButton(
             icon: Icons.add,
             onPressed: _openAddMenu,
-            scheme: scheme,
           ),
           const SizedBox(width: 8),
         ],
       ),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_templates',
+        text: 'Search or tap a template. Swipe to hide.',
+        iconText: '✨',
+        child: loading
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
                 if (_isPending && _trialBannerController.visible)
                   _TrialBanner(
                     onUpgrade: () => context.go('/subscription'),
@@ -499,8 +479,9 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
                     },
                   ),
                 ),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 

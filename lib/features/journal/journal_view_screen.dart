@@ -10,6 +10,9 @@ import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
 
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/features/journal/quill_embeds.dart';
 import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
@@ -141,15 +144,14 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
       appBar: AppBar(
         title: const Text('Journal Entry'),
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new),
+        leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/journals'),
         ),
         actions: [
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Edit',
-            icon: const Icon(Icons.edit_outlined),
+            icon: Icons.edit_outlined,
             onPressed: () async {
               final updated =
                   await context.push<bool>('/journals/edit/${widget.journalId}');
@@ -160,28 +162,30 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
               }
             },
           ),
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Share link',
-            icon: const Icon(Icons.share_outlined),
+            icon: Icons.share_outlined,
             onPressed: _share,
           ),
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Toggle sharing',
-            icon: Icon(
-              (_loaded?['is_shared'] == true)
-                  ? Icons.link_off_outlined
-                  : Icons.link_outlined,
-            ),
+            icon: (_loaded?['is_shared'] == true)
+                ? Icons.link_off_outlined
+                : Icons.link_outlined,
             onPressed: _toggleShare,
           ),
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Delete',
-            icon: const Icon(Icons.delete_outline),
+            icon: Icons.delete_outline,
             onPressed: _deleteEntry,
           ),
         ],
       ),
-      body: FutureBuilder<Map<String, dynamic>?>(
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_journal_view',
+        text: 'Use the menu to share or edit when you feel ready.',
+        iconText: '✨',
+        child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState != ConnectionState.done) {
@@ -273,6 +277,7 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
             ),
           );
         },
+      ),
       ),
     );
   }

@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'journals_provider.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -59,13 +61,16 @@ class JournalsListScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Journal'),
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new),
+        leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/home'),
         ),
       ),
-      body: journalsAsync.when(
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_journals_list',
+        text: 'Search to filter. Tap an entry to open.',
+        iconText: '🫧',
+        child: journalsAsync.when(
             data: (rows) {
           final sharedCount =
               rows.where((r) => r['is_shared'] == true).length;
@@ -262,6 +267,7 @@ class JournalsListScreen extends ConsumerWidget {
         },
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to load journals: $e')),
+      ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: handleAdd,

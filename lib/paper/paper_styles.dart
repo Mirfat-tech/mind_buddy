@@ -160,7 +160,10 @@ final paperStyles = <PaperStyle>[
 ];
 
 PaperStyle styleById(String? id) {
-  if (id == null) return paperStyles.first;
+  if (id == null) return paperStyles.firstWhere(
+        (s) => s.id == 'baby_blue',
+        orElse: () => paperStyles.first,
+      );
   return paperStyles.firstWhere(
     (s) => s.id == id,
     orElse: () => paperStyles.first,

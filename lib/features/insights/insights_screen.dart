@@ -4,6 +4,9 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 import 'sleep_insights.dart';
 
@@ -163,22 +166,29 @@ class _InsightsScreenState extends State<InsightsScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
         title: const Text('Insights'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+        leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/home'),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_outlined),
+          MbGlowIconButton(
+            icon: Icons.notifications_outlined,
+            onPressed: () => context.push('/settings/notifications'),
+          ),
+          MbGlowIconButton(
+            icon: Icons.refresh_outlined,
             onPressed: _loading ? null : _refresh,
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_insights',
+        text: 'You can scroll gently — insights unfold at your pace.',
+        iconText: '✨',
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
                 if (_error != null)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
@@ -344,8 +354,36 @@ class _InsightsScreenState extends State<InsightsScreen> {
                     ),
                   ),
                 ),
-              ],
-            ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  Widget _glowingIconButton({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required ColorScheme scheme,
+  }) {
+    return Container(
+      margin: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.25),
+            blurRadius: 14,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: CircleAvatar(
+        backgroundColor: scheme.surface,
+        child: IconButton(
+          icon: Icon(icon, color: scheme.primary),
+          onPressed: onPressed,
+        ),
+      ),
     );
   }
 }

@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/features/journal/quill_embeds.dart';
 import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
@@ -59,8 +60,7 @@ class _JournalShareViewScreenState extends State<JournalShareViewScreen> {
       appBar: AppBar(
         title: const Text('Shared Journal'),
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new),
+        leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/home'),
         ),

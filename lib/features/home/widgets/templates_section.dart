@@ -21,16 +21,16 @@ class TemplatesSection extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: items.length,
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 3,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.05,
+            mainAxisSpacing: 6,
+            crossAxisSpacing: 6,
+            childAspectRatio: 1.6,
           ),
           itemBuilder: (context, i) {
             final it = items[i];
@@ -45,6 +45,7 @@ class TemplatesSection extends StatelessWidget {
             );
           },
         ),
+        const SizedBox(height: 10),
       ],
     );
   }
@@ -102,18 +103,18 @@ class _TemplateCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: cs.outlineVariant),
         ),
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(icon),
+                Icon(icon, size: 18),
                 const Spacer(),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
+                    horizontal: 6,
+                    vertical: 2,
                   ),
                   decoration: BoxDecoration(
                     color: cs.surfaceContainerHighest,
@@ -121,7 +122,10 @@ class _TemplateCard extends StatelessWidget {
                   ),
                   child: Text(
                     badge,
-                    style: Theme.of(context).textTheme.labelSmall,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelSmall
+                        ?.copyWith(fontSize: 10),
                   ),
                 ),
               ],
@@ -131,7 +135,10 @@ class _TemplateCard extends StatelessWidget {
               title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelLarge,
+              style: Theme.of(context)
+                  .textTheme
+                  .labelLarge
+                  ?.copyWith(fontSize: 11),
             ),
           ],
         ),

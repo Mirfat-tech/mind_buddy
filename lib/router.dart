@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/features/templates/templates_screen.dart';
@@ -42,6 +43,7 @@ import 'package:mind_buddy/features/settings/settings_screen.dart';
 import 'package:mind_buddy/features/settings/appearance_settings_screen.dart';
 import 'package:mind_buddy/features/settings/notifications_settings_screen.dart';
 import 'package:mind_buddy/features/settings/usage_settings_screen.dart';
+import 'package:mind_buddy/features/settings/quiet_guide_screen.dart';
 
 //
 
@@ -115,6 +117,14 @@ class GoRouterRefreshStream extends ChangeNotifier {
 /// Wrap every routed screen in your themed paper wrapper.
 Widget themed(Widget child) => ThemedPage(child: child);
 
+/// Use CupertinoPage so iOS back-swipe works consistently.
+Page<void> cupertinoPage(Widget child, GoRouterState state) {
+  return CupertinoPage<void>(
+    key: state.pageKey,
+    child: themed(child),
+  );
+}
+
 GoRouter createRouter() {
   final supabase = Supabase.instance.client;
 
@@ -170,96 +180,109 @@ GoRouter createRouter() {
       // SPLASH
       GoRoute(
         path: '/splash',
-        builder: (_, __) => themed(const SplashScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const SplashScreen(), state),
       ),
 
       // AUTH
       GoRoute(
         path: '/signin',
-        builder: (_, __) => themed(const SignInScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const SignInScreen(), state),
       ),
       GoRoute(
         path: '/signup',
-        builder: (_, __) => themed(const SignUpScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const SignUpScreen(), state),
       ),
       GoRoute(
         path: '/reset',
-        builder: (_, __) => themed(const ResetPasswordScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const ResetPasswordScreen(), state),
       ),
       GoRoute(
         path: '/onboarding/plan',
-        builder: (_, __) => themed(const PlanSelectionScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const PlanSelectionScreen(), state),
       ),
 
       // HOME
-      GoRoute(path: '/home', builder: (_, __) => themed(const HomeScreen())),
+      GoRoute(
+        path: '/home',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const HomeScreen(), state),
+      ),
 
       // CALENDAR
       GoRoute(
         path: '/calendar',
-        builder: (_, __) => themed(const CalendarScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const CalendarScreen(), state),
       ),
 
       // JOURNAL
       GoRoute(
         path: '/journal/new',
-        builder: (_, __) => themed(const NewJournalScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const NewJournalScreen(), state),
       ),
       GoRoute(
         path: '/journals',
-        builder: (_, __) => themed(const JournalsListScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const JournalsListScreen(), state),
       ),
       GoRoute(
         path: '/journals/new',
-        builder: (_, __) => themed(const NewJournalScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const NewJournalScreen(), state),
       ),
       GoRoute(
         path: '/journals/view/:id',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final id = state.pathParameters['id']!;
-          return themed(JournalViewScreen(journalId: id));
+          return cupertinoPage(JournalViewScreen(journalId: id), state);
         },
       ),
       GoRoute(
         path: '/journals/edit/:id',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final id = state.pathParameters['id']!;
-          return themed(EditJournalScreen(journalId: id));
+          return cupertinoPage(EditJournalScreen(journalId: id), state);
         },
       ),
       GoRoute(
         path: '/share/:shareId',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final shareId = state.pathParameters['shareId']!;
-          return themed(JournalShareViewScreen(shareId: shareId));
+          return cupertinoPage(JournalShareViewScreen(shareId: shareId), state);
         },
       ),
 
       //DAY PAGE
       GoRoute(
         path: '/day/:dayId',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final dayId = state.pathParameters['dayId']!;
-          return themed(DailyPageScreen(dayId: dayId));
+          return cupertinoPage(DailyPageScreen(dayId: dayId), state);
         },
       ),
 
       // CHAT (attached to a day)
       GoRoute(
         path: '/chat/:dayId/:chatId',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final dayId = state.pathParameters['dayId']!;
           final chatId = int.parse(state.pathParameters['chatId']!);
-          return themed(ChatScreen(dayId: dayId, chatId: chatId));
+          return cupertinoPage(ChatScreen(dayId: dayId, chatId: chatId), state);
         },
       ),
 
       GoRoute(
         path: '/chat-archive/:dayId',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final dayId = state.pathParameters['dayId']!;
           // Add themed() here to match your other screens
-          return themed(ChatArchiveScreen(dayId: dayId));
+          return cupertinoPage(ChatArchiveScreen(dayId: dayId), state);
         },
       ),
 
@@ -278,50 +301,63 @@ GoRouter createRouter() {
       // TEMPLATES (list)
       GoRoute(
         path: '/templates',
-        builder: (_, __) => themed(TemplatesScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const TemplatesScreen(), state),
       ),
       GoRoute(
         path: '/subscription',
-        builder: (_, __) => themed(const SubscriptionScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const SubscriptionScreen(), state),
       ),
       GoRoute(
         path: '/settings',
-        builder: (_, __) => themed(const SettingsScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const SettingsScreen(), state),
       ),
       GoRoute(
         path: '/settings/appearance',
-        builder: (_, __) => themed(const AppearanceSettingsScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const AppearanceSettingsScreen(), state),
       ),
       GoRoute(
         path: '/settings/notifications',
-        builder: (_, __) => themed(const NotificationsSettingsScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const NotificationsSettingsScreen(), state),
       ),
       GoRoute(
         path: '/settings/usage',
-        builder: (_, __) => themed(const UsageSettingsScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const UsageSettingsScreen(), state),
+      ),
+      GoRoute(
+        path: '/settings/guide',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const QuietGuideScreen(), state),
       ),
       GoRoute(
         path: '/pomodoro',
-        builder: (context, state) => themed(const PomodoroScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const PomodoroScreen(), state),
       ),
 
       // TEMPLATE DETAIL
       GoRoute(
         path: '/templates/:id',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final id = state.pathParameters['id']!;
-          return themed(TemplateScreen(templateId: id));
+          return cupertinoPage(TemplateScreen(templateId: id), state);
         },
       ),
 
       // TEMPLATE LOGS (for a specific day)
       GoRoute(
         path: '/templates/by-key/:templateKey/logs/:dayId',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final templateKey = state.pathParameters['templateKey']!;
           final dayId = state.pathParameters['dayId']!;
-          return themed(
+          return cupertinoPage(
             TemplateLogsLoaderScreen(templateKey: templateKey, dayId: dayId),
+            state,
           );
         },
       ),
@@ -329,7 +365,7 @@ GoRouter createRouter() {
       // TEMPLATE LOGS (no dayId yet -> default today)
       GoRoute(
         path: '/templates/by-key/:templateKey/logs',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final templateKey = state.pathParameters['templateKey']!;
           final now = DateTime.now();
           final y = now.year.toString().padLeft(4, '0');
@@ -337,49 +373,56 @@ GoRouter createRouter() {
           final d = now.day.toString().padLeft(2, '0');
           final dayId = '$y-$m-$d';
 
-          return themed(
+          return cupertinoPage(
             TemplateLogsLoaderScreen(templateKey: templateKey, dayId: dayId),
+            state,
           );
         },
       ),
 
       GoRoute(
         path: '/insights',
-        builder: (context, state) => themed(const InsightsGateScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const InsightsGateScreen(), state),
       ),
 
       GoRoute(
         path: '/habits',
-        builder: (context, state) => themed(const HabitsScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const HabitsScreen(), state),
       ),
 
       GoRoute(
         path: '/habits/manage',
-        builder: (context, state) => themed(const ManageHabitsScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const ManageHabitsScreen(), state),
       ),
 
       GoRoute(
         path: '/templates/create',
-        builder: (context, state) => themed(CreateLogTemplateScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const CreateLogTemplateScreen(), state),
       ),
 
       GoRoute(
         path: '/brain-fog',
-        builder: (context, state) => themed(const BrainFogScreen()),
+        pageBuilder: (context, state) =>
+            cupertinoPage(const BrainFogScreen(), state),
       ),
 
       GoRoute(
         path: '/templates/log',
-        builder: (context, state) {
+        pageBuilder: (context, state) {
           final templateId = state.uri.queryParameters['templateId']!;
           final templateKey = state.uri.queryParameters['templateKey']!;
           final dayId = state.uri.queryParameters['dayId']!;
-          return themed(
+          return cupertinoPage(
             LogTableScreen(
               templateId: templateId,
               templateKey: templateKey,
               dayId: dayId,
             ),
+            state,
           );
         },
       ),

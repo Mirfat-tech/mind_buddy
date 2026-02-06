@@ -4,6 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'settings_model.dart';
 import 'settings_repository.dart';
+import '../../services/notification_service.dart';
+import '../../services/notification_catalog.dart';
 
 final settingsControllerProvider = ChangeNotifierProvider<SettingsController>((
   ref,
@@ -43,6 +45,8 @@ class SettingsController extends ChangeNotifier {
       await _repo.upsertRemote(local);
     }
 
+    await NotificationService.instance.rescheduleAll(_settings);
+
     _loading = false;
     notifyListeners();
   }
@@ -81,6 +85,63 @@ class SettingsController extends ChangeNotifier {
     );
   }
 
+  Future<void> setNotificationSchedule({
+    required List<String> days,
+    required String time,
+    required bool repeat,
+  }) async {
+    await update(
+      settings.copyWith(
+        notificationDays: days,
+        notificationTime: time,
+        notificationRepeat: repeat,
+      ),
+    );
+  }
+
+  Future<void> setNotificationCategory(
+    String id,
+    bool enabled,
+  ) async {
+    final next = Map<String, bool>.from(settings.notificationCategories);
+    next[id] = enabled;
+    await update(settings.copyWith(notificationCategories: next));
+  }
+
+  Future<void> setNotificationSpaceSetting(
+    String id,
+    NotificationSpaceSetting setting,
+  ) async {
+    final next = Map<String, NotificationSpaceSetting>.from(
+      settings.notificationSpaceSettings,
+    );
+    next[id] = setting;
+    await update(settings.copyWith(notificationSpaceSettings: next));
+  }
+
+  Future<void> setMaxNotificationsPerDay(int value) async {
+    await update(settings.copyWith(maxNotificationsPerDay: value));
+  }
+
+  Future<void> setAllNotificationCategories(bool enabled) async {
+    final next = <String, bool>{
+      for (final category in notificationCategories) category.id: enabled,
+    };
+    await update(settings.copyWith(notificationCategories: next));
+  }
+
+  Future<void> setCalendarRemindersEnabled(bool enabled) async {
+    await update(settings.copyWith(calendarRemindersEnabled: enabled));
+  }
+
+  Future<void> setPomodoroAlertsEnabled(bool enabled) async {
+    await update(settings.copyWith(pomodoroAlertsEnabled: enabled));
+  }
+
+  Future<void> setKeepInstructionsEnabled(bool enabled) async {
+    await update(settings.copyWith(keepInstructionsEnabled: enabled));
+  }
+
   Future<void> update(SettingsModel next) async {
     final now = DateTime.now().toIso8601String();
     _settings = next.copyWith(updatedAt: now);
@@ -88,6 +149,7 @@ class SettingsController extends ChangeNotifier {
 
     await _repo.saveLocal(_settings);
     await _repo.upsertRemote(_settings);
+    await NotificationService.instance.rescheduleAll(_settings);
   }
 
   SettingsModel _pickNewest(SettingsModel? local, SettingsModel remote) {

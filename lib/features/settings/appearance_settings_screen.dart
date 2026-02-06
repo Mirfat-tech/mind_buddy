@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 
@@ -18,8 +19,7 @@ class AppearanceSettingsScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Appearance'),
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new),
+        leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/settings'),
         ),

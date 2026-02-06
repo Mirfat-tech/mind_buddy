@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -136,20 +137,33 @@ class _SignInScreenState extends State<SignInScreen> {
     return MindBuddyBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
+        resizeToAvoidBottomInset: true,
         appBar: AppBar(
           title: const Text('Sign in'),
           backgroundColor: Colors.transparent,
           elevation: 0,
           scrolledUnderElevation: 0,
           surfaceTintColor: Colors.transparent,
+          leading: context.canPop()
+              ? MbGlowBackButton(onPressed: () => context.pop())
+              : null,
         ),
 
         body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  16 + MediaQuery.of(context).viewInsets.bottom,
+                ),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
                 // Email
                 TextField(
                   controller: _email,
@@ -233,8 +247,11 @@ class _SignInScreenState extends State<SignInScreen> {
                   onPressed: () => context.go('/signup'),
                   child: const Text('Create an account'),
                 ),
-              ],
-            ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -80,7 +81,12 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Set a new password')),
+      appBar: AppBar(
+        title: const Text('Set a new password'),
+        leading: MbGlowBackButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(

@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 class ManageHabitsScreen extends StatefulWidget {
   const ManageHabitsScreen({super.key});
@@ -47,35 +49,6 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     await prefs.setBool('trial_banner_dismissed', true);
     if (!mounted) return;
     setState(() => _trialBannerVisible = false);
-  }
-
-  // --- GLOWING UI HELPERS ---
-
-  Widget _glowingIconButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-    required ColorScheme scheme,
-  }) {
-    return Container(
-      margin: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withOpacity(0.15),
-            blurRadius: 20,
-            spreadRadius: 0,
-          ),
-        ],
-      ),
-      child: CircleAvatar(
-        backgroundColor: scheme.surface,
-        child: IconButton(
-          icon: Icon(icon, color: scheme.primary, size: 20),
-          onPressed: onPressed,
-        ),
-      ),
-    );
   }
 
   // --- LOGIC METHODS ---
@@ -520,7 +493,6 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-
     // Group habits by category_id (including null)
     final Map<String?, List<Map<String, dynamic>>> habitsByCategory = {};
     for (final habit in _habits) {
@@ -532,8 +504,8 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
       applyBackground: false,
       appBar: AppBar(
         leading: _isSelectionMode
-            ? IconButton(
-                icon: const Icon(Icons.close),
+            ? MbGlowIconButton(
+                icon: Icons.close,
                 onPressed: () {
                   setState(() {
                     _isSelectionMode = false;
@@ -541,10 +513,8 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
                   });
                 },
               )
-            : _glowingIconButton(
-                icon: Icons.arrow_back,
+            : MbGlowBackButton(
                 onPressed: () => context.go('/habits'),
-                scheme: scheme,
               ),
         title: Text(
           _isSelectionMode
@@ -554,15 +524,15 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
         centerTitle: true,
         actions: [
           if (_isSelectionMode)
-            IconButton(
-              icon: const Icon(Icons.delete_outline, color: Colors.red),
+            MbGlowIconButton(
+              icon: Icons.delete_outline,
+              iconColor: Colors.red,
               onPressed: _deleteSelectedHabits,
             )
           else
-            _glowingIconButton(
+            MbGlowIconButton(
               icon: Icons.category,
               onPressed: () => _showCategoryDialog(),
-              scheme: scheme,
             ),
         ],
       ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/services/mind_buddy_api.dart';
 
 class UsageSettingsScreen extends StatefulWidget {
@@ -35,8 +36,7 @@ class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
       appBar: AppBar(
         title: const Text('Usage & Plan'),
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new),
+        leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/home'),
         ),

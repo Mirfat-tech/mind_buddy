@@ -2,6 +2,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:mind_buddy/features/settings/settings_provider.dart';
+import 'package:mind_buddy/services/notification_service.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'dart:ui'; // Required for FontFeature
 
 class PomodoroScreen extends StatelessWidget {
@@ -9,51 +15,52 @@ class PomodoroScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
     return MbScaffold(
       applyBackground: false,
       appBar: AppBar(
         centerTitle: true,
         title: const Text('Focus Timer'),
-        leading: Container(
-          margin: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: scheme.primary.withValues(alpha: 0.15),
-                blurRadius: 20,
-              ),
-            ],
-          ),
-          child: CircleAvatar(
-            backgroundColor: scheme.surface,
-            child: IconButton(
-              icon: Icon(Icons.arrow_back, color: scheme.primary, size: 20),
-              onPressed: () => Navigator.of(context).canPop()
-                  ? Navigator.of(context).pop()
-                  : context.go('/home'),
-            ),
-          ),
+        leading: MbGlowBackButton(
+          onPressed: () => Navigator.of(context).canPop()
+              ? Navigator.of(context).pop()
+              : context.go('/home'),
         ),
+        actions: [
+          MbGlowIconButton(
+            icon: Icons.notifications_outlined,
+            onPressed: () => context.push('/settings/notifications'),
+          ),
+        ],
       ),
-      body: const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-        child: PomodoroStandalone(),
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_pomodoro',
+        text: 'Start when you are ready. Rest is part of it.',
+        iconText: '✨',
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: const PomodoroStandalone(),
+              ),
+            );
+          },
+        ),
       ),
     );
   }
 }
 
-class PomodoroStandalone extends StatefulWidget {
+class PomodoroStandalone extends ConsumerStatefulWidget {
   const PomodoroStandalone({super.key});
 
   @override
-  State<PomodoroStandalone> createState() => _PomodoroStandaloneState();
+  ConsumerState<PomodoroStandalone> createState() =>
+      _PomodoroStandaloneState();
 }
 
-class _PomodoroStandaloneState extends State<PomodoroStandalone> {
+class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
   Timer? _timer;
   int focusMinutes = 25;
   int breakMinutes = 5;
@@ -61,11 +68,13 @@ class _PomodoroStandaloneState extends State<PomodoroStandalone> {
   int secondsLeft = 25 * 60;
   bool running = false;
   int focusedMinutesToday = 0;
+  int _messageSeed = 0;
 
   @override
   void initState() {
     super.initState();
     secondsLeft = focusMinutes * 60;
+    _messageSeed = DateTime.now().millisecondsSinceEpoch;
   }
 
   @override
@@ -99,11 +108,63 @@ class _PomodoroStandaloneState extends State<PomodoroStandalone> {
   }
 
   Future<void> _handleTimerFinished() async {
+    final wasFocus = mode == 'focus';
     if (mode == 'focus') {
       setState(() => focusedMinutesToday += focusMinutes);
     }
+    final settings = ref.read(settingsControllerProvider).settings;
+    final message = _pickPomodoroMessage(wasFocus);
+    if (settings.pomodoroAlertsEnabled) {
+      await _showCompletionMessage(wasFocus, message);
+      await NotificationService.instance.showPomodoroFinishedNotification(
+        wasFocus: wasFocus,
+        message: message,
+      );
+    }
     // Simple switch logic to keep flow clean
     _setMode(mode == 'focus' ? 'break' : 'focus');
+  }
+
+  Future<void> _showCompletionMessage(bool wasFocus, String message) async {
+    if (!mounted) return;
+
+    final title = wasFocus ? 'Focus timer finished' : 'Break time finished';
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _pickPomodoroMessage(bool wasFocus) {
+    final focusMessages = [
+      'Time’s up — you showed up, and that counts.',
+      'That was a focused moment. Well done for being here.',
+      'You can pause now. You did enough for this block.',
+      'Focus time ended. Want to rest or continue?',
+      'Your timer’s done — follow your energy.',
+    ];
+
+    final breakMessages = [
+      'Your break is over — only return if you’re ready.',
+      'Break time ended. No rush.',
+      'Whenever you’re ready, you can begin again.',
+      'Gently back, or gently done — both are okay.',
+    ];
+
+    _messageSeed += 1;
+    final list = wasFocus ? focusMessages : breakMessages;
+    final index = _messageSeed % list.length;
+    return list[index];
   }
 
   void _toggleRunning() {
@@ -339,7 +400,7 @@ class _PomodoroStandaloneState extends State<PomodoroStandalone> {
             OutlinedButton(onPressed: _reset, child: const Text('Reset')),
           ],
         ),
-        const Spacer(),
+        const SizedBox(height: 24),
 
         // BOTTOM PREVIEW CARD
         Container(

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 
 import 'journal_media.dart';
 
@@ -42,6 +43,9 @@ class _JournalMediaViewerState extends State<JournalMediaViewer> {
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         elevation: 0,
+        leading: MbGlowBackButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
       ),
       body: PageView.builder(
         controller: _controller,

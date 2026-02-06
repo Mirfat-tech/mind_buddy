@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:go_router/go_router.dart';
 // Import your custom scaffold
 import 'package:mind_buddy/features/chat/chat_screen.dart'; // Adjust path if needed
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 
 class ChatArchiveScreen extends StatelessWidget {
   const ChatArchiveScreen({super.key, required this.dayId});
@@ -22,7 +23,10 @@ class ChatArchiveScreen extends StatelessWidget {
         backgroundColor: Colors.transparent, // Fixes the "blocky" header
         elevation: 0,
         scrolledUnderElevation: 0, // Keeps it transparent when scrolling
-        leading: _glowingBackButton(context, scheme),
+        leading: MbGlowBackButton(
+          onPressed: () =>
+              context.canPop() ? context.pop() : context.go('/home'),
+        ),
       ),
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: supabase
@@ -111,29 +115,6 @@ class ChatArchiveScreen extends StatelessWidget {
             },
           );
         },
-      ),
-    );
-  }
-
-  Widget _glowingBackButton(BuildContext context, ColorScheme scheme) {
-    return Container(
-      margin: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withValues(alpha: 0.1),
-            blurRadius: 15,
-          ),
-        ],
-      ),
-      child: CircleAvatar(
-        backgroundColor: scheme.surface,
-        child: IconButton(
-          icon: Icon(Icons.arrow_back, color: scheme.primary, size: 20),
-          onPressed: () =>
-              context.canPop() ? context.pop() : context.go('/home'),
-        ),
       ),
     );
   }

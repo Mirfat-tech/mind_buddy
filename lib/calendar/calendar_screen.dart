@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
@@ -19,28 +22,29 @@ class CalendarScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Calendar'),
         centerTitle: true,
-        leading: Container(
-          margin: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: scheme.primary.withValues(alpha: 0.1),
-                blurRadius: 15,
-              ),
-            ],
-          ),
-          child: CircleAvatar(
-            backgroundColor: scheme.surface,
-            child: IconButton(
-              icon: Icon(Icons.arrow_back, color: scheme.primary, size: 20),
-              onPressed: () =>
-                  context.canPop() ? context.pop() : context.go('/home'),
-            ),
-          ),
+        leading: MbGlowBackButton(
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
         ),
+        actions: [
+          MbGlowIconButton(
+            icon: Icons.notifications_outlined,
+            tooltip: 'Notifications',
+            onPressed: () => context.push('/settings/notifications?from=calendar'),
+          ),
+        ],
       ),
-      body: const _CalendarBody(),
+      body: const MbFloatingHintOverlay(
+        hintKey: 'hint_calendar',
+        text: 'Tap a day to see entries. Filters live at the top.',
+        iconText: '✨',
+        child: _CalendarBody(),
+      ),
     );
   }
 }

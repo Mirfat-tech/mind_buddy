@@ -7,6 +7,8 @@ import 'widgets/templates_section.dart';
 
 import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; // Fixes 'Supabase' error
 import 'package:intl/intl.dart'; // Fixes 'DateFormat' error
@@ -103,19 +105,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         title: const Text('Mind Buddy'),
         actions: [
           // ✅ THEME PICKER
-          IconButton(
-            tooltip: 'Theme',
-            icon: const Icon(Icons.palette_outlined),
+          MbGlowIconButton(
+            icon: Icons.palette_outlined,
             onPressed: () => _openThemePicker(context, ref),
           ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
+          MbGlowIconButton(
+            icon: Icons.settings_outlined,
             onPressed: () => context.go('/settings'),
           ),
         ],
       ),
-      body: const _HomeBody(),
+      body: const MbFloatingHintOverlay(
+        hintKey: 'hint_home',
+        text: 'Choose a bubble to begin. Everything starts small.',
+        iconText: '✨',
+        child: _HomeBody(),
+      ),
     );
   }
 }
@@ -159,13 +164,21 @@ class _HomeBubble extends StatelessWidget {
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: scheme.outline.withOpacity(0.25)),
             ),
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(icon, color: scheme.onSurface),
+                Icon(icon, color: scheme.onSurfaceVariant, size: 22),
                 const Spacer(),
-                Text(title, style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontSize: 13,
+                        height: 1.15,
+                      ),
+                ),
               ],
             ),
           ),
@@ -263,9 +276,8 @@ class _HomeBody extends ConsumerWidget {
           IconButton(
             icon: Icon(
               Icons.insights,
-              color: Theme.of(
-                context,
-              ).colorScheme.primary, // Matches the buttons
+              color: Theme.of(context).colorScheme.primary,
+              size: 20,
             ),
             onPressed: () => context.go('/insights'),
           ),
@@ -280,68 +292,70 @@ class _HomeBody extends ConsumerWidget {
               _HomeBubble(
                 title: 'Vent bubble',
                 icon: Icons.chat_bubble_outline,
-
                 onTap: () async {
-                  final supabase = Supabase.instance.client;
-                  final user = supabase.auth.currentUser;
+                    final supabase = Supabase.instance.client;
+                    final user = supabase.auth.currentUser;
 
-                  if (user == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('You are not logged in.')),
-                    );
-                    return;
-                  }
+                      if (user == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('You are not logged in.'),
+                          ),
+                        );
+                        return;
+                      }
 
-                  try {
-                    final info =
-                        await SubscriptionLimits.fetchForCurrentUser();
-                    if (info.isPending) {
-                      if (!context.mounted) return;
-                      await SubscriptionLimits.showTrialUpgradeDialog(
-                        context,
-                        onUpgrade: () => context.go('/subscription'),
-                      );
-                      return;
-                    }
-                    final dayId = DateFormat(
-                      'yyyy-MM-dd',
-                    ).format(DateTime.now());
+                      try {
+                        final info =
+                            await SubscriptionLimits.fetchForCurrentUser();
+                        if (info.isPending) {
+                          if (!context.mounted) return;
+                          await SubscriptionLimits.showTrialUpgradeDialog(
+                            context,
+                            onUpgrade: () => context.go('/subscription'),
+                          );
+                          return;
+                        }
+                        final dayId =
+                            DateFormat('yyyy-MM-dd').format(DateTime.now());
 
-                    // 1️⃣ Try to get today's existing chat
-                    final existing = await supabase
-                        .from('chats')
-                        .select('id, day_id')
-                        .eq('user_id', user.id)
-                        .eq('day_id', dayId)
-                        .eq('is_archived', false)
-                        .order('created_at', ascending: false)
-                        .limit(1)
-                        .maybeSingle();
-
-                    // 2️⃣ If none exists, create one
-                    final chat =
-                        existing ??
-                        await supabase
+                        // 1️⃣ Try to get today's existing chat
+                        final existing = await supabase
                             .from('chats')
-                            .insert({
-                              'user_id': user.id,
-                              'day_id': dayId,
-                              'is_archived': false,
-                              'title': null,
-                            })
                             .select('id, day_id')
-                            .single();
+                            .eq('user_id', user.id)
+                            .eq('day_id', dayId)
+                            .eq('is_archived', false)
+                            .order('created_at', ascending: false)
+                            .limit(1)
+                            .maybeSingle();
 
-                    if (!context.mounted) return;
+                        // 2️⃣ If none exists, create one
+                        final chat =
+                            existing ??
+                            await supabase
+                                .from('chats')
+                                .insert({
+                                  'user_id': user.id,
+                                  'day_id': dayId,
+                                  'is_archived': false,
+                                  'title': null,
+                                })
+                                .select('id, day_id')
+                                .single();
 
-                    // 3️⃣ Navigate
-                    context.push('/chat/${chat['day_id']}/${chat['id']}');
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Could not open Vent bubble: $e')),
-                    );
-                  }
+                        if (!context.mounted) return;
+
+                        // 3️⃣ Navigate
+                        context.push('/chat/${chat['day_id']}/${chat['id']}');
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Could not open Vent bubble: $e'),
+                          ),
+                        );
+                      }
                 },
               ),
               _HomeBubble(
@@ -354,35 +368,15 @@ class _HomeBody extends ConsumerWidget {
                 title: 'Journal bubble',
                 icon: Icons.menu_book_outlined,
                 onTap: () => context.go('/journals'),
-
-                // ✅ navigate to your existing Journal screen (whatever route you already use)
-                // e.g. context.go('/journal?dayId=...');
               ),
               _HomeBubble(
                 title: 'Pomodoro',
                 icon: Icons.timer_outlined,
                 onTap: () => context.go('/pomodoro'),
               ),
-              // _HomeBubble(
-              // title: 'Checklist',
-              //icon: Icons.check_box_outlined,
-              //onTap: () {
-              // ✅ you said you want checklist in Templates instead,
-              // so either remove this bubble OR send them to Templates.
-              // context.go('/templates');
-              // },
-              //),
-              // _HomeBubble(
-              // title: 'Create table',
-              //icon: Icons.table_chart_outlined,
-              //onTap: () {
-              // ✅ go straight to templates create
-              // context.go('/templates/create');
-              // },
-              //),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           const TemplatesSection(),
 
           //ElevatedButton.icon(

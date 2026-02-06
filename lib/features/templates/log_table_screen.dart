@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 //import 'package:mind_buddy/router.dart';
 import 'package:flutter/cupertino.dart';
+import 'package:go_router/go_router.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 
 class LogTableScreen extends StatefulWidget {
@@ -330,33 +333,10 @@ class _LogTableScreenState extends State<LogTableScreen> {
       appBar: AppBar(
         title: Text(widget.templateKey.toUpperCase()),
         centerTitle: true,
-        leading: Center(
-          child: Container(
-            margin: const EdgeInsets.only(left: 8),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                  blurRadius: 15,
-                ),
-              ],
-            ),
-            child: CircleAvatar(
-              backgroundColor: Theme.of(context).colorScheme.surface,
-              radius: 20,
-              child: IconButton(
-                icon: Icon(
-                  Icons.arrow_back,
-                  color: Theme.of(context).colorScheme.primary,
-                  size: 20,
-                ),
-                onPressed: () => Navigator.of(context).canPop()
-                    ? Navigator.pop(context)
-                    : Navigator.pushReplacementNamed(context, '/home'),
-              ),
-            ),
-          ),
+        leading: MbGlowBackButton(
+          onPressed: () => Navigator.of(context).canPop()
+              ? Navigator.pop(context)
+              : context.go('/home'),
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -364,49 +344,87 @@ class _LogTableScreenState extends State<LogTableScreen> {
         label: const Text('Add Log'),
         icon: const Icon(Icons.add),
       ),
-      body: loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 8.0,
+      body: SafeArea(
+        bottom: true,
+        child: Column(
+          children: [
+            MbFloatingHintOverlay(
+              hintKey: 'hint_template_table_${widget.templateKey}',
+              text:
+                  'Tap a date to edit. Hold a row to delete. For a clearer view, you might want to turn off portrait lock and rotate your phone.',
+              iconText: '🫧',
+              align: Alignment.topCenter,
+              bottomOffset: 0,
+              visual: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.phone_iphone,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
                   ),
-                  child: _GlowPanel(
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        hintText: "Search logs...",
-                        prefixIcon: const Icon(Icons.search),
-                        suffixIcon: _searchQuery.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear),
-                                onPressed: () => _searchController.clear(),
-                              )
-                            : null,
-                        border: InputBorder.none,
-                      ),
+                  const SizedBox(width: 8),
+                  Transform.rotate(
+                    angle: 1.57,
+                    child: Icon(
+                      Icons.phone_iphone,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
                     ),
                   ),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: _GlowPanel(
-                      child: _StickyLogTable(
-                        entries: _filteredEntries,
-                        tableFields: fields,
-                        fmtEntryDate: _fmtEntryDate,
-                        formatValue: _formatValue,
-                        onEdit: _editEntry,
-                        onDelete: _confirmDelete,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
+              child: const SizedBox(height: 0),
             ),
+            if (loading)
+              const Expanded(child: Center(child: CircularProgressIndicator()))
+            else
+              Expanded(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16.0,
+                        vertical: 8.0,
+                      ),
+                      child: _GlowPanel(
+                        child: TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: "Search logs...",
+                            prefixIcon: const Icon(Icons.search),
+                            suffixIcon: _searchQuery.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () => _searchController.clear(),
+                                  )
+                                : null,
+                            border: InputBorder.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: _GlowPanel(
+                          child: _StickyLogTable(
+                            entries: _filteredEntries,
+                            tableFields: fields,
+                            fmtEntryDate: _fmtEntryDate,
+                            formatValue: _formatValue,
+                            onEdit: _editEntry,
+                            onDelete: _confirmDelete,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -418,7 +436,7 @@ class _NewEntryResult {
 }
 
 class _StickyLogTable extends StatelessWidget {
-  const _StickyLogTable({
+  _StickyLogTable({
     required this.entries,
     required this.tableFields,
     required this.fmtEntryDate,
@@ -1297,6 +1315,7 @@ class _StickyLogTable extends StatelessWidget {
   final String Function(String, dynamic) formatValue;
   final Function(Map<String, dynamic>) onEdit;
   final Function(Map<String, dynamic>) onDelete;
+  final ScrollController _scrollController = ScrollController();
 
   @override
   Widget build(BuildContext context) {
@@ -1316,26 +1335,38 @@ class _StickyLogTable extends StatelessWidget {
         ),
       ),
       clipBehavior: Clip.antiAlias,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        physics: const BouncingScrollPhysics(),
-        child: DataTable(
-          horizontalMargin: 24,
-          columnSpacing: 36,
-          headingRowColor: MaterialStateProperty.all(
-            theme.colorScheme.surfaceVariant.withOpacity(0.4),
-          ),
-          columns: _buildColumns(),
-          rows: entries.map((entry) {
-            return DataRow(
-              onLongPress: () => onDelete(entry),
-              cells: _buildCellsForTemplate(
-                template,
-                entry,
-              ), // ✅ Using new method
-            );
-          }).toList(),
-        ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return Scrollbar(
+            thumbVisibility: true,
+            controller: _scrollController,
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minWidth: constraints.maxWidth),
+                child: DataTable(
+                  horizontalMargin: 24,
+                  columnSpacing: 36,
+                  headingRowColor: MaterialStateProperty.all(
+                    theme.colorScheme.surfaceVariant.withOpacity(0.4),
+                  ),
+                  columns: _buildColumns(),
+                  rows: entries.map((entry) {
+                    return DataRow(
+                      onLongPress: () => onDelete(entry),
+                      cells: _buildCellsForTemplate(
+                        template,
+                        entry,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

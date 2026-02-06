@@ -9,6 +9,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/features/journal/quill_embeds.dart';
 import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
@@ -284,42 +287,45 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
       applyBackground: true,
       appBar: AppBar(
         title: const Text('Edit Journal'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+        leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/journals'),
         ),
         actions: [
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Remove media at cursor',
-            icon: const Icon(Icons.delete_outline),
+            icon: Icons.delete_outline,
             onPressed: _removeEmbedAtCursor,
           ),
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Add photo',
-            icon: const Icon(Icons.photo),
+            icon: Icons.photo,
             onPressed: _insertImage,
           ),
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Add video',
-            icon: const Icon(Icons.videocam),
+            icon: Icons.videocam,
             onPressed: _insertVideo,
           ),
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Save',
-            icon: const Icon(Icons.check),
+            icon: Icons.check,
             onPressed: _save,
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Padding(
-              padding: const EdgeInsets.all(16),
-              child: SizedBox.expand(
-                child: _GlowPanel(
-                  child: Column(
-                    children: [
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_journal_edit',
+        text: 'Edit gently. You can add or remove media.',
+        iconText: '✨',
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : Padding(
+                padding: const EdgeInsets.all(16),
+                child: SizedBox.expand(
+                  child: _GlowPanel(
+                    child: Column(
+                      children: [
                       TextField(
                         controller: _titleController,
                         decoration: InputDecoration(
@@ -413,11 +419,12 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
                           );
                         },
                       ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
+      ),
     );
   }
 }

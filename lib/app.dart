@@ -16,6 +16,15 @@ class MindBuddyApp extends StatelessWidget {
         scaffoldBackgroundColor: Colors.transparent, // 👈 important
         colorSchemeSeed: const Color.fromARGB(255, 223, 77, 242),
         brightness: Brightness.light,
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+          },
+        ),
       ),
 
       darkTheme: ThemeData(
@@ -23,6 +32,15 @@ class MindBuddyApp extends StatelessWidget {
         scaffoldBackgroundColor: Colors.transparent, // 👈 important
         colorSchemeSeed: const Color.fromARGB(255, 223, 77, 242),
         brightness: Brightness.dark,
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.linux: CupertinoPageTransitionsBuilder(),
+            TargetPlatform.windows: CupertinoPageTransitionsBuilder(),
+          },
+        ),
       ),
 
       routerConfig: router,

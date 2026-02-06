@@ -11,11 +11,16 @@ import 'router.dart';
 import 'features/auth/device_session_service.dart';
 import 'features/settings/settings_provider.dart';
 import 'config/app_env.dart';
+import 'services/notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load(fileName: '.env');
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (_) {
+    // .env is optional in dev; ignore if missing.
+  }
 
   // ✅ MUST happen before any Supabase.instance usage (router + auth listener)
   await Supabase.initialize(
@@ -50,28 +55,10 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
 
     // Load settings (includes theme)
     Future.microtask(() => ref.read(settingsControllerProvider).init());
+    NotificationService.instance.init();
 
-    if (AppEnv.openAiApiKey.isEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || _envWarned) return;
-        _envWarned = true;
-        showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Missing OpenAI key'),
-            content: const Text(
-              'OPENAI_API_KEY is not set in .env. If you use the Supabase Edge Function with secrets, this is OK.',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      });
-    }
+    // If you're using Supabase Edge Function secrets for OpenAI,
+    // no local .env warning is necessary.
 
     // Password recovery deep link handling
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {

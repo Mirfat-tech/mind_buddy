@@ -4,7 +4,11 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
 
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 //import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/services/mind_buddy_api.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
@@ -29,6 +33,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scroll = ScrollController();
   bool _busy = false;
   bool _isCreatingChat = false;
+  final Map<int, int> _chatMessageCounts = {};
+  bool _cleaningEmptyChats = false;
 
   // CHANGED: Remove the old API initialization
   late final MindBuddyEnhancedApi _api;
@@ -155,6 +161,17 @@ class _ChatScreenState extends State<ChatScreen> {
         'text': text,
         'user_id': user.id,
       });
+      // Ensure non-empty conversations get a label
+      final existingTitle = await Supabase.instance.client
+          .from('chats')
+          .select('title')
+          .eq('id', widget.chatId)
+          .maybeSingle();
+      if (existingTitle != null && existingTitle['title'] == null) {
+        await Supabase.instance.client.from('chats').update({
+          'title': 'Session ${DateTime.now().toString().substring(5, 16)}',
+        }).eq('id', widget.chatId);
+      }
 
       // Send message to enhanced API with conversation history
       final response = await _api.sendMessage(text, conversationHistory);
@@ -240,27 +257,47 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() => _isListening = false);
   }
 
-  Widget _glowingIconButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-    required ColorScheme scheme,
-  }) {
-    return Container(
-      margin: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(color: scheme.primary.withOpacity(0.15), blurRadius: 20),
-        ],
-      ),
-      child: CircleAvatar(
-        backgroundColor: scheme.surface,
-        child: IconButton(
-          icon: Icon(icon, color: scheme.primary, size: 20),
-          onPressed: onPressed,
-        ),
-      ),
-    );
+  Future<void> _refreshChatMeta(List<Map<String, dynamic>> chats) async {
+    if (_cleaningEmptyChats || chats.isEmpty) return;
+    _cleaningEmptyChats = true;
+    try {
+      final ids = chats.map((c) => c['id']).whereType<int>().toList();
+      if (ids.isEmpty) return;
+
+      final rows = await Supabase.instance.client
+          .from('chat_messages')
+          .select('chat_id')
+          .inFilter('chat_id', ids);
+
+      final counts = <int, int>{};
+      for (final row in rows) {
+        final chatId = row['chat_id'] as int?;
+        if (chatId == null) continue;
+        counts[chatId] = (counts[chatId] ?? 0) + 1;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _chatMessageCounts
+          ..clear()
+          ..addAll(counts);
+      });
+
+      // Auto-delete empty chats (except the current open one).
+      final emptyIds = ids
+          .where((id) => (counts[id] ?? 0) == 0 && id != widget.chatId)
+          .toList();
+      if (emptyIds.isNotEmpty) {
+        await Supabase.instance.client
+            .from('chats')
+            .delete()
+            .inFilter('id', emptyIds);
+      }
+    } catch (_) {
+      // Silent on purpose: this runs in UI loop.
+    } finally {
+      _cleaningEmptyChats = false;
+    }
   }
 
   Widget _buildChatDrawer(BuildContext context, ColorScheme scheme) {
@@ -295,30 +332,31 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
-        child: Column(
-          children: [
-            Container(
-              height: 110,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    scheme.primary.withOpacity(0.15),
-                    scheme.primaryContainer.withOpacity(0.1),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                border: Border(
-                  bottom: BorderSide(
-                    color: scheme.primary.withOpacity(0.1),
-                    width: 1,
+        child: SafeArea(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      scheme.primary.withOpacity(0.15),
+                      scheme.primaryContainer.withOpacity(0.1),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: scheme.primary.withOpacity(0.1),
+                      width: 1,
+                    ),
                   ),
                 ),
-              ),
-              child: SafeArea(
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(Icons.auto_awesome, color: scheme.primary, size: 24),
                     const SizedBox(height: 4),
@@ -333,154 +371,149 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
-            ),
-
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: scheme.primary,
-                  foregroundColor: scheme.onPrimary,
-                  minimumSize: const Size(double.infinity, 52),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(25),
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: scheme.primary,
+                    foregroundColor: scheme.onPrimary,
+                    minimumSize: const Size(double.infinity, 52),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(25),
+                    ),
+                    elevation: 0,
                   ),
-                  elevation: 0,
-                ),
-                icon: _isCreatingChat
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.add_rounded),
-                label: Text(
-                  _isCreatingChat ? "Starting..." : "New Conversation",
-                ),
-                onPressed: _isCreatingChat
-                    ? null
-                    : () async {
-                        final user = supabase.auth.currentUser;
-                        if (user == null) return;
+                  icon: _isCreatingChat
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.add_rounded),
+                  label: Text(
+                    _isCreatingChat ? "Starting..." : "New Conversation",
+                  ),
+                  onPressed: _isCreatingChat
+                      ? null
+                      : () async {
+                          final user = supabase.auth.currentUser;
+                          if (user == null) return;
 
-                        setState(() => _isCreatingChat = true);
+                          setState(() => _isCreatingChat = true);
 
-                        try {
-                          final info =
-                              await SubscriptionLimits.fetchForCurrentUser();
-                          final isFull = info.isFull;
-                          if (info.isPending) {
-                            if (context.mounted) {
-                              await SubscriptionLimits.showTrialUpgradeDialog(
-                                context,
-                                onUpgrade: () => context.go('/subscription'),
-                              );
-                            }
-                            return;
-                          }
-
-                          // Debug log
-                          debugPrint(
-                            'User subscription tier: ${info.rawTier}',
-                          );
-                          debugPrint('Is Full: $isFull');
-
-                          // 2. Label the current chat if it has no title
-                          final currentTitle = await supabase
-                              .from('chats')
-                              .select('title')
-                              .eq('id', widget.chatId)
-                              .maybeSingle();
-
-                          if (currentTitle != null &&
-                              currentTitle['title'] == null) {
-                            await supabase
-                                .from('chats')
-                                .update({
-                                  'title':
-                                      'Session ${DateTime.now().toString().substring(5, 16)}',
-                                })
-                                .eq('id', widget.chatId);
-                          }
-
-                          // 3. Light Support users only: Check if chat already exists for this day
-                          if (!isFull) {
-                            final existingChat = await supabase
-                                .from('chats')
-                                .select()
-                                .eq('user_id', user.id)
-                                .eq('day_id', widget.dayId)
-                                .eq('is_archived', false)
-                                .order('created_at', ascending: false)
-                                .limit(1)
-                                .maybeSingle();
-
-                            if (existingChat != null) {
-                              // Navigate to existing chat
+                          try {
+                            final info =
+                                await SubscriptionLimits.fetchForCurrentUser();
+                            final isFull = info.isFull;
+                            if (info.isPending) {
                               if (context.mounted) {
-                                Navigator.pop(context);
-                                context.pushReplacement(
-                                  '/chat/${widget.dayId}/${existingChat['id']}',
-                                );
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Light Support users can have 1 chat per day. Upgrade to Full Support 🏆 for unlimited chats!',
-                                    ),
-                                    duration: Duration(seconds: 3),
-                                  ),
+                                await SubscriptionLimits.showTrialUpgradeDialog(
+                                  context,
+                                  onUpgrade: () => context.go('/subscription'),
                                 );
                               }
                               return;
                             }
-                          }
 
-                          // 4. Create new chat (Full Support always allowed, Light Support if none exists)
-                          final newChat = await supabase
-                              .from('chats')
-                              .insert({
-                                'user_id': user.id,
-                                'day_id': widget.dayId,
-                                'is_archived': false,
-                              })
-                              .select()
-                              .single();
-
-                          if (context.mounted) {
-                            Navigator.pop(context);
-                            context.pushReplacement(
-                              '/chat/${widget.dayId}/${newChat['id']}',
+                            // Debug log
+                            debugPrint(
+                              'User subscription tier: ${info.rawTier}',
                             );
-                          }
-                        } catch (e) {
-                          debugPrint("Error: $e");
-                          if (context.mounted) {
-                            String msg = 'Failed to create chat.';
-                            if (e is PostgrestException &&
-                                e.code == '23505') {
-                              msg =
-                                  'Light Support allows only 1 chat per day. Upgrade to Full Support 🏆 for unlimited chats.';
-                            } else if (e.toString().contains('23505')) {
-                              msg =
-                                  'Light Support allows only 1 chat per day. Upgrade to Full Support 🏆 for unlimited chats.';
+                            debugPrint('Is Full: $isFull');
+
+                            // 2. Label the current chat if it has no title
+                            final currentTitle = await supabase
+                                .from('chats')
+                                .select('title')
+                                .eq('id', widget.chatId)
+                                .maybeSingle();
+
+                            if (currentTitle != null &&
+                                currentTitle['title'] == null) {
+                              await supabase
+                                  .from('chats')
+                                  .update({
+                                    'title':
+                                        'Session ${DateTime.now().toString().substring(5, 16)}',
+                                  })
+                                  .eq('id', widget.chatId);
                             }
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(msg)),
-                            );
-                          }
-                        } finally {
-                          if (mounted) setState(() => _isCreatingChat = false);
-                        }
-                      },
-              ),
-            ),
-            const Divider(indent: 20, endIndent: 20),
 
-            Expanded(
-              child: StreamBuilder<List<Map<String, dynamic>>>(
+                            // 3. Light Support users only: Check if chat already exists for this day
+                            if (!isFull) {
+                              final existingChat = await supabase
+                                  .from('chats')
+                                  .select()
+                                  .eq('user_id', user.id)
+                                  .eq('day_id', widget.dayId)
+                                  .eq('is_archived', false)
+                                  .order('created_at', ascending: false)
+                                  .limit(1)
+                                  .maybeSingle();
+
+                              if (existingChat != null) {
+                                // Navigate to existing chat
+                                if (context.mounted) {
+                                  Navigator.pop(context);
+                                  context.pushReplacement(
+                                    '/chat/${widget.dayId}/${existingChat['id']}',
+                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Light Support users can have 1 chat per day. Upgrade to Full Support 🏆 for unlimited chats!',
+                                      ),
+                                      duration: Duration(seconds: 3),
+                                    ),
+                                  );
+                                }
+                                return;
+                              }
+                            }
+
+                            // 4. Create new chat (Full Support always allowed, Light Support if none exists)
+                            final newChat = await supabase
+                                .from('chats')
+                                .insert({
+                                  'user_id': user.id,
+                                  'day_id': widget.dayId,
+                                  'is_archived': false,
+                                })
+                                .select()
+                                .single();
+
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                              context.pushReplacement(
+                                '/chat/${widget.dayId}/${newChat['id']}',
+                              );
+                            }
+                          } catch (e) {
+                            debugPrint("Error: $e");
+                            if (context.mounted) {
+                              String msg = 'Failed to create chat.';
+                              if (e is PostgrestException && e.code == '23505') {
+                                msg =
+                                    'Light Support allows only 1 chat per day. Upgrade to Full Support 🏆 for unlimited chats.';
+                              } else if (e.toString().contains('23505')) {
+                                msg =
+                                    'Light Support allows only 1 chat per day. Upgrade to Full Support 🏆 for unlimited chats.';
+                              }
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(msg)),
+                              );
+                            }
+                          } finally {
+                            if (mounted) setState(() => _isCreatingChat = false);
+                          }
+                        },
+                ),
+              ),
+              const Divider(indent: 20, endIndent: 20),
+              StreamBuilder<List<Map<String, dynamic>>>(
                 stream: chatStream,
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {
@@ -488,7 +521,29 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
 
                   final chats = snapshot.data!;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _refreshChatMeta(chats);
+                  });
                   if (chats.isEmpty) {
+                    return Center(
+                      child: Text(
+                        'No chats yet',
+                        style: TextStyle(color: scheme.onSurfaceVariant),
+                      ),
+                    );
+                  }
+
+                  final hasCounts = _chatMessageCounts.isNotEmpty;
+                  final visibleChats = hasCounts
+                      ? chats.where((chat) {
+                          final chatId = chat['id'] as int?;
+                          final count =
+                              chatId == null ? 0 : _chatMessageCounts[chatId];
+                          return (count ?? 0) > 0 || chatId == widget.chatId;
+                        }).toList()
+                      : chats;
+
+                  if (visibleChats.isEmpty) {
                     return Center(
                       child: Text(
                         'No chats yet',
@@ -499,11 +554,23 @@ class _ChatScreenState extends State<ChatScreen> {
 
                   return ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: chats.length,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: visibleChats.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 4),
                     itemBuilder: (context, i) {
-                      final chat = chats[i];
+                      final chat = visibleChats[i];
                       final isCurrent = chat['id'] == widget.chatId;
+                      final chatId = chat['id'] as int;
+                      final count = _chatMessageCounts[chatId] ?? 0;
+                      final created = DateTime.tryParse(
+                        chat['created_at']?.toString() ?? '',
+                      );
+                      final derivedTitle = count == 0
+                          ? 'New Conversation'
+                          : (chat['title']?.toString().trim().isNotEmpty == true
+                              ? chat['title']
+                              : 'Session ${created != null ? DateFormat('MM-dd • HH:mm').format(created.toLocal()) : ''}');
 
                       return Dismissible(
                         key: Key(chat['id'].toString()),
@@ -572,7 +639,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 : scheme.onSurfaceVariant,
                           ),
                           title: Text(
-                            chat['title'] ?? 'New Conversation',
+                            derivedTitle?.toString() ?? 'New Conversation',
                             style: TextStyle(
                               fontSize: 14,
                               fontWeight: isCurrent
@@ -595,27 +662,26 @@ class _ChatScreenState extends State<ChatScreen> {
                   );
                 },
               ),
-            ),
-
-            const Divider(),
-            ListTile(
-              leading: const Icon(Icons.workspace_premium),
-              title: const Text("Upgrade to Full Support 🏆"),
-              onTap: () {
-                Navigator.pop(context);
-                context.push('/subscription');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.archive_outlined),
-              title: const Text("View Archive"),
-              onTap: () {
-                Navigator.pop(context);
-                context.push('/chat-archive/${widget.dayId}');
-              },
-            ),
-            const SizedBox(height: 10),
-          ],
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.workspace_premium),
+                title: const Text("Upgrade to Full Support 🏆"),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push('/subscription');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.archive_outlined),
+                title: const Text("View Archive"),
+                onTap: () {
+                  Navigator.pop(context);
+                  context.push('/chat-archive/${widget.dayId}');
+                },
+              ),
+              const SizedBox(height: 10),
+            ],
+          ),
         ),
       ),
     );
@@ -631,7 +697,7 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         title: const Text('Mind Buddy'),
         centerTitle: true,
-        leadingWidth: 100,
+        leadingWidth: 92,
         leading: Row(
           children: [
             IconButton(
@@ -640,16 +706,27 @@ class _ChatScreenState extends State<ChatScreen> {
                   context.canPop() ? context.pop() : context.go('/home'),
             ),
             Builder(
-              builder: (context) => IconButton(
-                icon: const Icon(Icons.menu_rounded, size: 22),
+              builder: (context) => MbGlowIconButton(
+                icon: Icons.menu_rounded,
+                margin: EdgeInsets.zero,
                 onPressed: () => Scaffold.of(context).openDrawer(),
               ),
             ),
           ],
         ),
+        actions: [
+          MbGlowIconButton(
+            icon: Icons.notifications_outlined,
+            onPressed: () => context.push('/settings/notifications'),
+          ),
+        ],
       ),
-      body: Stack(
-        children: [
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_chat',
+        text: 'Open the menu to find past chats.',
+        iconText: '🫧',
+        child: Stack(
+          children: [
           Positioned(
             bottom: 150,
             left: -50,
@@ -843,7 +920,8 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ],
           ),
-        ],
+          ],
+        ),
       ),
     );
   }

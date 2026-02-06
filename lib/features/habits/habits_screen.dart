@@ -4,6 +4,9 @@ import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'package:mind_buddy/features/insights/habit_streaks_summary.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 class HabitsScreen extends StatefulWidget {
   const HabitsScreen({super.key});
@@ -42,8 +45,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
       applyBackground: true,
       appBar: AppBar(
         title: const Text('Habits'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+        leading: MbGlowBackButton(
           onPressed: () {
             if (Navigator.of(context).canPop()) {
               Navigator.of(context).pop();
@@ -53,16 +55,20 @@ class _HabitsScreenState extends State<HabitsScreen> {
           },
         ),
         actions: [
-          IconButton(
+          MbGlowIconButton(
             tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh),
+            icon: Icons.refresh,
             onPressed: _refreshSummary,
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_habits',
+        text: 'Tap a habit to mark it done.',
+        iconText: '✨',
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
           const Text(
             'Habit tracker',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
@@ -87,7 +93,8 @@ class _HabitsScreenState extends State<HabitsScreen> {
               onChanged: _refreshSummary,
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }

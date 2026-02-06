@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -260,6 +261,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
           elevation: 0,
           scrolledUnderElevation: 0,
           surfaceTintColor: Colors.transparent,
+          leading: context.canPop()
+              ? MbGlowBackButton(onPressed: () => context.pop())
+              : null,
         ),
         body: SafeArea(
           child: SingleChildScrollView(

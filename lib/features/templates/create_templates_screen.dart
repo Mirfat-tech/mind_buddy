@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:go_router/go_router.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 class CreateLogTemplateScreen extends StatefulWidget {
   const CreateLogTemplateScreen({super.key});
@@ -53,33 +57,6 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     if (t.contains('restaurants')) return '🍽️';
     if (t.contains('books')) return '📖';
     return '📋';
-  }
-
-  Widget _glowingIconButton({
-    required IconData icon,
-    required VoidCallback onPressed,
-    required ColorScheme scheme,
-  }) {
-    return Container(
-      margin: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: scheme.primary.withOpacity(0.4),
-            blurRadius: 12,
-            spreadRadius: 1,
-          ),
-        ],
-      ),
-      child: CircleAvatar(
-        backgroundColor: scheme.surface,
-        child: IconButton(
-          icon: Icon(icon, color: scheme.primary, size: 20),
-          onPressed: onPressed,
-        ),
-      ),
-    );
   }
 
   Widget _inputWrapper(ColorScheme scheme, {required Widget child}) {
@@ -237,31 +214,31 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
-        leading: _glowingIconButton(
-          icon: Icons.arrow_back,
+        leading: MbGlowBackButton(
           onPressed: () => Navigator.pop(context),
-          scheme: scheme,
         ),
         title: const Text('New Template'),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: TextButton(
-              onPressed: saving ? null : _save,
-              child: Text(
-                saving ? 'SAVING...' : 'SAVE',
-                style: TextStyle(
-                  color: scheme.primary,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
+          MbGlowIconButton(
+            icon: Icons.notifications_outlined,
+            onPressed: () =>
+                context.push('/settings/notifications?from=templates'),
+          ),
+          MbGlowIconButton(
+            icon: Icons.check,
+            tooltip: saving ? 'Saving...' : 'Save',
+            onPressed: saving ? null : _save,
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
-        children: [
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_templates_create',
+        text: 'Add fields, then tap Save to build your table.',
+        iconText: '✨',
+        child: ListView(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 60),
+          children: [
           _GlowPanel(
             child: Column(
               children: [
@@ -392,7 +369,8 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
               ],
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }

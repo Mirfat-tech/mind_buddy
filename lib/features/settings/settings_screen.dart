@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -24,14 +25,25 @@ class SettingsScreen extends ConsumerWidget {
     final checkInLabel = settings.dailyCheckInEnabled
         ? settings.dailyCheckInTime
         : 'Off';
+    const dayLabels = {
+      'mon': 'Mon',
+      'tue': 'Tue',
+      'wed': 'Wed',
+      'thu': 'Thu',
+      'fri': 'Fri',
+      'sat': 'Sat',
+      'sun': 'Sun',
+    };
+    final scheduleLabel = settings.notificationDays.isEmpty
+        ? 'Off'
+        : '${settings.notificationDays.map((d) => dayLabels[d] ?? d).join(', ')} • ${settings.notificationTime}';
 
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
         title: const Text('Settings'),
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new),
+        leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/home'),
         ),
@@ -70,15 +82,39 @@ class SettingsScreen extends ConsumerWidget {
             children: [
               _SettingsTile(
                 icon: Icons.notifications_outlined,
-                title: 'Quiet Hours',
-                subtitle: quietLabel,
+                title: 'Notifications',
+                subtitle: 'Schedule • Quiet hours • Check-ins',
                 onTap: () => context.go('/settings/notifications'),
               ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _SettingsSection(
+            title: 'Guidance',
+            children: [
               _SettingsTile(
-                icon: Icons.alarm_outlined,
-                title: 'Daily Check-In',
-                subtitle: checkInLabel,
-                onTap: () => context.go('/settings/notifications'),
+                icon: Icons.bubble_chart_outlined,
+                title: 'Quiet Guide',
+                subtitle: 'Soft tips and gestures',
+                onTap: () => context.go('/settings/guide'),
+              ),
+              _SettingsTile(
+                icon: Icons.visibility_outlined,
+                title: 'Keep instructions visible',
+                subtitle: 'Show floating hints every time',
+                trailing: Switch(
+                  value: ref.watch(settingsControllerProvider).settings
+                      .keepInstructionsEnabled,
+                  onChanged: (value) => ref
+                      .read(settingsControllerProvider)
+                      .setKeepInstructionsEnabled(value),
+                ),
+                onTap: () => ref
+                    .read(settingsControllerProvider)
+                    .setKeepInstructionsEnabled(!ref
+                        .read(settingsControllerProvider)
+                        .settings
+                        .keepInstructionsEnabled),
               ),
             ],
           ),
@@ -287,12 +323,14 @@ class _SettingsTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.trailing,
   });
 
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -301,7 +339,7 @@ class _SettingsTile extends StatelessWidget {
       leading: Icon(icon),
       title: Text(title),
       subtitle: Text(subtitle),
-      trailing: const Icon(Icons.chevron_right),
+      trailing: trailing ?? const Icon(Icons.chevron_right),
       onTap: onTap,
     );
   }

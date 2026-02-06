@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 class BrainFogScreen extends StatefulWidget {
   const BrainFogScreen({super.key});
@@ -21,6 +24,7 @@ class _Thought {
 class _BrainFogScreenState extends State<BrainFogScreen>
     with TickerProviderStateMixin {
   final List<_Thought> _thoughts = [];
+  final Set<String> _poppingIds = {};
   bool _isDeleteMode = false;
   bool _isLoading = true;
   late AnimationController _shakeController;
@@ -39,7 +43,6 @@ class _BrainFogScreenState extends State<BrainFogScreen>
   @override
   void dispose() {
     _shakeController.dispose();
-    _shakeController.stop();
     super.dispose();
   }
 
@@ -118,6 +121,15 @@ class _BrainFogScreenState extends State<BrainFogScreen>
       debugPrint('Upsert error: $e');
       setState(() => _isLoading = false); // Safety net
     }
+  }
+
+  Future<void> _popThought(_Thought thought) async {
+    if (_poppingIds.contains(thought.id)) return;
+    setState(() => _poppingIds.add(thought.id));
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    await _deleteThought(thought);
+    if (!mounted) return;
+    setState(() => _poppingIds.remove(thought.id));
   }
 
   // ... inside _BrainFogScreenState ...
@@ -270,25 +282,28 @@ class _BrainFogScreenState extends State<BrainFogScreen>
       appBar: AppBar(
         title: const Text('Brain Fog'),
         // Add this leading block:
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new),
+        leading: MbGlowBackButton(
           onPressed: () {
-            // This will force the app to go to your home route
-            // Ensure '/home' matches the path in your main.dart GoRouter setup
-            context.go('/home');
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
           },
         ),
         actions: [
+          MbGlowIconButton(
+            icon: Icons.notifications_outlined,
+            onPressed: () => context.push('/settings/notifications'),
+          ),
           if (_thoughts.isNotEmpty) ...[
-            IconButton(
-              icon: const Icon(Icons.delete_sweep),
+            MbGlowIconButton(
+              icon: Icons.delete_sweep,
               onPressed: _confirmClearAll,
             ),
-            IconButton(
-              icon: Icon(
-                _isDeleteMode ? Icons.check_circle : Icons.delete_outline,
-              ),
-              color: _isDeleteMode ? Colors.green : cs.onSurface,
+            MbGlowIconButton(
+              icon: _isDeleteMode ? Icons.check_circle : Icons.delete_outline,
+              iconColor: _isDeleteMode ? Colors.green : cs.onSurface,
               onPressed: _toggleDeleteMode,
             ),
           ],
@@ -299,10 +314,14 @@ class _BrainFogScreenState extends State<BrainFogScreen>
         backgroundColor: cs.primary,
         child: Icon(Icons.add, color: cs.onPrimary),
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : Stack(
-              children: [
+      body: MbFloatingHintOverlay(
+        hintKey: 'hint_brain_fog',
+        text: 'Long press to pop. Tap to edit. Drag to move.',
+        iconText: '🫧',
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : Stack(
+                children: [
                 Center(
                   child: Text(
                     "Let it out 💨 \nWhat's overwhelming you today?",
@@ -331,76 +350,88 @@ class _BrainFogScreenState extends State<BrainFogScreen>
                     ),
                   );
                 }).toList(),
-              ],
-            ),
+                ],
+              ),
+      ),
     );
   }
 
   Widget _buildBubble(_Thought t, {bool isDragging = false}) {
     final cs = Theme.of(context).colorScheme;
     double bSize = _getBubbleSize(t.text);
+    final isPopping = _poppingIds.contains(t.id);
 
-    return AnimatedBuilder(
-      animation: _shakeController,
-      builder: (context, child) => Transform.rotate(
-        angle: (_isDeleteMode && !isDragging)
-            ? (0.05 * _shakeController.value) - 0.025
-            : 0,
-        child: child,
-      ),
-      child: GestureDetector(
-        onTap: () => _isDeleteMode ? _deleteThought(t) : _showEditSheet(t),
-        child: Container(
-          width: bSize,
-          height: bSize,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: cs.surface.withOpacity(0.6),
-            boxShadow: [
-              BoxShadow(
-                color: cs.primary.withOpacity(0.4),
-                blurRadius: 15,
-                blurStyle: BlurStyle.outer,
-              ),
-            ],
-            border: Border.all(
-              color: _isDeleteMode ? Colors.red : cs.primary.withOpacity(0.2),
-            ),
+    return AnimatedScale(
+      scale: isPopping ? 0.2 : 1,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      child: AnimatedOpacity(
+        opacity: isPopping ? 0 : 1,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        child: AnimatedBuilder(
+          animation: _shakeController,
+          builder: (context, child) => Transform.rotate(
+            angle: (_isDeleteMode && !isDragging)
+                ? (0.05 * _shakeController.value) - 0.025
+                : 0,
+            child: child,
           ),
-          child: Stack(
-            // Added Stack back to bubbles to hold the delete button
-            children: [
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(15),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Text(
-                      t.text.isEmpty ? "Tap..." : t.text,
-                      textAlign: TextAlign.center,
-                      maxLines: 5,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: cs.onSurface,
-                        fontSize: 12,
-                        decoration: TextDecoration.none,
+          child: GestureDetector(
+            onLongPress: () => _popThought(t),
+            onTap: () => _isDeleteMode ? _deleteThought(t) : _showEditSheet(t),
+            child: Container(
+              width: bSize,
+              height: bSize,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: cs.surface.withOpacity(0.6),
+                boxShadow: [
+                  BoxShadow(
+                    color: cs.primary.withOpacity(0.4),
+                    blurRadius: 15,
+                    blurStyle: BlurStyle.outer,
+                  ),
+                ],
+                border: Border.all(
+                  color:
+                      _isDeleteMode ? Colors.red : cs.primary.withOpacity(0.2),
+                ),
+              ),
+              child: Stack(
+                children: [
+                  Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(15),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: Text(
+                          t.text.isEmpty ? "Tap..." : t.text,
+                          textAlign: TextAlign.center,
+                          maxLines: 5,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: cs.onSurface,
+                            fontSize: 12,
+                            decoration: TextDecoration.none,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
+                  if (_isDeleteMode)
+                    const Positioned(
+                      top: 0,
+                      right: 0,
+                      child: CircleAvatar(
+                        radius: 12,
+                        backgroundColor: Colors.red,
+                        child: Icon(Icons.remove, size: 16, color: Colors.white),
+                      ),
+                    ),
+                ],
               ),
-              // --- THIS PART WAS MISSING ---
-              if (_isDeleteMode)
-                const Positioned(
-                  top: 0,
-                  right: 0,
-                  child: CircleAvatar(
-                    radius: 12,
-                    backgroundColor: Colors.red,
-                    child: Icon(Icons.remove, size: 16, color: Colors.white),
-                  ),
-                ),
-            ],
+            ),
           ),
         ),
       ),

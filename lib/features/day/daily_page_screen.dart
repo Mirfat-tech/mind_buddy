@@ -7,6 +7,8 @@ import 'package:mind_buddy/hobonichi_repo.dart';
 import 'package:mind_buddy/paper/hobo_box.dart';
 import 'package:mind_buddy/paper/paper_canvas.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 import 'widgets/chat_box_widget.dart';
 import 'widgets/journal_box_widget.dart';
@@ -197,8 +199,7 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
         appBar: AppBar(
           backgroundColor: Colors.transparent,
           elevation: 0,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
+          leading: MbGlowBackButton(
             onPressed: () {
               if (Navigator.of(context).canPop()) {
                 Navigator.of(context).pop();
@@ -209,8 +210,8 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
           ),
           title: Text(widget.dayId),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.palette_outlined),
+            MbGlowIconButton(
+              icon: Icons.palette_outlined,
               onPressed: _pickCover,
             ),
           ],
