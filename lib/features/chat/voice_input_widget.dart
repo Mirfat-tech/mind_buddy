@@ -275,7 +275,7 @@ class _ChatInputWithVoiceState extends State<ChatInputWithVoice> {
                 child: Container(
                   constraints: const BoxConstraints(maxHeight: 120),
                   decoration: BoxDecoration(
-                    color: scheme.surfaceVariant.withOpacity(0.5),
+                    color: scheme.surfaceContainerHighest.withOpacity(0.5),
                     borderRadius: BorderRadius.circular(24),
                   ),
                   child: TextField(

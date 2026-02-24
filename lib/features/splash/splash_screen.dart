@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
@@ -14,7 +15,7 @@ class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 450),
+    duration: const Duration(milliseconds: 900),
   );
   late final Animation<double> _fade = CurvedAnimation(
     parent: _c,
@@ -32,7 +33,7 @@ class _SplashScreenState extends State<SplashScreen>
 
     Timer(const Duration(milliseconds: 900), () {
       if (!mounted) return;
-      context.go('/signin');
+      context.go('/home');
     });
   }
 
@@ -47,32 +48,32 @@ class _SplashScreenState extends State<SplashScreen>
     return MindBuddyBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        body: Center(
-          child: FadeTransition(
-            opacity: _fade,
-            child: ScaleTransition(
-              scale: _scale,
-              child: const Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.nights_stay_rounded,
-                    size: 44,
-                    color: Colors.white,
-                  ),
-                  SizedBox(height: 14),
-                  Text(
-                    'Mind Buddy',
-                    style: TextStyle(
-                      fontSize: 38,
-                      fontWeight: FontWeight.w300,
-                      color: Colors.white,
-                      letterSpacing: 0.3,
+        body: SafeArea(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final shortest = math.min(
+                constraints.maxWidth,
+                constraints.maxHeight,
+              );
+              final logoSize = (shortest * 0.55).clamp(180.0, 420.0);
+              return Center(
+                child: FadeTransition(
+                  opacity: _fade,
+                  child: ScaleTransition(
+                    scale: _scale,
+                    child: SizedBox(
+                      width: logoSize,
+                      height: logoSize,
+                      child: Image.asset(
+                        'assets/images/MYBB_Trans_logo_2.png',
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.high,
+                      ),
                     ),
                   ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
         ),
       ),

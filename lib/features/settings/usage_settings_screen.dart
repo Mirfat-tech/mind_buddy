@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/services/mind_buddy_api.dart';
+import 'package:mind_buddy/services/subscription_plan_catalog.dart';
 
 class UsageSettingsScreen extends StatefulWidget {
   const UsageSettingsScreen({super.key});
@@ -69,11 +70,14 @@ class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
             }
 
             final usage = snapshot.data!;
-            final isFull = usage['isFull'] == true;
+            final planName = (usage['planName'] ?? 'FREE MODE').toString();
+            final plan = SubscriptionPlanCatalog.fromRaw(
+              usage['normalizedTier'],
+            );
             final messageCount = usage['messageCount'] as int? ?? 0;
             final messageLimit = usage['messageLimit'] as int? ?? 0;
             final chatCount = usage['chatCount'] as int? ?? 0;
-            final chatLimit = usage['chatLimit'] as int?;
+            final chatLimit = usage['chatLimit'] as int? ?? plan.dailyChats;
             final journalCount = usage['journalCount'] as int? ?? 0;
             final journalLimit = usage['journalLimit'] as int? ?? 0;
             final deviceCount = usage['deviceCount'] as int? ?? 0;
@@ -81,11 +85,8 @@ class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
             final dayId = usage['dayId'] as String? ?? '';
 
             final isPending = usage['isPending'] == true;
-            final tierLabel = isPending
-                ? 'Choose a plan'
-                : (isFull ? 'Full Support' : 'Light Support');
-            final chatLimitLabel =
-                isFull ? 'Unlimited' : (chatLimit ?? 1).toString();
+            final tierLabel = isPending ? 'FREE MODE' : planName;
+            final chatLimitLabel = chatLimit.toString();
 
             return ListView(
               padding: const EdgeInsets.all(16),
@@ -97,51 +98,43 @@ class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
                 const SizedBox(height: 12),
                 _UsageCard(
                   title: 'Current Plan',
-                  value: tierLabel,
+                  value: '$tierLabel (${plan.price})',
                   subtitle: dayId.isEmpty ? null : 'Today: $dayId',
                 ),
                 const SizedBox(height: 12),
                 _UsageCard(
-                  title: 'Messages Today',
+                  title: 'AI Chats Today',
                   value: '$messageCount / $messageLimit',
                   subtitle: isPending
-                      ? 'Pick a plan to start messaging.'
-                      : (isFull
-                          ? 'Full Support includes 100 total messages per day.'
-                          : 'Light Support includes 10 total messages per day.'),
+                      ? 'FREE MODE includes no AI chats.'
+                      : '${plan.name} includes $messageLimit AI chats per day.',
                 ),
                 const SizedBox(height: 12),
                 _UsageCard(
-                  title: 'Chats Today',
+                  title: 'Conversations Started',
                   value: '$chatCount / $chatLimitLabel',
                   subtitle: isPending
-                      ? 'Pick a plan to start chats.'
-                      : (isFull
-                          ? 'Full Support has no daily chat limit.'
-                          : 'Light Support allows 1 chat per day.'),
+                      ? 'FREE MODE includes no AI chats.'
+                      : '${plan.name} allows $chatLimitLabel chats per day.',
                 ),
                 const SizedBox(height: 12),
                 _UsageCard(
                   title: 'Journal Entries Today',
-                  value: '$journalCount / $journalLimit',
-                  subtitle: isPending
-                      ? 'Pick a plan to start journaling.'
-                      : (isFull
-                          ? 'Full Support includes 10 journal entries per day.'
-                          : 'Light Support includes 3 journal entries per day.'),
+                  value: journalLimit < 0
+                      ? '$journalCount / Unlimited'
+                      : '$journalCount / $journalLimit',
+                  subtitle: 'Unlimited journal entries are included.',
                 ),
                 const SizedBox(height: 12),
                 _UsageCard(
                   title: 'Devices',
                   value: '$deviceCount / $deviceLimit',
-                  subtitle: isFull
-                      ? 'Full Support allows up to 5 devices.'
-                      : 'Light Support allows 1 device.',
+                  subtitle: '${plan.name} allows up to $deviceLimit devices.',
                 ),
                 const SizedBox(height: 20),
                 OutlinedButton(
                   onPressed: () => context.go('/subscription'),
-                  child: const Text('Manage Subscription'),
+                  child: const Text('Manage subscription'),
                 ),
               ],
             );

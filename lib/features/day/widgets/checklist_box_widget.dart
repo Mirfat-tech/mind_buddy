@@ -75,16 +75,24 @@ class _ChecklistBoxWidgetState extends State<ChecklistBoxWidget> {
   @override
   void dispose() {
     _debounce?.cancel();
-    for (final c in _controllers) c.dispose();
-    for (final f in _focusNodes) f.dispose();
+    for (final c in _controllers) {
+      c.dispose();
+    }
+    for (final f in _focusNodes) {
+      f.dispose();
+    }
     super.dispose();
   }
 
   String _newId() => DateTime.now().microsecondsSinceEpoch.toString();
 
   void _rebuildControllers() {
-    for (final c in _controllers) c.dispose();
-    for (final f in _focusNodes) f.dispose();
+    for (final c in _controllers) {
+      c.dispose();
+    }
+    for (final f in _focusNodes) {
+      f.dispose();
+    }
     _controllers.clear();
     _focusNodes.clear();
 

@@ -1,14 +1,13 @@
-import 'dart:ui';
-import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:go_router/go_router.dart';
-
-import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/services/subscription_plan_catalog.dart';
+import 'package:mind_buddy/services/subscription_purchase_service.dart';
 
-/// Subscription Upgrade Screen
-/// Beautiful bubble aesthetic matching Brain Fog design
+enum BillingPeriod { monthly, yearly }
+
 class SubscriptionScreen extends StatefulWidget {
   const SubscriptionScreen({super.key});
 
@@ -17,399 +16,674 @@ class SubscriptionScreen extends StatefulWidget {
 }
 
 class _SubscriptionScreenState extends State<SubscriptionScreen> {
-  String _currentTier = 'standard';
-  bool _loading = true;
-  bool _upgrading = false;
+  final SubscriptionPurchaseController _controller =
+      SubscriptionPurchaseController();
+  BillingPeriod _billingPeriod = BillingPeriod.monthly;
+  String? _friendlyStoreError;
+
+  static const Map<MbPlanTier, double> _fallbackMonthlyGbp = {
+    MbPlanTier.lightSupport: 4.99,
+    MbPlanTier.plusSupport: 9.99,
+    MbPlanTier.fullSupport: 19.99,
+  };
 
   @override
   void initState() {
     super.initState();
-    _loadCurrentTier();
+    _controller.addListener(_onChanged);
+    _controller.init();
   }
 
-  Future<void> _loadCurrentTier() async {
-    try {
-      final user = Supabase.instance.client.auth.currentUser;
-      if (user == null) return;
-
-      final profile = await Supabase.instance.client
-          .from('profiles')
-          .select('subscription_tier')
-          .eq('id', user.id)
-          .maybeSingle();
-
-      if (mounted) {
-        setState(() {
-          _currentTier = profile?['subscription_tier'] ?? 'standard';
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error loading tier: $e');
-      if (mounted) setState(() => _loading = false);
-    }
+  @override
+  void dispose() {
+    _controller.removeListener(_onChanged);
+    _controller.dispose();
+    super.dispose();
   }
 
-  Future<void> _upgradeTier(String newTier) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-
-    setState(() => _upgrading = true);
-
-    try {
-      await Supabase.instance.client
-          .from('profiles')
-          .update({
-            'subscription_tier': newTier,
-            'subscription_start_date': newTier == 'full'
-                ? DateTime.now().toIso8601String()
-                : null,
-          })
-          .eq('id', user.id);
-
-      if (mounted) {
-        setState(() {
-          _currentTier = newTier;
-          _upgrading = false;
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              newTier == 'full'
-                  ? '🏆 Welcome to Full Support! Unlimited chats, 100 messages/day, 10 journals/day, templates + insights.'
-                  : 'Switched to Light Support: 1 chat/day, 10 messages/day.',
-            ),
-            backgroundColor: newTier == 'full'
-                ? Colors.amber.shade700
-                : Colors.grey.shade700,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+  void _onChanged() {
+    if (!mounted) return;
+    final rawError = _controller.error;
+    if (rawError != null && rawError.trim().isNotEmpty) {
+      if (kDebugMode) {
+        debugPrint('Subscription store error: $rawError');
       }
-    } catch (e) {
-      debugPrint('Error upgrading: $e');
-      if (mounted) {
-        setState(() => _upgrading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to update subscription: $e'),
-            backgroundColor: Colors.red.shade700,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+      _friendlyStoreError =
+          'Couldn\'t reach the store right now. Please try again.';
+    } else {
+      _friendlyStoreError = null;
+    }
+    setState(() {});
+  }
+
+  Future<void> _retryStore() async {
+    setState(() => _friendlyStoreError = null);
+    await _controller.loadProducts();
+    await _controller.refreshEntitlement();
+  }
+
+  String _statusLabel() {
+    final ent = _controller.entitlement;
+    if (ent == null) return 'Loading';
+    if (ent.isActive) return 'Active';
+    if (ent.status == 'canceled' || ent.status == 'cancelled') {
+      return 'Canceled';
+    }
+    if (ent.tier == 'pending') return 'No active mode';
+    return ent.status;
+  }
+
+  String _dateLabel(DateTime? date, {required String fallback}) {
+    if (date == null) return fallback;
+    return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+  }
+
+  SubscriptionOffer? _offerForPlan(
+    PlanBenefits plan,
+    BillingPeriod period,
+  ) {
+    if (plan.tier == MbPlanTier.free) return null;
+    final tierSlug = switch (plan.tier) {
+      MbPlanTier.lightSupport => 'light',
+      MbPlanTier.plusSupport => 'plus',
+      MbPlanTier.fullSupport => 'full',
+      MbPlanTier.free || MbPlanTier.pending => '',
+    };
+    final periodSlug =
+        period == BillingPeriod.monthly ? 'monthly' : 'yearly';
+    for (final offer in SubscriptionPurchaseController.catalog) {
+      if (offer.tier == tierSlug && offer.period == periodSlug) {
+        return offer;
       }
     }
+    return null;
+  }
+
+  String _formatGbp(double amount) {
+    return '£${amount.toStringAsFixed(2)}';
+  }
+
+  String _displayPrice(PlanBenefits plan, BillingPeriod period) {
+    if (plan.tier == MbPlanTier.free) return '£0';
+
+    final offer = _offerForPlan(plan, period);
+    if (offer != null) {
+      final product = _controller.productForId(offer.productId);
+      if (product != null) return product.price;
+    }
+
+    final monthly = _fallbackMonthlyGbp[plan.tier];
+    if (monthly == null) return plan.price;
+    if (period == BillingPeriod.monthly) return _formatGbp(monthly);
+    return _formatGbp(monthly * 10);
+  }
+
+  double _yearlySavings(PlanBenefits plan) {
+    if (plan.tier == MbPlanTier.free) return 0;
+
+    final monthlyOffer = _offerForPlan(plan, BillingPeriod.monthly);
+    final yearlyOffer = _offerForPlan(plan, BillingPeriod.yearly);
+
+    final monthlyProduct = monthlyOffer == null
+        ? null
+        : _controller.productForId(monthlyOffer.productId);
+    final yearlyProduct = yearlyOffer == null
+        ? null
+        : _controller.productForId(yearlyOffer.productId);
+
+    if (monthlyProduct != null && yearlyProduct != null) {
+      final yearlySavings = (monthlyProduct.rawPrice * 12) - yearlyProduct.rawPrice;
+      return yearlySavings > 0 ? yearlySavings : 0;
+    }
+
+    final monthly = _fallbackMonthlyGbp[plan.tier];
+    if (monthly == null) return 0;
+    return monthly * 2;
+  }
+
+  List<String> _headlineBenefits(PlanBenefits plan) {
+    return <String>[
+      plan.dailyChats == 0
+          ? 'No AI chats'
+          : '${plan.dailyChats} AI chats/day',
+      plan.voiceChatsPerDay > 0
+          ? '${plan.voiceChatsPerDay} voice chats/day'
+          : 'No voice chats',
+      plan.longTermMemory ? 'Long-term memory enabled' : 'No long-term memory',
+      plan.insights ? 'Insights for templates + habits' : 'No advanced insights',
+      '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
+      plan.canCreateCustomTemplates
+          ? 'Custom templates can be created + saved'
+          : 'Template preview mode',
+    ];
+  }
+
+  List<String> _aiDetails(PlanBenefits plan) {
+    return <String>[
+      plan.dailyChats == 0 ? '❌ No AI chats' : '${plan.dailyChats} chats per day',
+      plan.dailyChats == 0 ? '❌ No AI replies' : plan.replyStyle,
+      plan.voiceChatsPerDay == 0
+          ? '❌ No voice'
+          : '${plan.voiceChatsPerDay} voice chats per day',
+      plan.longTermMemory
+          ? '✅ Long-term memory enabled'
+          : '❌ No long-term memory',
+      plan.insights
+          ? '✅ Insights for templates and habits'
+          : '❌ No advanced insights',
+    ];
+  }
+
+  List<String> _templateDetails(PlanBenefits plan) {
+    final details = <String>[
+      plan.canCreateCustomTemplates
+          ? 'Can create and save custom templates'
+          : 'Can try + edit templates',
+      plan.coreTemplatesSaveForever
+          ? 'Core templates save forever and show in calendar'
+          : 'Core templates: preview only (data not saved permanently)',
+    ];
+    if (plan.templatesPreviewMode) {
+      details.insert(
+        1,
+        'Data disappears after 24 hours (24-hour preview mode)',
+      );
+    }
+    return details;
+  }
+
+  List<String> _journalDetails(PlanBenefits plan) {
+    return <String>[
+      plan.sharesPerDay < 0
+          ? 'Unlimited shares per day'
+          : plan.sharesPerDay == 0
+              ? 'Cannot share entries'
+              : 'Can share ${plan.sharesPerDay} ${plan.sharesPerDay == 1 ? 'entry' : 'entries'} per day',
+      'Can receive unlimited shares',
+      'Unlimited journal entries ✅',
+    ];
   }
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final isFull = _currentTier == 'full';
-    final isLight = _currentTier == 'light';
-    final isPending = _currentTier == 'pending' || _currentTier.isEmpty;
+    final ent = _controller.entitlement;
+    final currentPlan = SubscriptionPlanCatalog.fromRaw(ent?.tier ?? 'free');
 
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
-        title: const Text('Choose Your Plan'),
+        title: const Text('🟣 MB - Subscriptions'),
         centerTitle: true,
         leading: MbGlowBackButton(
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/home'),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
-              child: Column(
-                children: [
-                  _buildStatusBubble(cs, isFull, isPending),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    height: 520,
-                    child: PageView(
-                      controller: PageController(viewportFraction: 0.88),
-                      padEnds: true,
-                      children: [
-                        _buildPlanBubble(
-                          cs: cs,
-                          title: 'Light Support',
-                          price: '\$3.99/mo',
-                          features: [
-                            '1 chat/day',
-                            '10 msg/day',
-                            '3 journal entries/day',
-                            'Built-in templates only',
-                            '1 device',
-                            'No insights',
-                            'No data saved on trial',
-                          ],
-                          isGold: false,
-                          isCurrent: isLight,
-                          onTap: isFull ? () => _showDowngradeDialog() : null,
-                        ),
-                        _buildPlanBubble(
-                          cs: cs,
-                          title: 'Full Support',
-                          price: '\$9.99/mo',
-                          features: [
-                            'Unlimited chats',
-                            '100 msg/day',
-                            '10 journal entries/day',
-                            'Create templates',
-                            'Up to 5 devices',
-                            'Insights access',
-                            'Data is saved',
-                          ],
-                          isGold: true,
-                          isCurrent: isFull,
-                          onTap: !isFull ? () => _upgradeTier('full') : null,
-                        ),
-                      ],
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Column(
+            children: [
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    BillingToggle(
+                      value: _billingPeriod,
+                      onChanged: (next) => setState(() => _billingPeriod = next),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    CurrentPlanCard(
+                      plan: currentPlan,
+                      status: _statusLabel(),
+                      renewsAt: _dateLabel(ent?.renewsAt, fallback: 'Unknown'),
+                      expiresAt: _dateLabel(ent?.expiresAt, fallback: 'Unknown'),
+                    ),
+                    if (_friendlyStoreError != null) ...[
+                      const SizedBox(height: 12),
+                      _StoreErrorCard(
+                        message: _friendlyStoreError!,
+                        onRetry: _controller.busy ? null : _retryStore,
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    ...SubscriptionPlanCatalog.allPlans.map((plan) {
+                      final selectedPrice = _displayPrice(plan, _billingPeriod);
+                      final yearlySavings = _yearlySavings(plan);
+                      final offer = _offerForPlan(plan, _billingPeriod);
+                      final canPurchase =
+                          offer != null && _controller.productForId(offer.productId) != null;
+
+                      final cta = _billingPeriod == BillingPeriod.monthly
+                          ? 'Upgrade monthly'
+                          : 'Upgrade yearly (2 months free)';
+
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: TierPlanCard(
+                          plan: plan,
+                          price: selectedPrice,
+                          isCurrentTier: currentPlan.tier == plan.tier,
+                          isMostPopular: plan.tier == MbPlanTier.fullSupport,
+                          headlineBenefits: _headlineBenefits(plan),
+                          yearlySubtitle: (_billingPeriod == BillingPeriod.yearly &&
+                                  plan.tier != MbPlanTier.free)
+                              ? '2 months free${yearlySavings > 0 ? ' • Save ${_formatGbp(yearlySavings)}' : ''}'
+                              : null,
+                          ctaLabel: plan.tier == MbPlanTier.free ? null : cta,
+                          ctaEnabled: !_controller.busy && canPurchase,
+                          onCtaTap: (plan.tier == MbPlanTier.free || !canPurchase)
+                              ? null
+                              : () => _controller.purchaseProduct(offer.productId),
+                          aiDetails: _aiDetails(plan),
+                          deviceDetails: <String>[
+                            '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
+                          ],
+                          templateDetails: _templateDetails(plan),
+                          journalDetails: _journalDetails(plan),
+                          toolsDetails: plan.tools,
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+            border: Border(
+              top: BorderSide(
+                color: Theme.of(context).dividerColor.withValues(alpha: 0.2),
               ),
             ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _controller.busy ? null : _controller.restorePurchases,
+                  child: const Text('Restore purchases'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  onPressed: _controller.openManageSubscriptionPage,
+                  child: const Text('Manage subscription'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
+}
 
-  Widget _buildStatusBubble(ColorScheme cs, bool isGold, bool isPending) {
+class BillingToggle extends StatelessWidget {
+  const BillingToggle({
+    super.key,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final BillingPeriod value;
+  final ValueChanged<BillingPeriod> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      width: 120,
-      height: 120,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.72),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          Expanded(
+            child: _BillingOption(
+              label: 'Monthly',
+              selected: value == BillingPeriod.monthly,
+              onTap: () => onChanged(BillingPeriod.monthly),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _BillingOption(
+              label: 'Yearly • 2 months free',
+              selected: value == BillingPeriod.yearly,
+              onTap: () => onChanged(BillingPeriod.yearly),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BillingOption extends StatelessWidget {
+  const _BillingOption({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: selected ? scheme.primary.withValues(alpha: 0.16) : null,
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+}
+
+class CurrentPlanCard extends StatelessWidget {
+  const CurrentPlanCard({
+    super.key,
+    required this.plan,
+    required this.status,
+    required this.renewsAt,
+    required this.expiresAt,
+  });
+
+  final PlanBenefits plan;
+  final String status;
+  final String renewsAt;
+  final String expiresAt;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: cs.surface.withOpacity(0.7),
+        borderRadius: BorderRadius.circular(20),
+        color: scheme.surface,
+        border: Border.all(color: scheme.outline.withValues(alpha: 0.2)),
         boxShadow: [
           BoxShadow(
-            color: isGold
-                ? Colors.amber.withOpacity(0.4)
-                : cs.primary.withOpacity(0.3),
-            blurRadius: 20,
-            blurStyle: BlurStyle.outer,
+            color: scheme.shadow.withValues(alpha: 0.08),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
-        border: Border.all(
-          color: isPending
-              ? cs.outline.withOpacity(0.3)
-              : isGold
-                  ? Colors.amber.withOpacity(0.3)
-                  : cs.primary.withOpacity(0.2),
-          width: 2,
-        ),
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            isPending
-                ? Icons.lock_outline
-                : isGold
-                    ? Icons.workspace_premium
-                    : Icons.person_outline,
-            color: isPending
-                ? cs.onSurface.withOpacity(0.6)
-                : isGold
-                    ? Colors.amber.shade700
-                    : cs.primary,
-            size: 24,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            isPending ? 'Choose a Plan' : (isGold ? 'Full Support 🏆' : 'Light Support'),
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: cs.onSurface,
-            ),
-            maxLines: 2,
-          ),
-          Text(
-            'Current',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 8, color: cs.onSurface.withOpacity(0.6)),
-          ),
+          Text('Your plan', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 6),
+          Text('Current tier: ${plan.titleWithPrice}'),
+          Text('Status: $status'),
+          Text('Renews: $renewsAt'),
+          Text('Expires: $expiresAt'),
         ],
       ),
     );
   }
+}
 
-  Widget _buildPlanBubble({
-    required ColorScheme cs,
-    required String title,
-    required String price,
-    required List<String> features,
-    required bool isGold,
-    required bool isCurrent,
-    required VoidCallback? onTap,
-  }) {
-    final bubbleColor = isGold ? Colors.amber.shade50 : cs.surface;
-    final glowColor = isGold ? Colors.amber : cs.primary;
+class TierPlanCard extends StatelessWidget {
+  const TierPlanCard({
+    super.key,
+    required this.plan,
+    required this.price,
+    required this.isCurrentTier,
+    required this.isMostPopular,
+    required this.headlineBenefits,
+    required this.aiDetails,
+    required this.deviceDetails,
+    required this.templateDetails,
+    required this.journalDetails,
+    required this.toolsDetails,
+    this.yearlySubtitle,
+    this.ctaLabel,
+    this.ctaEnabled = false,
+    this.onCtaTap,
+  });
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final size = min(constraints.maxWidth, 340.0);
-        return Center(
-          child: GestureDetector(
-            onTap: isCurrent || _upgrading ? null : onTap,
-            child: SizedBox(
-              width: size,
-              height: size,
-              child: Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: bubbleColor.withOpacity(0.6),
-                  boxShadow: [
-                    BoxShadow(
-                      color: glowColor.withOpacity(0.4),
-                      blurRadius: 25,
-                      blurStyle: BlurStyle.outer,
-                    ),
-                  ],
-                  border: Border.all(
-                    color: isCurrent
-                        ? glowColor.withOpacity(0.6)
-                        : glowColor.withOpacity(0.2),
-                    width: isCurrent ? 3 : 2,
-                  ),
-                ),
-                child: ClipOval(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          isGold ? Icons.workspace_premium : Icons.star_outline,
-                          color: isGold ? Colors.amber.shade700 : cs.primary,
-                          size: 32,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          title,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: cs.onSurface,
-                          ),
-                        ),
-                        Text(
-                          price,
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            color: isGold ? Colors.amber.shade800 : cs.primary,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        ...features.map(
-                          (feature) => Padding(
-                            padding: const EdgeInsets.only(bottom: 4),
-                            child: Text(
-                              feature,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: cs.onSurface,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        if (!isCurrent)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color:
-                                  isGold ? Colors.amber.shade700 : cs.primary,
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: glowColor.withOpacity(0.3),
-                                  blurRadius: 8,
-                                ),
-                              ],
-                            ),
-                            child: _upgrading
-                                ? const SizedBox(
-                                    height: 12,
-                                    width: 12,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : Text(
-                                    isGold ? 'Upgrade 🏆' : 'Downgrade',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                          )
-                        else
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: cs.surfaceVariant,
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            child: Text(
-                              'Current',
-                              style: TextStyle(
-                                color: cs.onSurfaceVariant,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
+  final PlanBenefits plan;
+  final String price;
+  final bool isCurrentTier;
+  final bool isMostPopular;
+  final List<String> headlineBenefits;
+  final List<String> aiDetails;
+  final List<String> deviceDetails;
+  final List<String> templateDetails;
+  final List<String> journalDetails;
+  final List<String> toolsDetails;
+  final String? yearlySubtitle;
+  final String? ctaLabel;
+  final bool ctaEnabled;
+  final VoidCallback? onCtaTap;
+
+  Color _dotColor(MbPlanTier tier, ColorScheme scheme) {
+    switch (tier) {
+      case MbPlanTier.free:
+        return const Color(0xFF34C759);
+      case MbPlanTier.lightSupport:
+        return const Color(0xFF0A84FF);
+      case MbPlanTier.plusSupport:
+        return const Color(0xFF8E44AD);
+      case MbPlanTier.fullSupport:
+        return const Color(0xFFFFCC00);
+      case MbPlanTier.pending:
+        return scheme.outline;
+    }
   }
 
-  void _showDowngradeDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Downgrade to Light Support?'),
-        content: const Text(
-          'You\'ll go from 100 messages per day down to just 10. Are you sure?',
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isCurrentTier
+              ? scheme.primary.withValues(alpha: 0.4)
+              : scheme.outline.withValues(alpha: 0.2),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+        boxShadow: [
+          BoxShadow(
+            color: (isMostPopular ? scheme.primary : scheme.shadow)
+                .withValues(alpha: isMostPopular ? 0.14 : 0.08),
+            blurRadius: isMostPopular ? 22 : 14,
+            offset: const Offset(0, 8),
           ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _upgradeTier('standard');
-            },
-            child: const Text('Downgrade', style: TextStyle(color: Colors.red)),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 10,
+                height: 10,
+                margin: const EdgeInsets.only(top: 6),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _dotColor(plan.tier, scheme),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      plan.name,
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Text(
+                      '($price)',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    if (yearlySubtitle != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          yearlySubtitle!,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (isMostPopular)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: scheme.primary.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  child: const Text('Most popular'),
+                ),
+              if (isCurrentTier)
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: scheme.secondary.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                  child: const Text('Current tier'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...headlineBenefits.take(6).map((text) => BenefitRow(text: text)),
+          const SizedBox(height: 6),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              title: const Text('See full breakdown'),
+              children: [
+                _Section(title: 'AI', items: aiDetails),
+                _Section(title: 'Devices', items: deviceDetails),
+                _Section(title: 'Templates', items: templateDetails),
+                _Section(title: 'Journaling', items: journalDetails),
+                _Section(title: 'Tools Included', items: toolsDetails),
+              ],
+            ),
+          ),
+          if (ctaLabel != null) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: ctaEnabled ? onCtaTap : null,
+                child: Text(ctaLabel!),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class BenefitRow extends StatelessWidget {
+  const BenefitRow({super.key, required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('• '),
+          Expanded(child: Text(text)),
+        ],
+      ),
+    );
+  }
+}
+
+class _Section extends StatelessWidget {
+  const _Section({required this.title, required this.items});
+
+  final String title;
+  final List<String> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          ...items.map((item) => BenefitRow(text: item)),
+        ],
+      ),
+    );
+  }
+}
+
+class _StoreErrorCard extends StatelessWidget {
+  const _StoreErrorCard({
+    required this.message,
+    this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.error.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.wifi_off_outlined, color: scheme.error),
+          const SizedBox(width: 10),
+          Expanded(child: Text(message)),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            onPressed: onRetry,
+            child: const Text('Retry'),
           ),
         ],
       ),

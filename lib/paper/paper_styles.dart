@@ -78,7 +78,7 @@ final paperStyles = <PaperStyle>[
     mutedText: Color(0xFF5D7286),
     accent: Color(0xFFFF4FB7),
   ),
-//Aqua blue
+  //Aqua blue
   const PaperStyle(
     id: 'Aqua_blue',
     name: 'Aqua Blue',
@@ -109,7 +109,7 @@ final paperStyles = <PaperStyle>[
     border: Color(0xFF2A3145),
     text: Color.fromARGB(255, 196, 196, 206),
     mutedText: Color(0xFFA2AACB),
-    accent: Color.fromARGB(255, 15, 31, 177),
+    accent: Color.fromARGB(255, 5, 80, 255),
   ),
 
   // Dark Orange
@@ -160,10 +160,12 @@ final paperStyles = <PaperStyle>[
 ];
 
 PaperStyle styleById(String? id) {
-  if (id == null) return paperStyles.firstWhere(
-        (s) => s.id == 'baby_blue',
-        orElse: () => paperStyles.first,
-      );
+  if (id == null) {
+    return paperStyles.firstWhere(
+      (s) => s.id == 'baby_blue',
+      orElse: () => paperStyles.first,
+    );
+  }
   return paperStyles.firstWhere(
     (s) => s.id == id,
     orElse: () => paperStyles.first,

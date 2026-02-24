@@ -36,40 +36,40 @@ class QuietGuideScreen extends StatelessWidget {
                 ?.copyWith(color: scheme.onSurface.withOpacity(0.6)),
           ),
           const SizedBox(height: 16),
-          _GuideItem(
+          const _GuideItem(
             title: 'Templates',
             text: 'Swipe a template to hide it.',
           ),
-          _GuideItem(
+          const _GuideItem(
             title: 'Templates',
             text: 'Use the + button to add your own.',
           ),
-          _GuideItem(
+          const _GuideItem(
             title: 'Log tables',
             text: 'Tap a date to edit. Hold a row to delete.',
           ),
-          _GuideItem(
+          const _GuideItem(
             title: 'Log tables',
             text:
                 'For a clearer view, turn off portrait lock and rotate your phone.',
           ),
-          _GuideItem(
+          const _GuideItem(
             title: 'Journal',
             text: 'Search to filter. Tap an entry to open.',
           ),
-          _GuideItem(
+          const _GuideItem(
             title: 'Chat',
             text: 'Open the menu to find past chats.',
           ),
-          _GuideItem(
+          const _GuideItem(
             title: 'Brain fog',
             text: 'Long press to pop. Tap to edit. Drag to move.',
           ),
-          _GuideItem(
+          const _GuideItem(
             title: 'Pomodoro',
             text: 'Start when you are ready. Rest is part of it.',
           ),
-          _GuideItem(
+          const _GuideItem(
             title: 'Insights',
             text: 'Scroll gently. Insights unfold at your pace.',
           ),

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
@@ -7,28 +9,49 @@ import 'package:flutter/cupertino.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:mind_buddy/common/log_table_controls.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:mind_buddy/common/month_navigator.dart';
+import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:mind_buddy/common/input_sanitizer.dart';
+import 'package:mind_buddy/guides/guide_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-class LogTableScreen extends StatefulWidget {
+final logTableMonthProvider = StateProvider.family<DateTime, String>((
+  ref,
+  key,
+) {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, 1);
+});
+
+class LogTableScreen extends ConsumerStatefulWidget {
   const LogTableScreen({
     super.key,
     required this.templateId,
     required this.templateKey,
     required this.dayId,
+    this.readOnly = false,
   });
 
   final String templateId;
   final String templateKey;
   final String dayId;
+  final bool readOnly;
 
   @override
-  State<LogTableScreen> createState() => _LogTableScreenState();
+  ConsumerState<LogTableScreen> createState() => _LogTableScreenState();
 }
 
-class _LogTableScreenState extends State<LogTableScreen> {
+class _LogTableScreenState extends ConsumerState<LogTableScreen> {
   bool _sortAscending = false;
+  String _sortLabel = 'Newest first';
+  bool _showTotals = true;
   final SupabaseClient supabase = Supabase.instance.client;
   bool loading = true;
   bool _isPending = false;
+  bool _isCoreTemplate = true;
+  SubscriptionInfo? _planInfo;
   int _localIdCounter = -1;
 
   List<Map<String, dynamic>> fields = [];
@@ -36,6 +59,9 @@ class _LogTableScreenState extends State<LogTableScreen> {
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
+  final GlobalKey _logTableContainerKey = GlobalKey();
+  final GlobalKey _dateCellKey = GlobalKey();
+  final GlobalKey _logRowItemKey = GlobalKey();
 
   String _getTableName() {
     final key = widget.templateKey.toLowerCase();
@@ -90,27 +116,100 @@ class _LogTableScreenState extends State<LogTableScreen> {
     }
   }
 
+  bool _enforceUniqueDailyLog(String tableName) {
+    return tableName == 'mood_logs' || tableName == 'menstrual_logs';
+  }
+
+  String _dayKey(DateTime date) => toYyyyMmDd(date);
+
+  Future<Map<String, dynamic>?> _findExistingDailyLog({
+    required String tableName,
+    required String userId,
+    required String dayKey,
+    dynamic excludeId,
+  }) async {
+    final byDay = await supabase
+        .from(tableName)
+        .select('id, day')
+        .eq('user_id', userId)
+        .eq('day', dayKey)
+        .limit(1);
+    if ((byDay as List).isNotEmpty) {
+      final row = Map<String, dynamic>.from(byDay.first);
+      if (excludeId == null || row['id'] != excludeId) return row;
+    }
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
     _load();
     _searchController.addListener(() {
-      if (mounted)
+      if (mounted) {
         setState(() => _searchQuery = _searchController.text.toLowerCase());
+      }
     });
   }
 
   @override
   void dispose() {
+    GuideManager.dismissActiveGuideForPage('logTable');
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _showGuideIfNeeded({bool force = false}) async {
+    final steps = <GuideStep>[
+      GuideStep(
+        key: _logTableContainerKey,
+        title: 'Want the bigger picture?',
+        body:
+            'Rotate your phone or scroll inside the log box to see the full table.',
+        align: GuideAlign.bottom,
+      ),
+      if (entries.isNotEmpty)
+        GuideStep(
+          key: _dateCellKey,
+          title: 'Need to adjust something?',
+          body: 'Tap the date to edit that entry.',
+          align: GuideAlign.bottom,
+        ),
+      if (entries.isNotEmpty)
+        GuideStep(
+          key: _logRowItemKey,
+          title: 'Ready to let it go?',
+          body: 'Press and hold a row to delete it.',
+          align: GuideAlign.top,
+        ),
+    ];
+    await GuideManager.showGuideIfNeeded(
+      context: context,
+      pageId: 'logTable',
+      force: force,
+      steps: steps,
+      requireAllTargetsVisible: true,
+    );
+  }
+
+  void _scheduleGuideAutoStart() {
+    if (!mounted || loading) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || loading) return;
+      Future<void>.delayed(const Duration(milliseconds: 24), () {
+        if (!mounted || loading) return;
+        _showGuideIfNeeded();
+      });
+    });
   }
 
   Future<void> _load() async {
     if (!mounted) return;
     setState(() => loading = true);
     final info = await SubscriptionLimits.fetchForCurrentUser();
+    _planInfo = info;
     _isPending = info.isPending;
+    _isCoreTemplate = await _loadTemplateCoreFlag();
 
     // 1) Always load fields first
     try {
@@ -131,6 +230,16 @@ class _LogTableScreenState extends State<LogTableScreen> {
     // 2) Then try load entries (can fail without breaking the dialog)
     if (_isPending) {
       if (mounted) setState(() => entries = []);
+    } else if (_isPreviewMode) {
+      final user = supabase.auth.currentUser;
+      if (user != null) {
+        final preview = await _loadPreviewEntries(user.id);
+        if (mounted) {
+          setState(() => entries = preview);
+        }
+      } else if (mounted) {
+        setState(() => entries = []);
+      }
     } else {
       try {
         final currentTable = _getTableName();
@@ -142,6 +251,11 @@ class _LogTableScreenState extends State<LogTableScreen> {
 
         if (mounted) {
           setState(() => entries = List<Map<String, dynamic>>.from(e));
+          if (currentTable == 'book_logs') {
+            for (final row in entries) {
+              debugPrint('BOOK_LOG ROW: $row');
+            }
+          }
         }
       } catch (err) {
         debugPrint("Entries load error: $err");
@@ -149,25 +263,46 @@ class _LogTableScreenState extends State<LogTableScreen> {
       }
     }
 
-    if (mounted) setState(() => loading = false);
+    if (mounted) {
+      setState(() => loading = false);
+      _scheduleGuideAutoStart();
+    }
   }
 
   List<Map<String, dynamic>> get _filteredEntries {
-    if (_searchQuery.isEmpty) return entries;
-    return entries.where((entry) {
-      // Safely check if day exists
-      // final dateStr = entry['day']?.toString() ?? '';
-      final dateMatch = _fmtEntryDate(entry).contains(_searchQuery);
+    final selectedMonth = ref.watch(logTableMonthProvider(widget.templateKey));
+    final monthStart = DateTime(selectedMonth.year, selectedMonth.month, 1);
+    final monthEnd = DateTime(selectedMonth.year, selectedMonth.month + 1, 1);
 
-      final contentMatch = entry.values.any((val) {
-        if (val == null) return false;
-        return val.toString().toLowerCase().contains(_searchQuery);
-      });
-      return dateMatch || contentMatch;
+    final monthFiltered = entries.where((entry) {
+      final day = _parseEntryDay(entry);
+      return !day.isBefore(monthStart) && day.isBefore(monthEnd);
     }).toList();
+
+    final source = _searchQuery.isEmpty
+        ? List<Map<String, dynamic>>.from(monthFiltered)
+        : monthFiltered.where((entry) {
+            // Safely check if day exists
+            // final dateStr = entry['day']?.toString() ?? '';
+            final dateMatch = _fmtEntryDate(entry).contains(_searchQuery);
+
+            final contentMatch = entry.values.any((val) {
+              if (val == null) return false;
+              return val.toString().toLowerCase().contains(_searchQuery);
+            });
+            return dateMatch || contentMatch;
+          }).toList();
+
+    source.sort((a, b) {
+      final ad = _parseEntryDay(a);
+      final bd = _parseEntryDay(b);
+      return _sortAscending ? ad.compareTo(bd) : bd.compareTo(ad);
+    });
+    return source;
   }
 
   Future<void> _addEntry() async {
+    if (widget.readOnly) return;
     final result = await showDialog<_NewEntryResult>(
       context: context,
       builder: (_) => _NewEntryDialog(
@@ -196,22 +331,95 @@ class _LogTableScreenState extends State<LogTableScreen> {
       return;
     }
 
-    try {
-      await supabase.from(_getTableName()).insert({
-        'user_id': supabase.auth.currentUser!.id,
+    if (_isPreviewMode) {
+      final localEntry = {
+        'id': _localIdCounter--,
         'day': result.day.toIso8601String().substring(0, 10),
+        '_preview_saved_at': DateTime.now().toIso8601String(),
         ...result.data,
-      });
+      };
+      if (mounted) {
+        setState(() {
+          entries = [localEntry, ...entries];
+        });
+      }
+      final user = supabase.auth.currentUser;
+      if (user != null) {
+        await _savePreviewEntries(user.id);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Saved in 24-hour preview mode. This template data disappears after 24 hours.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    try {
+      final tableName = _getTableName();
+      final userId = supabase.auth.currentUser!.id;
+      final dayKey = _dayKey(result.day);
+      final payload = <String, dynamic>{
+        'user_id': userId,
+        'day': dayKey,
+        ...result.data,
+      };
+
+      if (_enforceUniqueDailyLog(tableName)) {
+        final existing = await _findExistingDailyLog(
+          tableName: tableName,
+          userId: userId,
+          dayKey: dayKey,
+        );
+        if (existing != null) {
+          final existingId = existing['id'];
+          if (existingId != null) {
+            await supabase
+                .from(tableName)
+                .update({...payload, 'user_id': userId})
+                .eq('id', existingId);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'You’ve already logged today — updated your existing entry instead.',
+                  ),
+                ),
+              );
+            }
+            _load();
+            return;
+          }
+        }
+      }
+
+      await supabase.from(tableName).insert(payload);
       _load();
+    } on PostgrestException catch (e) {
+      if (mounted) {
+        final isUniqueViolation = e.code == '23505';
+        final message = isUniqueViolation
+            ? 'You’ve already logged today — edit your existing entry instead.'
+            : 'Save error: ${e.message}';
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Save error: $e')));
+      }
     }
   }
 
   Future<void> _editEntry(Map<String, dynamic> entry) async {
+    if (widget.readOnly) return;
     final result = await showDialog<_NewEntryResult>(
       context: context,
       builder: (_) => _NewEntryDialog(
@@ -250,24 +458,91 @@ class _LogTableScreenState extends State<LogTableScreen> {
       return;
     }
 
+    if (_isPreviewMode) {
+      final id = entry['id'];
+      final updated = {
+        ...entry,
+        'day': result.day.toIso8601String().substring(0, 10),
+        '_preview_saved_at': DateTime.now().toIso8601String(),
+        ...result.data,
+      };
+      if (mounted) {
+        setState(() {
+          final idx = entries.indexWhere((e) => e['id'] == id);
+          if (idx != -1) {
+            final copy = List<Map<String, dynamic>>.from(entries);
+            copy[idx] = updated;
+            entries = copy;
+          }
+        });
+      }
+      final user = supabase.auth.currentUser;
+      if (user != null) {
+        await _savePreviewEntries(user.id);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Updated in 24-hour preview mode. This template data disappears after 24 hours.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
     try {
+      final tableName = _getTableName();
+      final userId = supabase.auth.currentUser!.id;
+      final newDayKey = _dayKey(result.day);
+      if (_enforceUniqueDailyLog(tableName)) {
+        final conflict = await _findExistingDailyLog(
+          tableName: tableName,
+          userId: userId,
+          dayKey: newDayKey,
+          excludeId: entry['id'],
+        );
+        if (conflict != null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'A log already exists for that day. Edit the existing entry instead.',
+                ),
+              ),
+            );
+          }
+          return;
+        }
+      }
+
       await supabase
-          .from(_getTableName())
-          .update({
-            'day': result.day.toIso8601String().substring(0, 10),
-            ...result.data,
-          })
+          .from(tableName)
+          .update({'day': newDayKey, ...result.data})
           .eq('id', entry['id']);
       _load();
+    } on PostgrestException catch (err) {
+      if (mounted) {
+        final isUniqueViolation = err.code == '23505';
+        final message = isUniqueViolation
+            ? 'A log already exists for that day. Edit the existing entry instead.'
+            : 'Update error: ${err.message}';
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
     } catch (err) {
-      if (mounted)
+      if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Update error: $err')));
+      }
     }
   }
 
   Future<void> _confirmDelete(Map<String, dynamic> entry) async {
+    if (widget.readOnly) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -293,8 +568,7 @@ class _LogTableScreenState extends State<LogTableScreen> {
       if (_isPending) {
         if (mounted) {
           setState(() {
-            entries =
-                entries.where((e) => e['id'] != entry['id']).toList();
+            entries = entries.where((e) => e['id'] != entry['id']).toList();
           });
           await SubscriptionLimits.showTrialUpgradeDialog(
             context,
@@ -303,14 +577,98 @@ class _LogTableScreenState extends State<LogTableScreen> {
         }
         return;
       }
-      await supabase.from(_getTableName()).delete().eq('id', entry['id']);
-      _load();
+      if (_isPreviewMode) {
+        if (mounted) {
+          setState(() {
+            entries = entries.where((e) => e['id'] != entry['id']).toList();
+          });
+        }
+        final user = supabase.auth.currentUser;
+        if (user != null) {
+          await _savePreviewEntries(user.id);
+        }
+      } else {
+        await supabase.from(_getTableName()).delete().eq('id', entry['id']);
+        _load();
+      }
     }
+  }
+
+  bool get _isPreviewMode {
+    final info = _planInfo;
+    if (info == null) return false;
+    if (info.isFree) return true;
+    if (info.isLight && !_isCoreTemplate) return true;
+    return false;
+  }
+
+  String _previewStorageKey(String userId) {
+    return 'template_preview_entries:$userId:${widget.templateId}';
+  }
+
+  Future<bool> _loadTemplateCoreFlag() async {
+    try {
+      final row = await supabase
+          .from('log_templates_v2')
+          .select('user_id')
+          .eq('id', widget.templateId)
+          .maybeSingle();
+      return row == null || row['user_id'] == null;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadPreviewEntries(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_previewStorageKey(userId));
+    if (raw == null || raw.isEmpty) return <Map<String, dynamic>>[];
+    try {
+      final now = DateTime.now();
+      final cutoff = now.subtract(const Duration(hours: 24));
+      final decoded = (jsonDecode(raw) as List)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      final filtered = decoded.where((entry) {
+        final savedAtRaw = (entry['_preview_saved_at'] ?? '').toString();
+        final savedAt = DateTime.tryParse(savedAtRaw);
+        if (savedAt == null) return false;
+        return savedAt.isAfter(cutoff);
+      }).toList();
+      if (filtered.length != decoded.length) {
+        await prefs.setString(_previewStorageKey(userId), jsonEncode(filtered));
+      }
+      return filtered;
+    } catch (_) {
+      await prefs.remove(_previewStorageKey(userId));
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<void> _savePreviewEntries(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final now = DateTime.now();
+    final cutoff = now.subtract(const Duration(hours: 24));
+    final filtered = entries.where((entry) {
+      final savedAtRaw = (entry['_preview_saved_at'] ?? '').toString();
+      final savedAt = DateTime.tryParse(savedAtRaw);
+      if (savedAt == null) return false;
+      return savedAt.isAfter(cutoff);
+    }).toList();
+    await prefs.setString(_previewStorageKey(userId), jsonEncode(filtered));
   }
 
   String _fmtEntryDate(Map<String, dynamic> e) {
     final d = DateTime.tryParse(e['day']?.toString() ?? '');
     return d == null ? '' : '${d.day}/${d.month}/${d.year}';
+  }
+
+  DateTime _parseEntryDay(Map<String, dynamic> e) {
+    final raw = e['day']?.toString();
+    if (raw == null || raw.isEmpty) {
+      return DateTime.fromMillisecondsSinceEpoch(0);
+    }
+    return DateTime.tryParse(raw) ?? DateTime.fromMillisecondsSinceEpoch(0);
   }
 
   String _formatValue(String fieldType, dynamic v) {
@@ -326,6 +684,165 @@ class _LogTableScreenState extends State<LogTableScreen> {
     return v.toString();
   }
 
+  String _currencyCode(String raw) {
+    final match = RegExp(r'[A-Z]{3}').firstMatch(raw);
+    if (match != null) return match.group(0)!;
+    return raw.trim();
+  }
+
+  String _currencySymbol(String raw) {
+    if (raw.contains('£')) return '£';
+    if (raw.contains('\$')) return '\$';
+    if (raw.contains('€')) return '€';
+    final code = _currencyCode(raw);
+    switch (code) {
+      case 'GBP':
+        return '£';
+      case 'USD':
+        return '\$';
+      case 'EUR':
+        return '€';
+      case 'AED':
+        return 'AED';
+      case 'SAR':
+        return 'SAR';
+      case 'JPY':
+        return '¥';
+      default:
+        return code;
+    }
+  }
+
+  String formatMoney(dynamic amount, String currencyRaw) {
+    final numVal = (amount is num)
+        ? amount
+        : (double.tryParse(amount?.toString() ?? '') ?? 0);
+    final symbol = _currencySymbol(currencyRaw);
+    final formatted = numVal.toStringAsFixed(2);
+    if (symbol.length <= 2 ||
+        symbol == '\$' ||
+        symbol == '£' ||
+        symbol == '€') {
+      return '$symbol$formatted';
+    }
+    return '$symbol $formatted';
+  }
+
+  Map<String, double> _sumByCurrency(
+    List<Map<String, dynamic>> data,
+    DateTime start,
+    DateTime end,
+  ) {
+    final sums = <String, double>{};
+    for (final e in data) {
+      final day = _parseEntryDay(e);
+      if (day.isBefore(start) || !day.isBefore(end)) continue;
+
+      String? currencyRaw;
+      dynamic amount;
+      if (widget.templateKey == 'expenses') {
+        currencyRaw = e['currency']?.toString();
+        amount = e['cost'];
+      } else if (widget.templateKey == 'income') {
+        currencyRaw = e['currency']?.toString();
+        amount = e['amount'];
+      } else if (widget.templateKey == 'bills') {
+        currencyRaw = e['currency']?.toString();
+        amount = e['amount'];
+      }
+
+      if (currencyRaw == null || currencyRaw.isEmpty) continue;
+      final code = _currencyCode(currencyRaw);
+      final numVal = (amount is num)
+          ? amount.toDouble()
+          : (double.tryParse(amount?.toString() ?? '') ?? 0);
+      sums[code] = (sums[code] ?? 0) + numVal;
+    }
+    return sums;
+  }
+
+  Widget _buildTotalsCard(List<Map<String, dynamic>> data) {
+    final selectedMonth = ref.watch(logTableMonthProvider(widget.templateKey));
+    final monthStart = DateTime(selectedMonth.year, selectedMonth.month, 1);
+    final monthEnd = DateTime(selectedMonth.year, selectedMonth.month + 1, 1);
+    final yearStart = DateTime(selectedMonth.year, 1, 1);
+    final yearEnd = DateTime(selectedMonth.year + 1, 1, 1);
+
+    final monthSums = _sumByCurrency(data, monthStart, monthEnd);
+    final yearSums = _sumByCurrency(data, yearStart, yearEnd);
+
+    final cs = Theme.of(context).colorScheme;
+    String renderLine(Map<String, double> sums) {
+      if (sums.isEmpty) return '—';
+      return sums.entries
+          .map((e) {
+            final symbol = _currencySymbol(e.key);
+            final formatted = e.value.toStringAsFixed(2);
+            if (symbol.length <= 2 ||
+                symbol == '\$' ||
+                symbol == '£' ||
+                symbol == '€') {
+              return '$symbol$formatted';
+            }
+            return '$symbol $formatted';
+          })
+          .join(' • ');
+    }
+
+    return _GlowPanel(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6.0, horizontal: 6.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Totals',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                TextButton(
+                  onPressed: () {
+                    setState(() => _showTotals = !_showTotals);
+                  },
+                  child: Text(_showTotals ? 'Hide' : 'Show'),
+                ),
+              ],
+            ),
+            if (_showTotals) ...[
+              Text(
+                'This month',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurface.withOpacity(0.7),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                renderLine(monthSums),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'This year',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurface.withOpacity(0.7),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                renderLine(yearSums),
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MbScaffold(
@@ -338,12 +855,41 @@ class _LogTableScreenState extends State<LogTableScreen> {
               ? Navigator.pop(context)
               : context.go('/home'),
         ),
+        actions: [
+          MbGlowIconButton(
+            icon: Icons.help_outline,
+            onPressed: () => _showGuideIfNeeded(force: true),
+          ),
+          MbGlowIconButton(
+            icon: Icons.calendar_month,
+            onPressed: () async {
+              final current = ref.read(
+                logTableMonthProvider(widget.templateKey),
+              );
+              final picked = await showMonthYearPicker(
+                context: context,
+                initial: current,
+              );
+              if (picked != null) {
+                ref
+                    .read(logTableMonthProvider(widget.templateKey).notifier)
+                    .state = DateTime(
+                  picked.year,
+                  picked.month,
+                  1,
+                );
+              }
+            },
+          ),
+        ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: loading ? null : _addEntry,
-        label: const Text('Add Log'),
-        icon: const Icon(Icons.add),
-      ),
+      floatingActionButton: widget.readOnly
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: loading ? null : _addEntry,
+              label: const Text('Add Log'),
+              icon: const Icon(Icons.add),
+            ),
       body: SafeArea(
         bottom: true,
         child: Column(
@@ -361,7 +907,9 @@ class _LogTableScreenState extends State<LogTableScreen> {
                   Icon(
                     Icons.phone_iphone,
                     size: 16,
-                    color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withOpacity(0.5),
                   ),
                   const SizedBox(width: 8),
                   Transform.rotate(
@@ -369,7 +917,9 @@ class _LogTableScreenState extends State<LogTableScreen> {
                     child: Icon(
                       Icons.phone_iphone,
                       size: 16,
-                      color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.primary.withOpacity(0.5),
                     ),
                   ),
                 ],
@@ -385,37 +935,96 @@ class _LogTableScreenState extends State<LogTableScreen> {
                     Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16.0,
+                        vertical: 6.0,
+                      ),
+                      child: MonthNavigator(
+                        selectedMonth: ref.watch(
+                          logTableMonthProvider(widget.templateKey),
+                        ),
+                        onPrev: () {
+                          final cur = ref.read(
+                            logTableMonthProvider(widget.templateKey),
+                          );
+                          ref
+                              .read(
+                                logTableMonthProvider(
+                                  widget.templateKey,
+                                ).notifier,
+                              )
+                              .state = DateTime(
+                            cur.year,
+                            cur.month - 1,
+                            1,
+                          );
+                        },
+                        onNext: () {
+                          final cur = ref.read(
+                            logTableMonthProvider(widget.templateKey),
+                          );
+                          final next = DateTime(cur.year, cur.month + 1, 1);
+                          final now = DateTime.now();
+                          final max = DateTime(now.year, now.month, 1);
+                          if (next.isAfter(max)) return;
+                          ref
+                                  .read(
+                                    logTableMonthProvider(
+                                      widget.templateKey,
+                                    ).notifier,
+                                  )
+                                  .state =
+                              next;
+                        },
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16.0,
                         vertical: 8.0,
                       ),
-                      child: _GlowPanel(
-                        child: TextField(
-                          controller: _searchController,
-                          decoration: InputDecoration(
-                            hintText: "Search logs...",
-                            prefixIcon: const Icon(Icons.search),
-                            suffixIcon: _searchQuery.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(Icons.clear),
-                                    onPressed: () => _searchController.clear(),
-                                  )
-                                : null,
-                            border: InputBorder.none,
-                          ),
-                        ),
+                      child: LogTableControls(
+                        searchController: _searchController,
+                        onClearSearch: () => _searchController.clear(),
+                        sortLabel: _sortLabel,
+                        onChangeSort: (val) {
+                          setState(() {
+                            _sortLabel = val;
+                            _sortAscending = val == 'Oldest first';
+                          });
+                        },
                       ),
                     ),
                     Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: _GlowPanel(
-                          child: _StickyLogTable(
-                            entries: _filteredEntries,
-                            tableFields: fields,
-                            fmtEntryDate: _fmtEntryDate,
-                            formatValue: _formatValue,
-                            onEdit: _editEntry,
-                            onDelete: _confirmDelete,
-                          ),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.only(
+                          left: 16,
+                          right: 16,
+                          bottom: 96,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _GlowPanel(
+                              child: _StickyLogTable(
+                                entries: _filteredEntries,
+                                tableFields: fields,
+                                fmtEntryDate: _fmtEntryDate,
+                                formatValue: _formatValue,
+                                formatMoney: formatMoney,
+                                onEdit: _editEntry,
+                                onDelete: _confirmDelete,
+                                tableContainerKey: _logTableContainerKey,
+                                dateCellKey: _dateCellKey,
+                                logRowItemKey: _logRowItemKey,
+                              ),
+                            ),
+                            if (widget.templateKey == 'expenses' ||
+                                widget.templateKey == 'income' ||
+                                widget.templateKey == 'bills')
+                              Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: _buildTotalsCard(_filteredEntries),
+                              ),
+                          ],
                         ),
                       ),
                     ),
@@ -441,53 +1050,78 @@ class _StickyLogTable extends StatelessWidget {
     required this.tableFields,
     required this.fmtEntryDate,
     required this.formatValue,
+    required this.formatMoney,
     required this.onEdit,
     required this.onDelete,
+    this.tableContainerKey,
+    this.dateCellKey,
+    this.logRowItemKey,
   });
 
   // ✅ ADD THIS METHOD HERE (after constructor, before _buildColumns)
   String _detectTemplate(Map<String, dynamic> entry) {
-    if (entry.containsKey('currency') && entry.containsKey('is_paid'))
+    if (entry.containsKey('currency') && entry.containsKey('is_paid')) {
       return 'bills';
-    if (entry.containsKey('book_title') || entry.containsKey('author'))
+    }
+    if (entry.containsKey('book_title') || entry.containsKey('author')) {
       return 'books';
-    if (entry.containsKey('flow') && entry.containsKey('symptoms'))
+    }
+    if (entry.containsKey('flow') && entry.containsKey('symptoms')) {
       return 'cycle';
-    if (entry.containsKey('cost') && entry.containsKey('category'))
+    }
+    if (entry.containsKey('cost') && entry.containsKey('category')) {
       return 'expenses';
-    if (entry.containsKey('duration_hours') && entry.containsKey('feeling'))
+    }
+    if (entry.containsKey('duration_hours') && entry.containsKey('feeling')) {
       return 'fast';
+    }
     if (entry.containsKey('goal_title')) return 'goals';
-    if (entry.containsKey('source') && !entry.containsKey('currency'))
+    if (entry.containsKey('source') && !entry.containsKey('currency')) {
       return 'income';
-    if (entry.containsKey('duration_minutes') && entry.containsKey('technique'))
+    }
+    if (entry.containsKey('duration_minutes') &&
+        entry.containsKey('technique')) {
       return 'meditation';
-    if (entry.containsKey('feeling') && entry.containsKey('intensity'))
+    }
+    if (entry.containsKey('feeling') && entry.containsKey('intensity')) {
       return 'mood';
+    }
     if (entry.containsKey('movie_title')) return 'movies';
-    if (entry.containsKey('place_name') && entry.containsKey('location'))
+    if (entry.containsKey('place_name') && entry.containsKey('location')) {
       return 'places';
+    }
     if (entry.containsKey('restaurant_name') &&
-        entry.containsKey('cuisine_type'))
+        entry.containsKey('cuisine_type')) {
       return 'restaurants';
-    if (entry.containsKey('routine_type') && entry.containsKey('products'))
+    }
+    if (entry.containsKey('routine_type') && entry.containsKey('products')) {
       return 'skin_care';
-    if (entry.containsKey('hours_slept') && entry.containsKey('quality'))
+    }
+    if (entry.containsKey('hours_slept') && entry.containsKey('quality')) {
       return 'sleep';
-    if (entry.containsKey('person_event') && entry.containsKey('activity_type'))
+    }
+    if (entry.containsKey('person_event') &&
+        entry.containsKey('activity_type')) {
       return 'social';
-    if (entry.containsKey('subject') && entry.containsKey('focus_rating'))
+    }
+    if (entry.containsKey('subject') && entry.containsKey('focus_rating')) {
       return 'study';
-    if (entry.containsKey('task_name') && entry.containsKey('is_done'))
+    }
+    if (entry.containsKey('task_name') && entry.containsKey('is_done')) {
       return 'tasks';
-    if (entry.containsKey('title') && entry.containsKey('thoughts'))
+    }
+    if (entry.containsKey('title') && entry.containsKey('thoughts')) {
       return 'tv_log';
-    if (entry.containsKey('amount') && entry.containsKey('unit'))
+    }
+    if (entry.containsKey('amount') && entry.containsKey('unit')) {
       return 'water';
-    if (entry.containsKey('item_name') && !entry.containsKey('source'))
+    }
+    if (entry.containsKey('item_name') && !entry.containsKey('source')) {
       return 'wishlist';
-    if (entry.containsKey('exercise') && entry.containsKey('sets'))
+    }
+    if (entry.containsKey('exercise') && entry.containsKey('sets')) {
       return 'workout';
+    }
     return 'other';
   }
 
@@ -880,7 +1514,11 @@ class _StickyLogTable extends StatelessWidget {
         DataCell(Text(entry['name']?.toString() ?? '-')),
         DataCell(Text(entry['category']?.toString() ?? '-')),
         DataCell(Text(entry['currency']?.toString() ?? '-')),
-        DataCell(Text('${entry['amount'] ?? ''} ${entry['currency'] ?? ''}')),
+        DataCell(
+          Text(
+            formatMoney(entry['amount'], entry['currency']?.toString() ?? ''),
+          ),
+        ),
         DataCell(Text(formatValue('bool', entry['is_paid']))),
         DataCell(Text(entry['notes']?.toString() ?? '-')),
       ];
@@ -896,7 +1534,20 @@ class _StickyLogTable extends StatelessWidget {
           ),
           onTap: () => onEdit(entry),
         ),
-        DataCell(Text(entry['book_title']?.toString() ?? '-')),
+        DataCell(
+          Text(
+            (entry['book_title'] ?? entry['title'] ?? entry['book'] ?? '')
+                    .toString()
+                    .trim()
+                    .isEmpty
+                ? '-'
+                : (entry['book_title'] ??
+                          entry['title'] ??
+                          entry['book'] ??
+                          '-')
+                      .toString(),
+          ),
+        ),
         DataCell(Text(entry['author']?.toString() ?? '-')),
         DataCell(Text(entry['category']?.toString() ?? '-')),
         DataCell(Text(entry['current_page']?.toString() ?? '-')),
@@ -941,7 +1592,9 @@ class _StickyLogTable extends StatelessWidget {
         ), // Item/Service is stored in notes
         DataCell(Text(entry['category']?.toString() ?? '-')),
         DataCell(Text(entry['currency']?.toString() ?? '-')),
-        DataCell(Text('${entry['cost'] ?? ''}')),
+        DataCell(
+          Text(formatMoney(entry['cost'], entry['currency']?.toString() ?? '')),
+        ),
         DataCell(Text(entry['status']?.toString() ?? '-')),
         DataCell(Text(entry['notes']?.toString() ?? '-')),
       ];
@@ -993,7 +1646,11 @@ class _StickyLogTable extends StatelessWidget {
           onTap: () => onEdit(entry),
         ),
         DataCell(Text(entry['source']?.toString() ?? '-')),
-        DataCell(Text(entry['amount']?.toString() ?? '-')),
+        DataCell(
+          Text(
+            formatMoney(entry['amount'], entry['currency']?.toString() ?? ''),
+          ),
+        ),
         DataCell(Text(entry['category']?.toString() ?? '-')),
         DataCell(Text(entry['status']?.toString() ?? '-')),
         DataCell(Text(entry['currency']?.toString() ?? '-')),
@@ -1234,8 +1891,10 @@ class _StickyLogTable extends StatelessWidget {
         DataCell(Text(entry['currency']?.toString() ?? '-')),
         DataCell(
           Text(
-            '${entry['price'] ?? entry['estimated_price'] ?? ''} ${entry['currency'] ?? ''}'
-                .trim(),
+            formatMoney(
+              entry['price'] ?? entry['estimated_price'],
+              entry['currency']?.toString() ?? '',
+            ),
           ),
         ),
         DataCell(Text(formatValue('rating', entry['priority']))),
@@ -1313,22 +1972,28 @@ class _StickyLogTable extends StatelessWidget {
   final List<Map<String, dynamic>> tableFields;
   final String Function(Map<String, dynamic>) fmtEntryDate;
   final String Function(String, dynamic) formatValue;
+  final String Function(dynamic, String) formatMoney;
   final Function(Map<String, dynamic>) onEdit;
   final Function(Map<String, dynamic>) onDelete;
+  final GlobalKey? tableContainerKey;
+  final GlobalKey? dateCellKey;
+  final GlobalKey? logRowItemKey;
   final ScrollController _scrollController = ScrollController();
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (entries.isEmpty)
+    if (entries.isEmpty) {
       return const Center(child: Text("No matching logs found."));
+    }
 
     // ✅ Detect template ONCE for all rows
     final template = _detectTemplate(entries.first);
 
     return Container(
+      key: tableContainerKey,
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceVariant.withOpacity(0.2),
+        color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.2),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: theme.colorScheme.outlineVariant.withOpacity(0.5),
@@ -1349,17 +2014,38 @@ class _StickyLogTable extends StatelessWidget {
                 child: DataTable(
                   horizontalMargin: 24,
                   columnSpacing: 36,
-                  headingRowColor: MaterialStateProperty.all(
-                    theme.colorScheme.surfaceVariant.withOpacity(0.4),
+                  headingRowColor: WidgetStateProperty.all(
+                    theme.colorScheme.surfaceContainerHighest.withOpacity(0.4),
                   ),
                   columns: _buildColumns(),
-                  rows: entries.map((entry) {
+                  rows: entries.asMap().entries.map((rowEntry) {
+                    final rowIndex = rowEntry.key;
+                    final entry = rowEntry.value;
+                    final cells = _buildCellsForTemplate(template, entry);
+                    if (rowIndex == 0 &&
+                        cells.isNotEmpty &&
+                        dateCellKey != null) {
+                      final first = cells.first;
+                      cells[0] = DataCell(
+                        KeyedSubtree(
+                          key: logRowItemKey,
+                          child: KeyedSubtree(
+                            key: dateCellKey,
+                            child: first.child,
+                          ),
+                        ),
+                        placeholder: first.placeholder,
+                        showEditIcon: first.showEditIcon,
+                        onTap: first.onTap,
+                        onDoubleTap: first.onDoubleTap,
+                        onLongPress: first.onLongPress,
+                        onTapCancel: first.onTapCancel,
+                        onTapDown: first.onTapDown,
+                      );
+                    }
                     return DataRow(
                       onLongPress: () => onDelete(entry),
-                      cells: _buildCellsForTemplate(
-                        template,
-                        entry,
-                      ),
+                      cells: cells,
                     );
                   }).toList(),
                 ),
@@ -1422,6 +2108,8 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
   DateTime day = DateTime.now(); // ✅ default, no LateInitializationError
   final Map<String, TextEditingController> controllers = {};
   final Map<String, dynamic> values = {};
+  double _computedHoursSlept = 0.0;
+  String _sleepDurationLabel = '—';
   Duration _durationFromMinutes(dynamic v) {
     final mins = (v is num)
         ? v.toDouble()
@@ -1444,41 +2132,49 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
 
     await showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (_) {
-        return SizedBox(
-          height: 260,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Cancel'),
+        final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+        final maxHeight = MediaQuery.of(context).size.height * 0.52;
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomInset),
+            child: SizedBox(
+              height: maxHeight.clamp(240.0, 360.0),
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
                     ),
-                    TextButton(
-                      onPressed: () {
-                        setState(() => values[key] = temp);
-                        Navigator.pop(context);
-                      },
-                      child: const Text('Done'),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setState(() => values[key] = temp);
+                            Navigator.pop(context);
+                          },
+                          child: const Text('Done'),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                  Expanded(
+                    child: CupertinoTimerPicker(
+                      mode: CupertinoTimerPickerMode.ms,
+                      initialTimerDuration: initial,
+                      onTimerDurationChanged: (d) => temp = d,
+                    ),
+                  ),
+                ],
               ),
-              Expanded(
-                child: CupertinoTimerPicker(
-                  mode: CupertinoTimerPickerMode.ms,
-                  initialTimerDuration: initial,
-                  onTimerDurationChanged: (d) => temp = d,
-                ),
-              ),
-            ],
+            ),
           ),
         );
       },
@@ -1584,6 +2280,12 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         );
       }
     }
+
+    if (widget.templateKey.toLowerCase() == 'sleep') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _updateSleepDuration();
+      });
+    }
   }
 
   Future<void> _selectTime(String key) async {
@@ -1600,12 +2302,70 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           alwaysUse24HourFormat: true,
         );
       });
+      if (widget.templateKey.toLowerCase() == 'sleep' &&
+          (key == 'bedtime' || key == 'wake_up_time')) {
+        _updateSleepDuration();
+      }
     }
+  }
+
+  TimeOfDay? _parseTimeOfDay(String? text) {
+    if (text == null || text.trim().isEmpty) return null;
+    final parts = text.split(':');
+    if (parts.length != 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    return TimeOfDay(hour: h, minute: m);
+  }
+
+  void _updateSleepDuration() {
+    final bedText = controllers['bedtime']?.text;
+    final wakeText = controllers['wake_up_time']?.text;
+    final bed = _parseTimeOfDay(bedText);
+    final wake = _parseTimeOfDay(wakeText);
+    if (bed == null || wake == null) {
+      setState(() {
+        _computedHoursSlept = 0.0;
+        _sleepDurationLabel = '—';
+        values['hours_slept'] = 0.0;
+      });
+      return;
+    }
+
+    final base = DateTime(day.year, day.month, day.day);
+    final bedDt = DateTime(
+      base.year,
+      base.month,
+      base.day,
+      bed.hour,
+      bed.minute,
+    );
+    var wakeDt = DateTime(
+      base.year,
+      base.month,
+      base.day,
+      wake.hour,
+      wake.minute,
+    );
+    if (wakeDt.isBefore(bedDt)) {
+      wakeDt = wakeDt.add(const Duration(days: 1));
+    }
+    final diff = wakeDt.difference(bedDt);
+    final hours = diff.inMinutes / 60.0;
+    final h = diff.inHours;
+    final m = diff.inMinutes % 60;
+    setState(() {
+      _computedHoursSlept = hours;
+      _sleepDurationLabel = '${h}h ${m}m';
+      values['hours_slept'] = hours;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final textTheme = theme.textTheme;
     // final tKey = widget.templateKey.toLowerCase();
 
     List<Map<String, dynamic>> sortedFields = List.from(widget.fields);
@@ -1631,129 +2391,269 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         ),
       ),
       actions: [
-        FilledButton(
-          onPressed: () {
-            final data = Map<String, dynamic>.from(values);
-            controllers.forEach((k, c) => data[k] = c.text);
+        SafeArea(
+          top: false,
+          child: SizedBox(
+            width: double.infinity,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(48, 48),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 12,
+                    ),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    foregroundColor: theme.colorScheme.primary,
+                  ),
+                  child: Text(
+                    'Cancel',
+                    style: textTheme.labelLarge?.copyWith(
+                      color: theme.colorScheme.primary,
+                      decoration: TextDecoration.underline,
+                      decorationColor: theme.colorScheme.primary,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
+                    minimumSize: const Size(48, 48),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    textStyle: textTheme.labelLarge,
+                  ),
+                  onPressed: () {
+                    final data = Map<String, dynamic>.from(values);
+                    controllers.forEach((k, c) => data[k] = c.text);
 
-            if (data['duration_minutes'] is Duration) {
-              final d = data['duration_minutes'] as Duration;
-              data['duration_minutes'] = d.inSeconds / 60.0;
-            }
+                    if (data['duration_minutes'] is Duration) {
+                      final d = data['duration_minutes'] as Duration;
+                      data['duration_minutes'] = d.inSeconds / 60.0;
+                    }
 
-            // This prevents the "0.0" reset issue
-            if (controllers.containsKey('weight_kg')) {
-              final weightText = controllers['weight_kg']!.text;
-              data['weight_kg'] = (weightText.isEmpty)
-                  ? 0.0
-                  : (double.tryParse(weightText) ?? 0.0);
-            }
+                    // This prevents the "0.0" reset issue
+                    if (controllers.containsKey('weight_kg')) {
+                      final weightText = controllers['weight_kg']!.text;
+                      data['weight_kg'] = (weightText.isEmpty)
+                          ? 0.0
+                          : (double.tryParse(weightText) ?? 0.0);
+                    }
 
-            // 5. Template specific cleanup
-            final tKey = widget.templateKey.toLowerCase();
-            if (tKey == 'workout') {
-              if (data.containsKey('exercises')) {
-                data['exercise'] = data['exercises'];
-                data.remove('exercises');
-              }
-              data.remove('amount');
-              data.remove('cost');
-            }
+                    // 5. Template specific cleanup
+                    final tKey = widget.templateKey.toLowerCase();
+                    if (tKey == 'workout') {
+                      if (data.containsKey('exercises')) {
+                        data['exercise'] = data['exercises'];
+                        data.remove('exercises');
+                      }
+                      data.remove('amount');
+                      data.remove('cost');
+                    }
 
-            debugPrint("CHECK THIS IN CONSOLE: ${data['weight_kg']}");
+                    if (tKey == 'books') {
+                      final title = data['title']?.toString().trim();
+                      final bookTitle = data['book_title']?.toString().trim();
+                      if ((bookTitle == null || bookTitle.isEmpty) &&
+                          (title != null && title.isNotEmpty)) {
+                        data['book_title'] = title;
+                      }
+                    }
 
-            if (values.containsKey('currency'))
-              data['currency'] = values['currency'];
-            if (values.containsKey('unit')) data['unit'] = values['unit'];
+                    debugPrint("CHECK THIS IN CONSOLE: ${data['weight_kg']}");
 
-            if (data.containsKey('quality')) {
-              data['quality'] = (data['quality'] as num?)?.toInt() ?? 0;
-            }
+                    if (values.containsKey('currency')) {
+                      data['currency'] = values['currency'];
+                    }
+                    if (values.containsKey('unit')) {
+                      data['unit'] = values['unit'];
+                    }
 
-            if (data.containsKey('target_date') &&
-                data['target_date'].toString().isEmpty) {
-              data.remove('target_date');
-            }
+                    if (data.containsKey('quality')) {
+                      data['quality'] = (data['quality'] as num?)?.toInt() ?? 0;
+                    }
 
-            if (data.containsKey('hours_slept')) {
-              data['hours_slept'] =
-                  double.tryParse(data['hours_slept'].toString()) ?? 0.0;
-            }
+                    if (data.containsKey('target_date') &&
+                        data['target_date'].toString().isEmpty) {
+                      data.remove('target_date');
+                    }
 
-            final intKeys = [
-              'rating',
-              'quality',
-              'focus_rating',
-              'priority',
-              'intensity',
-              'severity',
-              'libido',
-              'energy_level',
-              'sets',
-              'reps',
-            ];
-            //
+                    if (data.containsKey('hours_slept')) {
+                      if (widget.templateKey.toLowerCase() == 'sleep') {
+                        data['hours_slept'] = _computedHoursSlept;
+                      } else {
+                        data['hours_slept'] =
+                            double.tryParse(data['hours_slept'].toString()) ??
+                            0.0;
+                      }
+                    }
 
-            for (final k in intKeys) {
-              if (data.containsKey(k)) {
-                final v = data[k];
-                data[k] = (v is num)
-                    ? v.toInt()
-                    : (num.tryParse(v.toString())?.toInt() ?? 0);
-              }
-            }
+                    final intKeys = [
+                      'rating',
+                      'quality',
+                      'focus_rating',
+                      'priority',
+                      'intensity',
+                      'severity',
+                      'libido',
+                      'energy_level',
+                      'sets',
+                      'reps',
+                      'current_page',
+                      'pages',
+                      'year',
+                    ];
+                    final invalidIntegerFields = <String>[];
 
-            for (final k in [
-              'amount',
-              'price',
-              'cost',
-              'estimated_price',
-              // 'weight',
-              'weight_kg',
-              'amount_ml',
-            ]) {
-              if (!data.containsKey(k)) continue;
-              final v = data[k];
-              data[k] = (v == null || v.toString().isEmpty)
-                  ? 0.0
-                  : (double.tryParse(v.toString()) ?? 0.0);
-            }
+                    for (final k in intKeys) {
+                      if (!data.containsKey(k)) continue;
+                      try {
+                        data[k] = parseNullableIntLike(data[k], fieldName: k);
+                      } on FormatException {
+                        invalidIntegerFields.add(k);
+                      }
+                    }
 
-            if (tKey == 'workout') {
-              if (data.containsKey('exercises')) {
-                data['exercise'] = data['exercises'];
-                data.remove('exercises');
-              }
-              data.remove('amount');
-              data.remove('cost');
-              data.remove('price');
-            }
+                    for (final key in data.keys.toList()) {
+                      if (!isDateComponentFieldName(key)) continue;
+                      try {
+                        data[key] = parseNullableIntLike(
+                          data[key],
+                          fieldName: key,
+                        );
+                      } on FormatException {
+                        invalidIntegerFields.add(key);
+                      }
+                    }
 
-            if (tKey == 'expenses') {
-              if (data.containsKey('amount') && !data.containsKey('cost')) {
-                data['cost'] = data['amount'];
-              }
-              data.remove('amount');
-              final v = data['cost'];
-              data['cost'] = (v == null || v.toString().trim().isEmpty)
-                  ? 0.0
-                  : (double.tryParse(v.toString()) ?? 0.0);
-            }
-            // Clean up target_date
-            if (data.containsKey('target_date') &&
-                (data['target_date'] == null ||
-                    data['target_date'].toString().isEmpty)) {
-              data.remove('target_date');
-            }
+                    if (invalidIntegerFields.isNotEmpty) {
+                      final badFields = invalidIntegerFields.toSet().join(', ');
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Invalid input for $badFields. Use whole numbers only.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
 
-            debugPrint(
-              "FINAL duration_minutes -> ${data['duration_minutes']} (${data['duration_minutes'].runtimeType})",
-            );
+                    // Cycle/Mood tables are strict about integer-typed auxiliary fields.
+                    // Coerce "0.0" -> 0 and block non-integer numeric inputs.
+                    if (tKey == 'cycle' || tKey == 'mood') {
+                      const skippedTextKeys = {
+                        'flow',
+                        'symptoms',
+                        'feeling',
+                        'mood',
+                        'notes',
+                        'note',
+                        'title',
+                      };
+                      final cycleMoodInvalid = <String>[];
+                      final numericLike = RegExp(r'^[-+]?\d+(\.\d+)?$');
 
-            debugPrint("SAVING (${widget.templateKey}): $data");
-            Navigator.pop(context, _NewEntryResult(day: day, data: data));
-          },
-          child: const Text('Save Entry'),
+                      for (final key in data.keys.toList()) {
+                        if (skippedTextKeys.contains(key)) continue;
+                        final raw = data[key];
+                        if (raw == null || raw is bool) continue;
+                        if (raw is List || raw is Map) continue;
+
+                        final text = raw.toString().trim();
+                        if (text.isEmpty) {
+                          data[key] = null;
+                          continue;
+                        }
+
+                        final looksNumeric =
+                            raw is num || numericLike.hasMatch(text);
+                        if (!looksNumeric) continue;
+
+                        try {
+                          data[key] = parseNullableIntLike(raw, fieldName: key);
+                        } on FormatException {
+                          cycleMoodInvalid.add(key);
+                        }
+                      }
+
+                      if (cycleMoodInvalid.isNotEmpty) {
+                        final bad = cycleMoodInvalid.toSet().join(', ');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Invalid integer value for: $bad. Use whole numbers only.',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+                    }
+
+                    for (final k in [
+                      'amount',
+                      'price',
+                      'cost',
+                      'estimated_price',
+                      // 'weight',
+                      'weight_kg',
+                      'amount_ml',
+                    ]) {
+                      if (!data.containsKey(k)) continue;
+                      final v = data[k];
+                      data[k] = (v == null || v.toString().isEmpty)
+                          ? 0.0
+                          : (double.tryParse(v.toString()) ?? 0.0);
+                    }
+
+                    if (tKey == 'workout') {
+                      if (data.containsKey('exercises')) {
+                        data['exercise'] = data['exercises'];
+                        data.remove('exercises');
+                      }
+                      data.remove('amount');
+                      data.remove('cost');
+                      data.remove('price');
+                    }
+
+                    if (tKey == 'expenses') {
+                      if (data.containsKey('amount') &&
+                          !data.containsKey('cost')) {
+                        data['cost'] = data['amount'];
+                      }
+                      data.remove('amount');
+                      final v = data['cost'];
+                      data['cost'] = (v == null || v.toString().trim().isEmpty)
+                          ? 0.0
+                          : (double.tryParse(v.toString()) ?? 0.0);
+                    }
+                    // Clean up target_date
+                    if (data.containsKey('target_date') &&
+                        (data['target_date'] == null ||
+                            data['target_date'].toString().isEmpty)) {
+                      data.remove('target_date');
+                    }
+
+                    debugPrint(
+                      "FINAL duration_minutes -> ${data['duration_minutes']} (${data['duration_minutes'].runtimeType})",
+                    );
+
+                    debugPrint("SAVING (${widget.templateKey}): $data");
+                    Navigator.pop(
+                      context,
+                      _NewEntryResult(day: day, data: data),
+                    );
+                  },
+                  child: const Text('Save Entry'),
+                ),
+              ],
+            ),
+          ),
         ),
       ],
     );
@@ -1845,9 +2745,11 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           key == 'products' ||
           key == 'skin_condition' ||
           key == 'people' ||
-          key == 'study_methods' ||
-          key == 'feeling' || // Added
-          key == 'mood');
+          key == 'study_methods');
+      final bool isMoodLike = key == 'feeling' || key == 'mood';
+      if (isMoodLike) {
+        isMulti = false;
+      }
 
       // SAFETY CHECK: If for some reason a controller got in here, convert to string
       final dynamic currentVal = values[key] is TextEditingController
@@ -1888,7 +2790,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                 )
               : DropdownButtonFormField<String>(
                   // 1. Check if options contains the value, otherwise force null
-                  value:
+                  initialValue:
                       (options.contains(currentVal.toString()) &&
                           currentVal.toString().isNotEmpty)
                       ? currentVal.toString()
@@ -1914,6 +2816,37 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     }
     // Handle Sliders (Hours Slept, Fasting Duration, Energy)
     // --- 3. Numeric Sliders & Ratings ---
+    if (key == 'hours_slept' && widget.templateKey.toLowerCase() == 'sleep') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _FieldLabel(label: f['label']),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: theme.colorScheme.outlineVariant),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_sleepDurationLabel, style: const TextStyle(fontSize: 16)),
+                Text(
+                  _computedHoursSlept == 0.0
+                      ? '—'
+                      : _computedHoursSlept.toStringAsFixed(2),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.6),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      );
+    }
     if ([
           'hours_slept',
           'duration_hours',
@@ -2202,7 +3135,6 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         'stretching 🧘',
         'swimming 🏊',
         'cycling 🚴',
-        'bike 🚴',
         'pilates 🤸',
         'gymnastics 🤸',
         'hiit ⚡',

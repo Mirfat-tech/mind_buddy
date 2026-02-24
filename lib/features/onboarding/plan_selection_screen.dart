@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/services/subscription_plan_catalog.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PlanSelectionScreen extends StatefulWidget {
   const PlanSelectionScreen({super.key});
@@ -13,7 +15,7 @@ class PlanSelectionScreen extends StatefulWidget {
 class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
   bool _busy = false;
 
-  Future<void> _setPlan(String tier) async {
+  Future<void> _setPlan(PlanBenefits plan) async {
     if (_busy) return;
     setState(() => _busy = true);
 
@@ -24,10 +26,19 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
     }
 
     try {
+      final dbTier = switch (plan.tier) {
+        MbPlanTier.free => 'free',
+        MbPlanTier.lightSupport => 'light',
+        MbPlanTier.plusSupport => 'plus',
+        MbPlanTier.fullSupport => 'full',
+        MbPlanTier.pending => 'pending',
+      };
       await Supabase.instance.client.from('profiles').upsert({
         'id': user.id,
-        'subscription_tier': tier,
+        'subscription_tier': dbTier,
       });
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('trial_banner_dismissed', true);
       if (!mounted) return;
       context.go('/home');
     } catch (e) {
@@ -45,7 +56,7 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
-        title: const Text('Choose your plan'),
+        title: const Text('🟣 MB - Subscriptions'),
         centerTitle: true,
       ),
       body: Padding(
@@ -54,32 +65,33 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Pick a plan to continue',
+              'Choose your BrainBubble mode',
               style: Theme.of(context).textTheme.titleLarge,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
-              'You can upgrade anytime from Settings.',
+              'You can change this later from Settings.',
               style: Theme.of(context).textTheme.bodyMedium,
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 24),
-            _PlanCard(
-              title: 'Light Support',
-              subtitle:
-                  '1 chat/day • 10 msgs/day • 3 journals/day • 1 device',
-              onTap: _busy ? null : () => _setPlan('light'),
+            const SizedBox(height: 20),
+            Expanded(
+              child: ListView.separated(
+                itemCount: SubscriptionPlanCatalog.allPlans.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 12),
+                itemBuilder: (context, index) {
+                  final plan = SubscriptionPlanCatalog.allPlans[index];
+                  return _PlanCard(
+                    title: plan.heading,
+                    subtitle:
+                        '${plan.dailyChats == 0 ? 'No AI chats' : '${plan.dailyChats} chats/day'} • ${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
+                    highlight: plan.tier == MbPlanTier.fullSupport,
+                    onTap: _busy ? null : () => _setPlan(plan),
+                  );
+                },
+              ),
             ),
-            const SizedBox(height: 12),
-            _PlanCard(
-              title: 'Full Support',
-              subtitle:
-                  'Unlimited chats • 100 msgs/day • 10 journals/day • 5 devices • Insights',
-              highlight: true,
-              onTap: _busy ? null : () => _setPlan('full'),
-            ),
-            const Spacer(),
             if (_busy)
               const Center(child: CircularProgressIndicator())
             else

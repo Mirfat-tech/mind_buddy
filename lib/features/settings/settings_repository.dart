@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'settings_model.dart';
+import '../../services/startup_user_data_service.dart';
 
 class SettingsRepository {
   SettingsRepository(this._supabase);
@@ -27,23 +28,33 @@ class SettingsRepository {
     final user = _supabase.auth.currentUser;
     if (user == null) return null;
 
-    final row = await _supabase
-        .from('user_settings')
-        .select('settings, updated_at')
-        .eq('user_id', user.id)
-        .maybeSingle();
+    try {
+      final bundle = await StartupUserDataService.instance.fetchCombinedForUser(
+        user.id,
+      );
+      if (bundle.failedTables.contains('user_settings')) {
+        throw Exception('user_settings fetch failed');
+      }
+      final row = bundle.settingsRow;
 
-    if (row == null) return null;
+      if (row == null) return null;
 
-    final rawSettings = row['settings'];
-    final updatedAt = row['updated_at']?.toString();
+      final rawSettings = row['settings'];
+      final updatedAt = row['updated_at']?.toString();
 
-    if (rawSettings is Map<String, dynamic>) {
-      return SettingsModel.fromJson(rawSettings, updatedAtOverride: updatedAt);
-    }
-    if (rawSettings is String && rawSettings.isNotEmpty) {
-      final jsonMap = jsonDecode(rawSettings) as Map<String, dynamic>;
-      return SettingsModel.fromJson(jsonMap, updatedAtOverride: updatedAt);
+      if (rawSettings is Map<String, dynamic>) {
+        return SettingsModel.fromJson(
+          rawSettings,
+          updatedAtOverride: updatedAt,
+        );
+      }
+      if (rawSettings is String && rawSettings.isNotEmpty) {
+        final jsonMap = jsonDecode(rawSettings) as Map<String, dynamic>;
+        return SettingsModel.fromJson(jsonMap, updatedAtOverride: updatedAt);
+      }
+    } catch (e) {
+      // Network failures must not crash app startup.
+      return null;
     }
     return null;
   }

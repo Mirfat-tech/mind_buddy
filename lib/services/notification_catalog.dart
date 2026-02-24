@@ -95,9 +95,9 @@ const List<NotificationCategory> notificationCategories = [
   ),
   NotificationCategory(
     id: 'soft_combo',
-    title: 'Mind Buddy',
+    title: 'MyBrainBubble',
     description: 'A gentle nudge, if you want it',
-    subtitle: 'Mind Buddy',
+    subtitle: 'MyBrainBubble',
     morningMessages: [
       'You do not have to carry today alone.',
       'A few minutes of honesty can change how the day settles.',

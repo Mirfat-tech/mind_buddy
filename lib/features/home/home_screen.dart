@@ -9,6 +9,7 @@ import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:mind_buddy/guides/guide_manager.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; // Fixes 'Supabase' error
 import 'package:intl/intl.dart'; // Fixes 'DateFormat' error
@@ -26,38 +27,80 @@ class HomeScreen extends ConsumerStatefulWidget {
 
 class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _checkedDevice = false;
+  final GlobalKey _themeSelectorButtonKey = GlobalKey();
+  final GlobalKey _insightsButtonKey = GlobalKey();
+  final GlobalKey _settingsButtonKey = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _enforceDeviceLimit();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      GuideManager.showGuideIfNeeded(
+        context: context,
+        pageId: 'home',
+        steps: [
+          GuideStep(
+            key: _themeSelectorButtonKey,
+            title: 'Feeling a different vibe today?',
+            body: 'Tap the theme bubble to shift your colours.',
+          ),
+          GuideStep(
+            key: _insightsButtonKey,
+            title: 'Curious what your brain’s been up to?',
+            body: 'Tap here to view insights, streaks and reflections.',
+          ),
+          GuideStep(
+            key: _settingsButtonKey,
+            title: 'Need to adjust your bubble?',
+            body: 'Open settings to customise your flow.',
+          ),
+        ],
+      );
+    });
   }
 
   Future<void> _enforceDeviceLimit() async {
     if (_checkedDevice) return;
     _checkedDevice = true;
 
-    final ok = await DeviceSessionService.recordSession();
-    if (!ok && mounted) {
-      await showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('Device limit reached'),
-          content: const Text(
-            'Light Support allows only 1 device. Upgrade to use more devices.',
+    final registration = await DeviceSessionService.registerDevice();
+    if (!mounted || registration.allowed) {
+      return;
+    }
+    if (registration.entitlementCheckFailed) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not verify your subscription right now. Signed in with temporary access.',
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('OK'),
-            ),
-          ],
         ),
       );
-      await Supabase.instance.client.auth.signOut();
-      if (!mounted) return;
-      context.go('/signin');
+      return;
     }
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Device limit reached'),
+        content: Text(registration.blockedMessage()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Close'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              if (mounted) context.go('/settings');
+            },
+            child: const Text('Manage devices'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    context.go('/settings');
   }
 
   Future<void> _openThemePicker(BuildContext context, WidgetRef ref) async {
@@ -100,26 +143,52 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return MbScaffold(
-      applyBackground: true, // ✅ Home background changes with theme
+      applyBackground: true,
       appBar: AppBar(
-        title: const Text('Mind Buddy'),
+        title: const Text('MyBrainBubble'),
         actions: [
-          // ✅ THEME PICKER
           MbGlowIconButton(
+            key: _themeSelectorButtonKey,
             icon: Icons.palette_outlined,
             onPressed: () => _openThemePicker(context, ref),
           ),
           MbGlowIconButton(
+            icon: Icons.help_outline,
+            onPressed: () => GuideManager.showGuideIfNeeded(
+              context: context,
+              pageId: 'home',
+              force: true,
+              steps: [
+                GuideStep(
+                  key: _themeSelectorButtonKey,
+                  title: 'Feeling a different vibe today?',
+                  body: 'Tap the theme bubble to shift your colours.',
+                ),
+                GuideStep(
+                  key: _insightsButtonKey,
+                  title: 'Curious what your brain’s been up to?',
+                  body: 'Tap here to view insights, streaks and reflections.',
+                ),
+                GuideStep(
+                  key: _settingsButtonKey,
+                  title: 'Need to adjust your bubble?',
+                  body: 'Open settings to customise your flow.',
+                ),
+              ],
+            ),
+          ),
+          MbGlowIconButton(
+            key: _settingsButtonKey,
             icon: Icons.settings_outlined,
             onPressed: () => context.go('/settings'),
           ),
         ],
       ),
-      body: const MbFloatingHintOverlay(
+      body: MbFloatingHintOverlay(
         hintKey: 'hint_home',
         text: 'Choose a bubble to begin. Everything starts small.',
         iconText: '✨',
-        child: _HomeBody(),
+        child: _HomeBody(insightsButtonKey: _insightsButtonKey),
       ),
     );
   }
@@ -174,10 +243,9 @@ class _HomeBubble extends StatelessWidget {
                   title,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        fontSize: 13,
-                        height: 1.15,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(fontSize: 13, height: 1.15),
                 ),
               ],
             ),
@@ -190,8 +258,8 @@ class _HomeBubble extends StatelessWidget {
 
 final _trialBannerControllerProvider =
     StateNotifierProvider<_TrialBannerController, bool>((ref) {
-  return _TrialBannerController();
-});
+      return _TrialBannerController();
+    });
 
 class _TrialBannerController extends StateNotifier<bool> {
   _TrialBannerController() : super(true) {
@@ -224,7 +292,9 @@ final _pendingTierProvider = FutureProvider<bool>((ref) async {
 });
 
 class _HomeBody extends ConsumerWidget {
-  const _HomeBody();
+  const _HomeBody({required this.insightsButtonKey});
+
+  final GlobalKey insightsButtonKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -240,7 +310,14 @@ class _HomeBody extends ConsumerWidget {
                   ref.watch(_trialBannerControllerProvider) && isPending;
               return showBanner
                   ? _TrialBanner(
-                      onUpgrade: () => context.go('/subscription'),
+                      onUpgrade: () {
+                        final user = Supabase.instance.client.auth.currentUser;
+                        if (user == null) {
+                          context.go('/signin?from=/subscription');
+                        } else {
+                          context.go('/subscription');
+                        }
+                      },
                       onSkip: () => ref
                           .read(_trialBannerControllerProvider.notifier)
                           .dismiss(),
@@ -274,6 +351,7 @@ class _HomeBody extends ConsumerWidget {
           ),
 
           IconButton(
+            key: insightsButtonKey,
             icon: Icon(
               Icons.insights,
               color: Theme.of(context).colorScheme.primary,
@@ -293,69 +371,65 @@ class _HomeBody extends ConsumerWidget {
                 title: 'Vent bubble',
                 icon: Icons.chat_bubble_outline,
                 onTap: () async {
-                    final supabase = Supabase.instance.client;
-                    final user = supabase.auth.currentUser;
+                  final supabase = Supabase.instance.client;
+                  final user = supabase.auth.currentUser;
 
-                      if (user == null) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('You are not logged in.'),
-                          ),
-                        );
-                        return;
-                      }
+                  if (user == null) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('You are not logged in.')),
+                    );
+                    return;
+                  }
 
-                      try {
-                        final info =
-                            await SubscriptionLimits.fetchForCurrentUser();
-                        if (info.isPending) {
-                          if (!context.mounted) return;
-                          await SubscriptionLimits.showTrialUpgradeDialog(
-                            context,
-                            onUpgrade: () => context.go('/subscription'),
-                          );
-                          return;
-                        }
-                        final dayId =
-                            DateFormat('yyyy-MM-dd').format(DateTime.now());
+                  try {
+                    final info = await SubscriptionLimits.fetchForCurrentUser();
+                    if (info.isPending) {
+                      if (!context.mounted) return;
+                      await SubscriptionLimits.showTrialUpgradeDialog(
+                        context,
+                        onUpgrade: () => context.go('/subscription'),
+                      );
+                      return;
+                    }
+                    final dayId = DateFormat(
+                      'yyyy-MM-dd',
+                    ).format(DateTime.now());
 
-                        // 1️⃣ Try to get today's existing chat
-                        final existing = await supabase
+                    // 1️⃣ Try to get today's existing chat
+                    final existing = await supabase
+                        .from('chats')
+                        .select('id, day_id')
+                        .eq('user_id', user.id)
+                        .eq('day_id', dayId)
+                        .eq('is_archived', false)
+                        .order('created_at', ascending: false)
+                        .limit(1)
+                        .maybeSingle();
+
+                    // 2️⃣ If none exists, create one
+                    final chat =
+                        existing ??
+                        await supabase
                             .from('chats')
+                            .insert({
+                              'user_id': user.id,
+                              'day_id': dayId,
+                              'is_archived': false,
+                              'title': null,
+                            })
                             .select('id, day_id')
-                            .eq('user_id', user.id)
-                            .eq('day_id', dayId)
-                            .eq('is_archived', false)
-                            .order('created_at', ascending: false)
-                            .limit(1)
-                            .maybeSingle();
+                            .single();
 
-                        // 2️⃣ If none exists, create one
-                        final chat =
-                            existing ??
-                            await supabase
-                                .from('chats')
-                                .insert({
-                                  'user_id': user.id,
-                                  'day_id': dayId,
-                                  'is_archived': false,
-                                  'title': null,
-                                })
-                                .select('id, day_id')
-                                .single();
+                    if (!context.mounted) return;
 
-                        if (!context.mounted) return;
-
-                        // 3️⃣ Navigate
-                        context.push('/chat/${chat['day_id']}/${chat['id']}');
-                      } catch (e) {
-                        if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('Could not open Vent bubble: $e'),
-                          ),
-                        );
-                      }
+                    // 3️⃣ Navigate
+                    context.push('/chat/${chat['day_id']}/${chat['id']}');
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Could not open Vent bubble: $e')),
+                    );
+                  }
                 },
               ),
               _HomeBubble(
@@ -370,7 +444,7 @@ class _HomeBody extends ConsumerWidget {
                 onTap: () => context.go('/journals'),
               ),
               _HomeBubble(
-                title: 'Pomodoro',
+                title: 'Pomodoro bubble',
                 icon: Icons.timer_outlined,
                 onTap: () => context.go('/pomodoro'),
               ),
@@ -434,23 +508,40 @@ class _TrialBanner extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.auto_awesome, color: scheme.primary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Trial mode: explore freely. Nothing is saved until you choose a plan.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.auto_awesome, color: scheme.primary),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'FREE MODE uses 24-hour preview mode for templates. Preview data disappears after 24 hours.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          TextButton(
-            onPressed: onSkip,
-            child: const Text('Skip for now'),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: onSkip,
+                  child: const Text('Skip for now'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton(
+                  onPressed: onUpgrade,
+                  child: const Text('View modes'),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 6),
-          FilledButton(onPressed: onUpgrade, child: const Text('Choose plan')),
         ],
       ),
     );

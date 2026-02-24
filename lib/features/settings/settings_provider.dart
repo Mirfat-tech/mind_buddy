@@ -6,32 +6,47 @@ import 'settings_model.dart';
 import 'settings_repository.dart';
 import '../../services/notification_service.dart';
 import '../../services/notification_catalog.dart';
+import '../../guides/guide_manager.dart';
+
+final initialSettingsProvider = Provider<SettingsModel?>((ref) => null);
 
 final settingsControllerProvider = ChangeNotifierProvider<SettingsController>((
   ref,
 ) {
   final supabase = Supabase.instance.client;
   final repo = SettingsRepository(supabase);
-  return SettingsController(repo);
+  final initial = ref.watch(initialSettingsProvider);
+  return SettingsController(repo, initialSettings: initial);
 });
 
 class SettingsController extends ChangeNotifier {
-  SettingsController(this._repo);
+  SettingsController(this._repo, {SettingsModel? initialSettings})
+    : _settings = initialSettings ?? SettingsModel.defaults(),
+      _loading = initialSettings == null;
 
   final SettingsRepository _repo;
 
-  SettingsModel _settings = SettingsModel.defaults();
-  bool _loading = true;
+  SettingsModel _settings;
+  bool _loading;
+  String? _loadError;
 
   SettingsModel get settings => _settings;
   bool get loading => _loading;
+  String? get loadError => _loadError;
 
   Future<void> init() async {
     _loading = true;
+    _loadError = null;
     notifyListeners();
 
-    SettingsModel? local = await _repo.loadLocal();
-    SettingsModel? remote = await _repo.fetchRemote();
+    SettingsModel? local;
+    SettingsModel? remote;
+    try {
+      local = await _repo.loadLocal();
+      remote = await _repo.fetchRemote();
+    } catch (_) {
+      _loadError = 'Unable to sync settings right now.';
+    }
 
     if (local != null) {
       _settings = local;
@@ -45,7 +60,9 @@ class SettingsController extends ChangeNotifier {
       await _repo.upsertRemote(local);
     }
 
-    await NotificationService.instance.rescheduleAll(_settings);
+    try {
+      await NotificationService.instance.rescheduleAll(_settings);
+    } catch (_) {}
 
     _loading = false;
     notifyListeners();
@@ -54,6 +71,8 @@ class SettingsController extends ChangeNotifier {
   Future<void> handleAuthChange() async {
     await init();
   }
+
+  Future<void> retryInit() async => init();
 
   Future<void> setTheme(String id) async {
     await update(settings.copyWith(themeId: id));
@@ -78,10 +97,7 @@ class SettingsController extends ChangeNotifier {
     required String time,
   }) async {
     await update(
-      settings.copyWith(
-        dailyCheckInEnabled: enabled,
-        dailyCheckInTime: time,
-      ),
+      settings.copyWith(dailyCheckInEnabled: enabled, dailyCheckInTime: time),
     );
   }
 
@@ -99,10 +115,7 @@ class SettingsController extends ChangeNotifier {
     );
   }
 
-  Future<void> setNotificationCategory(
-    String id,
-    bool enabled,
-  ) async {
+  Future<void> setNotificationCategory(String id, bool enabled) async {
     final next = Map<String, bool>.from(settings.notificationCategories);
     next[id] = enabled;
     await update(settings.copyWith(notificationCategories: next));
@@ -138,7 +151,16 @@ class SettingsController extends ChangeNotifier {
     await update(settings.copyWith(pomodoroAlertsEnabled: enabled));
   }
 
+  Future<void> setHapticsEnabled(bool enabled) async {
+    await update(settings.copyWith(hapticsEnabled: enabled));
+  }
+
+  Future<void> setSoundsEnabled(bool enabled) async {
+    await update(settings.copyWith(soundsEnabled: enabled));
+  }
+
   Future<void> setKeepInstructionsEnabled(bool enabled) async {
+    await GuideManager.setKeepInstructionsVisible(enabled);
     await update(settings.copyWith(keepInstructionsEnabled: enabled));
   }
 

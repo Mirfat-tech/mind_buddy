@@ -2,6 +2,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+final GlobalKey<ScaffoldMessengerState> globalMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+
 class MindBuddyApp extends StatelessWidget {
   const MindBuddyApp({super.key, required this.router});
   final GoRouter router;
@@ -10,7 +13,8 @@ class MindBuddyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp.router(
       debugShowCheckedModeBanner: false,
-      title: 'Mind Buddy',
+      title: 'MyBrainBubble',
+      scaffoldMessengerKey: globalMessengerKey,
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: Colors.transparent, // 👈 important

@@ -143,7 +143,7 @@ _EmbedPayload _parseEmbedPayload(String data) {
   try {
     final decoded = jsonDecode(data);
     if (decoded is Map) {
-      final map = Map<String, dynamic>.from(decoded as Map);
+      final map = Map<String, dynamic>.from(decoded);
       return _EmbedPayload(
         url: map['url']?.toString(),
         path: map['path']?.toString(),

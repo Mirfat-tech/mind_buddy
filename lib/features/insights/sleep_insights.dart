@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 
 // ============================================================================
 // DATA MODEL
@@ -152,6 +153,15 @@ class SleepInsights extends StatelessWidget {
   String _dateOnly(DateTime d) =>
       DateTime(d.year, d.month, d.day).toIso8601String().split('T').first;
 
+  DateTime? _parseLocalDay(dynamic raw) {
+    if (raw == null) return null;
+    final parsed = raw is DateTime
+        ? raw.toLocal()
+        : DateTime.tryParse(raw.toString())?.toLocal();
+    if (parsed == null) return null;
+    return DateTime(parsed.year, parsed.month, parsed.day);
+  }
+
   /// Safely converts dynamic value to double
   double _toDouble(dynamic v) {
     if (v == null) return 0;
@@ -196,23 +206,27 @@ class SleepInsights extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final firstDay = DateTime(selectedMonth.year, selectedMonth.month, 1);
-    final lastDay = DateTime(selectedMonth.year, selectedMonth.month + 1, 0);
+    final endExclusive = DateTime(
+      selectedMonth.year,
+      selectedMonth.month + 1,
+      1,
+    );
     final firstDayStr = _dateOnly(firstDay);
-    final lastDayStr = _dateOnly(lastDay);
+    final endExclusiveStr = _dateOnly(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: Supabase.instance.client
           .from('sleep_logs')
           .select('day, hours_slept')
           .gte('day', firstDayStr)
-          .lte('day', lastDayStr)
+          .lt('day', endExclusiveStr)
           .order('day', ascending: true)
           .limit(500),
       builder: (context, snapshot) {
         // Loading state
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return Padding(
-            padding: const EdgeInsets.all(12),
+          return const Padding(
+            padding: EdgeInsets.all(12),
             child: Center(child: CircularProgressIndicator()),
           );
         }
@@ -267,9 +281,33 @@ class SleepInsights extends StatelessWidget {
         // Group data by day
         final Map<String, SleepDayAgg> byDay = {};
         for (final r in rows) {
-          final day = (r['day'] ?? '').toString(); // YYYY-MM-DD
+          final localDay = _parseLocalDay(r['day']);
+          if (localDay == null) continue;
+          if (localDay.year != selectedMonth.year ||
+              localDay.month != selectedMonth.month) {
+            continue;
+          }
+          final day = _dateOnly(localDay);
           final hours = _toDouble(r['hours_slept']);
           byDay.putIfAbsent(day, () => SleepDayAgg(day: day)).add(hours);
+        }
+        if (kDebugMode) {
+          final sample = rows
+              .take(3)
+              .map((r) {
+                final raw = r['day'];
+                final local = _parseLocalDay(raw);
+                return 'raw=$raw local=$local';
+              })
+              .join(' | ');
+          final keys = byDay.keys.toList()..sort();
+          debugPrint(
+            '📅 [SleepInsights] month=${selectedMonth.year}-${selectedMonth.month.toString().padLeft(2, '0')} '
+            'start=$firstDayStr end(exclusive)=$endExclusiveStr tzOffset=${DateTime.now().timeZoneOffset}',
+          );
+          debugPrint('📅 [SleepInsights] rows=${rows.length}');
+          debugPrint('📅 [SleepInsights] sample=$sample');
+          debugPrint('📅 [SleepInsights] groupedDays=${keys.join(', ')}');
         }
 
         // Chart data: oldest -> newest
@@ -334,6 +372,14 @@ class SleepInsights extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Total this month: ${totalHours.toStringAsFixed(1)}h',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: scheme.onSurface.withOpacity(0.65),
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 18),
 
@@ -421,17 +467,93 @@ class _SleepChart extends StatelessWidget {
   Widget build(BuildContext context) {
     if (data.isEmpty) return const SizedBox.shrink();
 
-    final spots = data
-        .asMap()
-        .entries
-        .map((e) => FlSpot(e.key.toDouble(), e.value.averageHours))
-        .toList();
+    final Map<int, SleepDayAgg> byDayNumber = {};
+    int daysInMonth = 31;
+    for (final item in data) {
+      final parsed = DateTime.tryParse(item.day);
+      if (parsed == null) continue;
+      byDayNumber[parsed.day] = item;
+      daysInMonth = DateTime(parsed.year, parsed.month + 1, 0).day;
+    }
+    final spots =
+        byDayNumber.entries
+            .map(
+              (entry) => FlSpot(entry.key.toDouble(), entry.value.averageHours),
+            )
+            .toList()
+          ..sort((a, b) => a.x.compareTo(b.x));
+    final maxHours = spots.isEmpty
+        ? 8.0
+        : spots.map((e) => e.y).reduce((a, b) => a > b ? a : b);
+    final maxY = (maxHours + 1).clamp(8.0, 12.0);
 
     return LineChart(
       LineChartData(
+        minX: 1,
+        maxX: daysInMonth.toDouble(),
         minY: 0,
-        gridData: const FlGridData(show: false),
-        titlesData: const FlTitlesData(show: false),
+        maxY: maxY,
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          horizontalInterval: 2,
+          getDrawingHorizontalLine: (value) =>
+              FlLine(color: scheme.outline.withOpacity(0.15), strokeWidth: 1),
+        ),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 34,
+              interval: 2,
+              getTitlesWidget: (value, meta) {
+                if (value % 2 != 0) return const SizedBox.shrink();
+                return Text(
+                  '${value.toInt()}h',
+                  style: TextStyle(
+                    color: scheme.onSurfaceVariant.withOpacity(0.75),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                );
+              },
+            ),
+          ),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 32,
+              getTitlesWidget: (value, meta) {
+                final day = value.round();
+                if (day != 1 &&
+                    day != 8 &&
+                    day != 15 &&
+                    day != 22 &&
+                    day != 29) {
+                  return const SizedBox.shrink();
+                }
+                final week = ((day - 1) ~/ 7) + 1;
+                return Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Week $week',
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant.withOpacity(0.75),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
         borderData: FlBorderData(show: false),
         lineTouchData: LineTouchData(
           handleBuiltInTouches: true,
@@ -441,11 +563,11 @@ class _SleepChart extends StatelessWidget {
               horizontal: 10,
               vertical: 8,
             ),
-            tooltipBgColor: scheme.surfaceVariant,
+            tooltipBgColor: scheme.surfaceContainerHighest,
             getTooltipItems: (touchedSpots) {
               return touchedSpots.map((spot) {
-                final i = spot.x.toInt();
-                final day = (i >= 0 && i < data.length) ? data[i].day : '';
+                final dayNum = spot.x.round();
+                final day = byDayNumber[dayNum]?.day ?? '';
                 return LineTooltipItem(
                   '${_prettyShortDay(day)}\n${spot.y.toStringAsFixed(1)}h',
                   TextStyle(

@@ -1,12 +1,16 @@
 // lib/features/insights/insights_screen.dart
 
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:math' as math;
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:mind_buddy/features/insights/habit_completion_stats.dart';
+import 'package:mind_buddy/guides/guide_manager.dart';
 
 import 'sleep_insights.dart';
 
@@ -23,6 +27,14 @@ class _InsightsScreenState extends State<InsightsScreen> {
   int _refreshSeed = 0;
   bool _loading = false;
   String? _error;
+  final GlobalKey _insightsBackButtonKey = GlobalKey();
+  final GlobalKey _insightsMonthPrevChevronKey = GlobalKey();
+  final GlobalKey _insightsMonthNextChevronKey = GlobalKey();
+  final GlobalKey _insightsCategoryChipsRowKey = GlobalKey();
+  final GlobalKey _insightsBellButtonKey = GlobalKey();
+  final GlobalKey _insightsRefreshButtonKey = GlobalKey();
+  final GlobalKey _insightsFirstCardKey = GlobalKey();
+  bool _guideScheduledThisOpen = false;
 
   final Map<String, GlobalKey> _sectionKeys = {
     'Habits': GlobalKey(),
@@ -88,6 +100,63 @@ class _InsightsScreenState extends State<InsightsScreen> {
 
   String _monthName(int m) => _monthNames[m - 1];
 
+  Future<void> _showGuideIfNeeded({bool force = false}) async {
+    await GuideManager.showGuideIfNeeded(
+      context: context,
+      pageId: 'insights',
+      force: force,
+      requireAllTargetsVisible: true,
+      steps: [
+        GuideStep(
+          key: _insightsMonthPrevChevronKey,
+          title: 'Your monthly reflection',
+          body:
+              'Use the arrows to move between months and see your patterns over time.',
+          align: GuideAlign.bottom,
+        ),
+        GuideStep(
+          key: _insightsCategoryChipsRowKey,
+          title: 'Choose your bubble',
+          body:
+              'Tap a category (Habits, Sleep, Mood + more) to switch what you’re viewing.',
+          align: GuideAlign.bottom,
+        ),
+        GuideStep(
+          key: _insightsFirstCardKey,
+          title: 'Your stats, at a glance',
+          body:
+              'Each card shows your totals, trends, and consistency for this month.',
+          align: GuideAlign.top,
+        ),
+        GuideStep(
+          key: _insightsBellButtonKey,
+          title: 'Stay in the loop',
+          body:
+              'Tap the bell for reminders and updates linked to your insights.',
+          align: GuideAlign.bottom,
+        ),
+        GuideStep(
+          key: _insightsRefreshButtonKey,
+          title: 'Need a fresh view?',
+          body: 'Tap refresh to reload your latest data.',
+          align: GuideAlign.bottom,
+        ),
+      ],
+    );
+  }
+
+  void _scheduleGuideAutoStart() {
+    if (!mounted || _guideScheduledThisOpen) return;
+    _guideScheduledThisOpen = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Future<void>.delayed(const Duration(milliseconds: 24), () {
+        if (!mounted) return;
+        _showGuideIfNeeded();
+      });
+    });
+  }
+
   Widget _buildMonthPicker() {
     final scheme = Theme.of(context).colorScheme;
     return Container(
@@ -99,30 +168,44 @@ class _InsightsScreenState extends State<InsightsScreen> {
         ),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           IconButton(
+            key: _insightsMonthPrevChevronKey,
             onPressed: _prevMonth,
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             icon: const Icon(Icons.chevron_left),
           ),
-          Column(
-            children: [
-              Text(
-                '${_monthName(_month.month)} ${_month.year}',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
-              ),
-              Text(
-                'Monthly Report',
-                style: Theme.of(
-                  context,
-                ).textTheme.labelSmall?.copyWith(color: scheme.primary),
-              ),
-            ],
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${_monthName(_month.month)} ${_month.year}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Text(
+                  'Monthly Report',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: scheme.primary),
+                ),
+              ],
+            ),
           ),
           IconButton(
+            key: _insightsMonthNextChevronKey,
             onPressed: _nextMonth,
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             icon: const Icon(Icons.chevron_right),
           ),
         ],
@@ -138,11 +221,15 @@ class _InsightsScreenState extends State<InsightsScreen> {
         children: [
           Icon(icon, size: 20, color: scheme.primary.withOpacity(0.7)),
           const SizedBox(width: 8),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              letterSpacing: 0.5,
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
+              ),
             ),
           ),
         ],
@@ -152,6 +239,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
 
   @override
   void dispose() {
+    GuideManager.dismissActiveGuideForPage('insights');
     _mainScrollController.dispose();
     super.dispose();
   }
@@ -159,6 +247,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    _scheduleGuideAutoStart();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -167,195 +256,214 @@ class _InsightsScreenState extends State<InsightsScreen> {
         elevation: 0,
         title: const Text('Insights'),
         leading: MbGlowBackButton(
+          key: _insightsBackButtonKey,
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/home'),
         ),
         actions: [
           MbGlowIconButton(
+            icon: Icons.help_outline,
+            onPressed: () => _showGuideIfNeeded(force: true),
+          ),
+          MbGlowIconButton(
+            key: _insightsBellButtonKey,
             icon: Icons.notifications_outlined,
             onPressed: () => context.push('/settings/notifications'),
           ),
           MbGlowIconButton(
+            key: _insightsRefreshButtonKey,
             icon: Icons.refresh_outlined,
             onPressed: _loading ? null : _refresh,
           ),
         ],
       ),
-      body: MbFloatingHintOverlay(
-        hintKey: 'hint_insights',
-        text: 'You can scroll gently — insights unfold at your pace.',
-        iconText: '✨',
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                children: [
-                if (_error != null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                    child: _ErrorBox(message: _error!),
-                  ),
-                _buildMonthPicker(),
-                _buildCategoryNavigator(
-                  controller: _mainScrollController,
-                  scheme: scheme,
-                  sectionKeys: _sectionKeys,
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: SingleChildScrollView(
-                    controller: _mainScrollController,
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
+      body: SafeArea(
+        bottom: true,
+        child: MbFloatingHintOverlay(
+          hintKey: 'hint_insights',
+          text: 'You can scroll gently — insights unfold at your pace.',
+          iconText: '✨',
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                  children: [
+                    if (_error != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                        child: _ErrorBox(message: _error!),
+                      ),
+                    _buildMonthPicker(),
+                    _buildCategoryNavigator(
+                      key: _insightsCategoryChipsRowKey,
+                      controller: _mainScrollController,
+                      scheme: scheme,
+                      sectionKeys: _sectionKeys,
                     ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Container(
-                          key: _sectionKeys['Habits'],
-                          child: _sectionTitle(
-                            'Habit Tracker',
-                            Icons.check_circle_outline,
-                          ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        controller: _mainScrollController,
+                        physics: const BouncingScrollPhysics(),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 10,
                         ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: HabitStepLineChartContainer(
-                            selectedMonth: _month,
-                          ),
-                        ),
-                        const SizedBox(height: 32),
-                        Container(
-                          key: _sectionKeys['Sleep'],
-                          child: _sectionTitle(
-                            'Sleep Insights',
-                            Icons.bedtime_outlined,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: const SleepInsightsContainer(),
-                        ),
-                        const SizedBox(height: 32),
-                        Container(
-                          key: _sectionKeys['Mood'],
-                          child: _sectionTitle(
-                            'Mood Tracker',
-                            Icons.sentiment_satisfied,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: MoodInsights(selectedMonth: _month),
-                        ),
-                        const SizedBox(height: 32),
-                        Container(
-                          key: _sectionKeys['Meditation'],
-                          child: _sectionTitle(
-                            'Meditation',
-                            Icons.spa_outlined,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: MeditationInsights(selectedMonth: _month),
-                        ),
-                        const SizedBox(height: 32),
-                        Container(
-                          key: _sectionKeys['Finance'],
-                          child: _sectionTitle(
-                            'Finance Insights',
-                            Icons.payments_outlined,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: FinanceInsights(selectedMonth: _month),
-                        ),
-                        const SizedBox(height: 32),
-                        Container(
-                          key: _sectionKeys['Cycle'],
-                          child: _sectionTitle(
-                            'Cycle Insights',
-                            Icons.water_drop_outlined,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: CycleInsights(selectedMonth: _month),
-                        ),
-                        const SizedBox(height: 32),
-                        Container(
-                          key: _sectionKeys['Workout'],
-                          child: _sectionTitle(
-                            'Workout Calendar',
-                            Icons.fitness_center,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: WorkoutInsights(selectedMonth: _month),
-                        ),
-                        const SizedBox(height: 32),
-                        Container(
-                          key: _sectionKeys['Social'],
-                          child: _sectionTitle('Social Outings', Icons.people),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: SocialOutingsInsights(selectedMonth: _month),
-                        ),
-                        const SizedBox(height: 32),
-                        Container(
-                          key: _sectionKeys['Fasting'],
-                          child: _sectionTitle(
-                            'Fasting Tracker',
-                            Icons.access_time,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: FastingInsights(selectedMonth: _month),
-                        ),
-                        const SizedBox(height: 32),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Container(
+                              key: _sectionKeys['Habits'],
+                              child: _sectionTitle(
+                                'Habit Tracker',
+                                Icons.check_circle_outline,
+                              ),
+                            ),
+                            KeyedSubtree(
+                              key: _insightsFirstCardKey,
+                              child: _GlowingCard(
+                                scheme: scheme,
+                                child: HabitStepLineChartContainer(
+                                  selectedMonth: _month,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Sleep'],
+                              child: _sectionTitle(
+                                'Sleep Insights',
+                                Icons.bedtime_outlined,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: SleepInsights(selectedMonth: _month),
+                            ),
+                            const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Mood'],
+                              child: _sectionTitle(
+                                'Mood Tracker',
+                                Icons.sentiment_satisfied,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: MoodInsights(selectedMonth: _month),
+                            ),
+                            const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Meditation'],
+                              child: _sectionTitle(
+                                'Meditation',
+                                Icons.spa_outlined,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: MeditationInsights(selectedMonth: _month),
+                            ),
+                            const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Finance'],
+                              child: _sectionTitle(
+                                'Finance Insights',
+                                Icons.payments_outlined,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: FinanceInsights(selectedMonth: _month),
+                            ),
+                            const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Cycle'],
+                              child: _sectionTitle(
+                                'Cycle Insights',
+                                Icons.water_drop_outlined,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: CycleInsights(selectedMonth: _month),
+                            ),
+                            const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Workout'],
+                              child: _sectionTitle(
+                                'Workout Calendar',
+                                Icons.fitness_center,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: WorkoutInsights(selectedMonth: _month),
+                            ),
+                            const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Social'],
+                              child: _sectionTitle(
+                                'Social Outings',
+                                Icons.people,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: SocialOutingsInsights(
+                                selectedMonth: _month,
+                              ),
+                            ),
+                            const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Fasting'],
+                              child: _sectionTitle(
+                                'Fasting Tracker',
+                                Icons.access_time,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: FastingInsights(selectedMonth: _month),
+                            ),
+                            const SizedBox(height: 32),
 
-                        Container(
-                          key: _sectionKeys['Water'],
-                          child: _sectionTitle(
-                            'Water Intake',
-                            Icons.local_drink,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: WaterInsights(selectedMonth: _month),
-                        ),
-                        const SizedBox(height: 32),
+                            Container(
+                              key: _sectionKeys['Water'],
+                              child: _sectionTitle(
+                                'Water Intake',
+                                Icons.local_drink,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: WaterInsights(selectedMonth: _month),
+                            ),
+                            const SizedBox(height: 32),
 
-                        Container(
-                          key: _sectionKeys['Activities'],
-                          child: _sectionTitle(
-                            'Activity Trends',
-                            Icons.auto_graph,
-                          ),
-                        ),
-                        _GlowingCard(
-                          scheme: scheme,
-                          child: GenericActivityTrends(
-                            selectedMonth: _month,
-                            refreshSeed: _refreshSeed,
-                          ),
-                        ),
-                        const SizedBox(height: 100),
+                            Container(
+                              key: _sectionKeys['Activities'],
+                              child: _sectionTitle(
+                                'Activity Trends',
+                                Icons.auto_graph,
+                              ),
+                            ),
+                            _GlowingCard(
+                              scheme: scheme,
+                              child: GenericActivityTrends(
+                                selectedMonth: _month,
+                                refreshSeed: _refreshSeed,
+                              ),
+                            ),
+                            const SizedBox(height: 100),
 
-                        // const SizedBox(height: 32),
-                      ],
+                            // const SizedBox(height: 32),
+                          ],
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-                ],
-              ),
+        ),
       ),
     );
   }
@@ -390,6 +498,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
 
 // CATEGORY NAVIGATOR
 Widget _buildCategoryNavigator({
+  GlobalKey? key,
   required ScrollController controller,
   required ColorScheme scheme,
   required Map<String, GlobalKey> sectionKeys,
@@ -409,6 +518,7 @@ Widget _buildCategoryNavigator({
   ];
 
   return SizedBox(
+    key: key,
     height: 50,
     child: ListView.builder(
       scrollDirection: Axis.horizontal,
@@ -454,11 +564,8 @@ Widget _buildCategoryNavigator({
 
 // SHARED HELPERS
 DateTime _startOfMonth(DateTime month) => DateTime(month.year, month.month, 1);
-
-DateTime _endOfMonthInclusive(DateTime month) {
-  final startNext = DateTime(month.year, month.month + 1, 1);
-  return startNext.subtract(const Duration(days: 1));
-}
+DateTime _startOfNextMonth(DateTime month) =>
+    DateTime(month.year, month.month + 1, 1);
 
 int _daysInMonth(DateTime month) {
   final startNext = DateTime(month.year, month.month + 1, 1);
@@ -488,6 +595,61 @@ String _monthLabel(DateTime month) {
     'Dec',
   ];
   return '${names[month.month - 1]} ${month.year}';
+}
+
+DateTime? _parseAsLocalDate(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is DateTime) return raw.toLocal();
+  final parsed = DateTime.tryParse(raw.toString());
+  return parsed?.toLocal();
+}
+
+DateTime _toLocalDay(DateTime d) => DateTime(d.year, d.month, d.day);
+
+int? _dayInSelectedMonth(dynamic raw, DateTime selectedMonth) {
+  final parsed = _parseAsLocalDate(raw);
+  if (parsed == null) return null;
+  final day = _toLocalDay(parsed);
+  if (day.year != selectedMonth.year || day.month != selectedMonth.month) {
+    return null;
+  }
+  return day.day;
+}
+
+String? _dayKeyInSelectedMonth(dynamic raw, DateTime selectedMonth) {
+  final parsed = _parseAsLocalDate(raw);
+  if (parsed == null) return null;
+  final day = _toLocalDay(parsed);
+  if (day.year != selectedMonth.year || day.month != selectedMonth.month) {
+    return null;
+  }
+  return _ymd(day);
+}
+
+void _debugMonthQuery({
+  required String label,
+  required DateTime selectedMonth,
+  required DateTime start,
+  required DateTime endExclusive,
+  required List<Map<String, dynamic>> rows,
+  required dynamic Function(Map<String, dynamic>) rawTimestamp,
+  required Iterable<String> groupedDayKeys,
+}) {
+  if (!kDebugMode) return;
+  final sample = rows.take(3).map((row) {
+    final raw = rawTimestamp(row);
+    final local = _parseAsLocalDate(raw);
+    return 'raw=$raw local=$local';
+  }).toList();
+  final grouped = groupedDayKeys.toList()..sort();
+  debugPrint(
+    '📅 [$label] month=${_monthLabel(selectedMonth)} '
+    'start=${start.toIso8601String()} end(exclusive)=${endExclusive.toIso8601String()} '
+    'tzOffset=${DateTime.now().timeZoneOffset}',
+  );
+  debugPrint('📅 [$label] rows=${rows.length}');
+  debugPrint('📅 [$label] sample=${sample.join(' | ')}');
+  debugPrint('📅 [$label] groupedDays=${grouped.join(', ')}');
 }
 
 String _currency(num v) {
@@ -606,20 +768,26 @@ Widget _buildEmojiCalendarGrid({
                       width: 1,
                     ),
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      v.buildIcon(iconSize, scheme.onSurface),
-                      const SizedBox(height: 2),
-                      Text(
-                        '$dayNumber',
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurfaceVariant.withOpacity(0.6),
-                        ),
+                  child: Center(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          v.buildIcon(iconSize, scheme.onSurface),
+                          const SizedBox(height: 1),
+                          Text(
+                            '$dayNumber',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurfaceVariant.withOpacity(0.6),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               );
@@ -640,16 +808,11 @@ class HabitStepLineChartContainer extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return FutureBuilder<List<dynamic>>(
-      future: Supabase.instance.client
-          .from('user_habits')
-          .select('created_at')
-          .eq('is_active', true)
-          .gte('created_at', _startOfMonth(selectedMonth).toIso8601String())
-          .lte(
-            'created_at',
-            _endOfMonthInclusive(selectedMonth).toIso8601String(),
-          ),
+    return FutureBuilder<HabitMonthlyCompletionStats>(
+      future: fetchHabitMonthlyCompletionStats(
+        supabase: Supabase.instance.client,
+        selectedMonth: selectedMonth,
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -662,27 +825,41 @@ class HabitStepLineChartContainer extends StatelessWidget {
           return _ErrorBox(message: snapshot.error.toString());
         }
 
-        final rows = (snapshot.data ?? const <dynamic>[])
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-
-        final Map<int, int> counts = {};
-        for (final r in rows) {
-          final raw = r['created_at'];
-          final parsed = raw is DateTime
-              ? raw
-              : DateTime.tryParse(raw.toString());
-          if (parsed == null) continue;
-          final day = parsed.day;
-          counts[day] = (counts[day] ?? 0) + 1;
-        }
-
+        final stats =
+            snapshot.data ??
+            HabitMonthlyCompletionStats(
+              monthStart: _startOfMonth(selectedMonth),
+              monthEndExclusive: _startOfNextMonth(selectedMonth),
+              totalCompletedInstances: 0,
+              uniqueDaysWithCompletion: 0,
+              activeHabitsCount: 0,
+              doneTodayCount: 0,
+              completionsByDay: const {},
+            );
+        final counts = stats.completionsByDay;
         final days = _daysInMonth(selectedMonth);
-        final daysWithHabits = counts.isEmpty ? 0 : counts.length;
-        final totalHabits = rows.length;
+        final daysWithHabits = stats.uniqueDaysWithCompletion;
+        final totalHabits = stats.totalCompletedInstances;
         final avgPerDay = daysWithHabits > 0
             ? (totalHabits / daysWithHabits).toStringAsFixed(1)
             : '0';
+        if (kDebugMode) {
+          final dayKeys =
+              counts.keys
+                  .map(
+                    (day) => _ymd(
+                      DateTime(selectedMonth.year, selectedMonth.month, day),
+                    ),
+                  )
+                  .toList()
+                ..sort();
+          debugPrint(
+            '📅 [HabitsInsights] start=${_ymd(stats.monthStart)} end(exclusive)=${_ymd(stats.monthEndExclusive)} '
+            'completionRows=${stats.totalCompletedInstances} uniqueDays=${stats.uniqueDaysWithCompletion} '
+            'totalUsed=$totalHabits avgUsed=$avgPerDay',
+          );
+          debugPrint('📅 [HabitsInsights] groupedDays=${dayKeys.join(', ')}');
+        }
 
         return Container(
           decoration: BoxDecoration(
@@ -695,45 +872,58 @@ class HabitStepLineChartContainer extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Habits Tracked',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurfaceVariant.withOpacity(0.7),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Habits Tracked',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurfaceVariant.withOpacity(0.7),
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        totalHabits.toString(),
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.w900,
-                          color: scheme.primary,
+                        const SizedBox(height: 4),
+                        Text(
+                          totalHabits.toString(),
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.w900,
+                            color: scheme.primary,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      _StatBubble(
-                        label: 'Days Active',
-                        value: daysWithHabits.toString(),
-                        scheme: scheme,
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            _StatBubble(
+                              label: 'Days Active',
+                              value: daysWithHabits.toString(),
+                              scheme: scheme,
+                            ),
+                            const SizedBox(height: 8),
+                            _StatBubble(
+                              label: 'Avg/Day',
+                              value: avgPerDay,
+                              scheme: scheme,
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 8),
-                      _StatBubble(
-                        label: 'Avg/Day',
-                        value: avgPerDay,
-                        scheme: scheme,
-                      ),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -922,12 +1112,12 @@ class FinanceInsights extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final start = _startOfMonth(selectedMonth);
-    final end = _endOfMonthInclusive(selectedMonth);
+    final endExclusive = _startOfNextMonth(selectedMonth);
     final startDate = _ymd(start);
-    final endDate = _ymd(end);
+    final endExclusiveDate = _ymd(endExclusive);
 
     return FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
-      future: _fetchAllFinanceData(startDate, endDate),
+      future: _fetchAllFinanceData(startDate, endExclusiveDate),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -991,6 +1181,19 @@ class FinanceInsights extends StatelessWidget {
             totalExpenses += amount;
           }
         }
+        _debugMonthQuery(
+          label: 'FinanceInsights',
+          selectedMonth: selectedMonth,
+          start: start,
+          endExclusive: endExclusive,
+          rows: [...incomeRows, ...expenseRows, ...billRows],
+          rawTimestamp: (row) => row['day'],
+          groupedDayKeys: byDay.entries
+              .where(
+                (entry) => entry.value.income > 0 || entry.value.expenses > 0,
+              )
+              .map((entry) => entry.key),
+        );
 
         final chartData = byDay.values.toList()
           ..sort((a, b) => a.period.compareTo(b.period));
@@ -1084,26 +1287,26 @@ class FinanceInsights extends StatelessWidget {
 
   Future<Map<String, List<Map<String, dynamic>>>> _fetchAllFinanceData(
     String startDate,
-    String endDate,
+    String endExclusiveDate,
   ) async {
     final results = await Future.wait([
       Supabase.instance.client
           .from('income_logs')
           .select('day, amount')
           .gte('day', startDate)
-          .lte('day', endDate)
+          .lt('day', endExclusiveDate)
           .catchError((_) => []),
       Supabase.instance.client
           .from('expense_logs')
           .select('day, cost')
           .gte('day', startDate)
-          .lte('day', endDate)
+          .lt('day', endExclusiveDate)
           .catchError((_) => []),
       Supabase.instance.client
           .from('bill_logs')
           .select('day, amount')
           .gte('day', startDate)
-          .lte('day', endDate)
+          .lt('day', endExclusiveDate)
           .catchError((_) => []),
     ], eagerError: false);
 
@@ -1115,12 +1318,7 @@ class FinanceInsights extends StatelessWidget {
   }
 
   String? _parseDayKey(dynamic rawDay) {
-    if (rawDay is DateTime) return _ymd(rawDay);
-    if (rawDay is String) {
-      final parsed = DateTime.tryParse(rawDay);
-      return parsed != null ? _ymd(parsed) : rawDay.split('T').first;
-    }
-    return null;
+    return _dayKeyInSelectedMonth(rawDay, selectedMonth);
   }
 }
 
@@ -1314,23 +1512,16 @@ class CycleInsights extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     final start = _startOfMonth(selectedMonth);
-    final end = _endOfMonthInclusive(selectedMonth);
-    final startIso = start.toIso8601String();
-    final endIso = DateTime(
-      end.year,
-      end.month,
-      end.day,
-      23,
-      59,
-      59,
-    ).toIso8601String();
+    final endExclusive = _startOfNextMonth(selectedMonth);
+    final startDay = _ymd(start);
+    final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: Supabase.instance.client
           .from('menstrual_logs')
           .select('day, flow')
-          .gte('day', startIso)
-          .lte('day', endIso),
+          .gte('day', startDay)
+          .lt('day', endExclusiveDay),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -1349,7 +1540,8 @@ class CycleInsights extends StatelessWidget {
 
         final Map<int, String> cycleMap = {};
         for (final r in rows) {
-          final day = DateTime.parse(r['day'].toString()).day;
+          final day = _dayInSelectedMonth(r['day'], selectedMonth);
+          if (day == null) continue;
           final rawFlow = (r['flow'] ?? '').toString().toLowerCase().trim();
 
           if (rawFlow.contains('heavy')) {
@@ -1358,14 +1550,34 @@ class CycleInsights extends StatelessWidget {
             cycleMap[day] = 'medium';
           } else if (rawFlow.contains('light')) {
             cycleMap[day] = 'light';
+          } else if (rawFlow.contains('spot')) {
+            cycleMap[day] = 'spotting';
           }
         }
+        _debugMonthQuery(
+          label: 'CycleInsights',
+          selectedMonth: selectedMonth,
+          start: start,
+          endExclusive: endExclusive,
+          rows: rows,
+          rawTimestamp: (row) => row['day'],
+          groupedDayKeys: cycleMap.keys.map(
+            (day) =>
+                _ymd(DateTime(selectedMonth.year, selectedMonth.month, day)),
+          ),
+        );
 
-        int light = 0, medium = 0, heavy = 0;
+        int light = 0, medium = 0, heavy = 0, spotting = 0;
         for (final v in cycleMap.values) {
           if (v == 'light') light++;
           if (v == 'medium') medium++;
           if (v == 'heavy') heavy++;
+          if (v == 'spotting') spotting++;
+        }
+        if (kDebugMode) {
+          debugPrint(
+            '📅 [CycleInsights] counts light=$light medium=$medium heavy=$heavy spotting=$spotting',
+          );
         }
 
         return Column(
@@ -1406,6 +1618,10 @@ class CycleInsights extends StatelessWidget {
                   case 'light':
                     iconColor = Colors.red.shade300;
                     break;
+                  case 'spotting':
+                    iconData = Icons.circle;
+                    iconColor = Colors.orange.shade600;
+                    break;
                   default:
                     iconData = Icons.remove;
                     iconColor = scheme.outline.withOpacity(0.25);
@@ -1425,6 +1641,7 @@ class CycleInsights extends StatelessWidget {
                 _MiniSummaryItem(label: 'Light', value: '$light'),
                 _MiniSummaryItem(label: 'Medium', value: '$medium'),
                 _MiniSummaryItem(label: 'Heavy', value: '$heavy'),
+                _MiniSummaryItem(label: 'Spotting', value: '$spotting'),
               ],
             ),
           ],
@@ -1435,37 +1652,230 @@ class CycleInsights extends StatelessWidget {
 }
 
 // MOOD INSIGHTS
-class MoodInsights extends StatelessWidget {
+class MoodInsights extends StatefulWidget {
   final DateTime selectedMonth;
   const MoodInsights({super.key, required this.selectedMonth});
+
+  @override
+  State<MoodInsights> createState() => _MoodInsightsState();
+}
+
+class _MoodInsightsState extends State<MoodInsights> {
+  late Future<List<Map<String, dynamic>>> _moodFuture;
+  static const List<String> _moodDropdownOptions = [
+    '😊 Happy',
+    '🤩 Excited',
+    '😎 Confident',
+    '🧘 Calm',
+    '😐 Neutral',
+    '😔 Sad',
+    '😤 Angry',
+    '🤯 Stressed',
+    '🤔 Anxious',
+    '😴 Tired',
+    '🤒 Sick',
+    'Other',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _moodFuture = _fetchMoodRows();
+  }
+
+  @override
+  void didUpdateWidget(covariant MoodInsights oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedMonth.year != widget.selectedMonth.year ||
+        oldWidget.selectedMonth.month != widget.selectedMonth.month) {
+      setState(() {
+        _moodFuture = _fetchMoodRows();
+      });
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchMoodRows() async {
+    final start = _ymd(_startOfMonth(widget.selectedMonth));
+    final endExclusive = _ymd(_startOfNextMonth(widget.selectedMonth));
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (kDebugMode) {
+      debugPrint(
+        '📅 [MoodInsights] fetch-start userId=$userId start=$start end(exclusive)=$endExclusive',
+      );
+    }
+    try {
+      final result = await Supabase.instance.client
+          .from('mood_logs')
+          .select('day, feeling, intensity')
+          .gte('day', start)
+          .lt('day', endExclusive)
+          .timeout(const Duration(seconds: 12));
+      final rows = List<Map<String, dynamic>>.from(result as List? ?? []);
+      if (kDebugMode) {
+        final sample = rows.isEmpty ? '{}' : rows.first.toString();
+        debugPrint(
+          '📅 [MoodInsights] fetch-end rows=${rows.length} firstRow=$sample',
+        );
+      }
+      return rows;
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('❌ [MoodInsights] fetch-error: $e');
+      }
+      rethrow;
+    }
+  }
+
+  void _retry() {
+    setState(() {
+      _moodFuture = _fetchMoodRows();
+    });
+  }
+
+  String _canonicalMood(dynamic rawMood) {
+    final input = (rawMood ?? '').toString().trim();
+    if (input.isEmpty) return '';
+    final normalized = input
+        .replaceAll(RegExp(r'^[^\w]+'), '')
+        .toLowerCase()
+        .trim();
+    for (final option in _moodDropdownOptions) {
+      final key = option
+          .replaceAll(RegExp(r'^[^\w]+'), '')
+          .toLowerCase()
+          .trim();
+      if (normalized == key ||
+          normalized.contains(key) ||
+          key.contains(normalized)) {
+        return option;
+      }
+    }
+    return 'Other';
+  }
+
+  String _displayMood(String moodOption) {
+    if (moodOption.isEmpty) return 'Unknown';
+    return moodOption.replaceAll(RegExp(r'^[^\w]+'), '').trim();
+  }
+
+  String _moodEmoji(String moodOption) {
+    final match = RegExp(r'^[^\w]+').firstMatch(moodOption);
+    if (match == null) return '🙂';
+    return moodOption.substring(0, match.end).trim();
+  }
+
+  Color _moodColor(String moodOption, ColorScheme scheme) {
+    final key = _displayMood(moodOption).toLowerCase();
+    if (key.contains('happy') ||
+        key.contains('excited') ||
+        key.contains('confident')) {
+      return Colors.green.withOpacity(0.2);
+    }
+    if (key.contains('sad')) return Colors.blue.withOpacity(0.2);
+    if (key.contains('angry')) return Colors.red.withOpacity(0.2);
+    if (key.contains('stressed') || key.contains('anxious')) {
+      return Colors.orange.withOpacity(0.2);
+    }
+    if (key.contains('calm')) return Colors.teal.withOpacity(0.2);
+    if (key.contains('tired')) return Colors.indigo.withOpacity(0.2);
+    if (key.contains('sick')) return Colors.purple.withOpacity(0.2);
+    if (key.contains('neutral')) return Colors.grey.withOpacity(0.2);
+    return scheme.primary.withOpacity(0.15);
+  }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from('mood_logs')
-          .select('day, intensity')
-          .gte('day', _ymd(_startOfMonth(selectedMonth)))
-          .lte('day', _ymd(_endOfMonthInclusive(selectedMonth))),
+      future: _moodFuture,
       builder: (context, snapshot) {
-        if (!snapshot.hasData) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: scheme.error.withOpacity(0.08),
+              border: Border.all(color: scheme.error.withOpacity(0.2)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Couldn’t load mood insights. Tap retry.',
+                    style: TextStyle(
+                      color: scheme.error,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                TextButton(onPressed: _retry, child: const Text('Retry')),
+              ],
+            ),
+          );
         }
 
         final rows = snapshot.data ?? const <Map<String, dynamic>>[];
-
-        final Map<int, double> moodMap = {};
-        for (final r in rows) {
-          final day = DateTime.parse(r['day'].toString()).day;
-          moodMap[day] = (r['intensity'] as num?)?.toDouble() ?? 0.0;
+        if (rows.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: scheme.surfaceContainerHighest.withOpacity(0.3),
+              border: Border.all(color: scheme.outline.withOpacity(0.2)),
+            ),
+            child: Text(
+              'No mood entries logged this month',
+              style: TextStyle(
+                color: scheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          );
         }
 
-        final double avgMood = moodMap.isNotEmpty
-            ? moodMap.values.reduce((a, b) => a + b) / moodMap.length
+        final Map<int, String> moodByDay = {};
+        final Map<String, int> moodCounts = {};
+        double intensitySum = 0.0;
+        int intensityCount = 0;
+        for (final r in rows) {
+          final day = _dayInSelectedMonth(r['day'], widget.selectedMonth);
+          if (day == null) continue;
+          final moodRaw = (r['feeling'] ?? '').toString().trim();
+          final mood = _canonicalMood(moodRaw);
+          if (mood.isNotEmpty) {
+            moodByDay[day] = mood;
+            moodCounts[mood] = (moodCounts[mood] ?? 0) + 1;
+          }
+          final intensity = (r['intensity'] as num?)?.toDouble();
+          if (intensity != null && intensity > 0) {
+            intensitySum += intensity;
+            intensityCount += 1;
+          }
+        }
+        if (kDebugMode) {
+          final distinct = moodCounts.entries.toList()
+            ..sort((a, b) => b.value.compareTo(a.value));
+          debugPrint(
+            '📅 [MoodInsights] start=${_ymd(_startOfMonth(widget.selectedMonth))} '
+            'end(exclusive)=${_ymd(_startOfNextMonth(widget.selectedMonth))} rows=${rows.length}',
+          );
+          debugPrint(
+            '📅 [MoodInsights] distinct=${distinct.map((e) => '${_displayMood(e.key)}:${e.value}').join(', ')}',
+          );
+        }
+
+        final double avgMood = intensityCount > 0
+            ? intensitySum / intensityCount
             : 0.0;
-        final int daysLogged = moodMap.length;
+        final int daysLogged = moodByDay.length;
+        final sortedMoodCounts = moodCounts.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1503,7 +1913,37 @@ class MoodInsights extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 12),
-            _buildMoodCalendarGrid(moodMap, scheme),
+            _buildMoodCalendarGrid(moodByDay, scheme),
+            if (sortedMoodCounts.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: sortedMoodCounts.map((entry) {
+                  return Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _moodColor(entry.key, scheme),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: scheme.outline.withOpacity(0.1),
+                      ),
+                    ),
+                    child: Text(
+                      '${_moodEmoji(entry.key)} ${_displayMood(entry.key)}: ${entry.value}',
+                      style: TextStyle(
+                        color: scheme.onSurface,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ],
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1513,7 +1953,7 @@ class MoodInsights extends StatelessWidget {
                 border: Border.all(color: Colors.orange.withOpacity(0.2)),
               ),
               child: Text(
-                '$daysLogged days logged • Average: ${avgMood.toStringAsFixed(1)}/10',
+                '$daysLogged days logged • Average intensity: ${avgMood.toStringAsFixed(1)}/10',
                 style: const TextStyle(
                   color: Colors.orange,
                   fontSize: 11,
@@ -1527,11 +1967,19 @@ class MoodInsights extends StatelessWidget {
     );
   }
 
-  Widget _buildMoodCalendarGrid(Map<int, double> moodMap, ColorScheme scheme) {
+  Widget _buildMoodCalendarGrid(
+    Map<int, String> moodByDay,
+    ColorScheme scheme,
+  ) {
     const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final daysInMonth = _daysInMonth(selectedMonth);
+    final daysInMonth = _daysInMonth(widget.selectedMonth);
     final firstDayOfWeek =
-        DateTime(selectedMonth.year, selectedMonth.month, 1).weekday - 1;
+        DateTime(
+          widget.selectedMonth.year,
+          widget.selectedMonth.month,
+          1,
+        ).weekday -
+        1;
 
     return Column(
       children: [
@@ -1566,35 +2014,15 @@ class MoodInsights extends StatelessWidget {
                   return const Expanded(child: SizedBox());
                 }
 
-                final mood = moodMap[dayNumber] ?? 0.0;
-                String moodLabel = '😐';
-                Color moodColor = scheme.outline.withOpacity(0.1);
-
-                if (mood == 0) {
-                  moodLabel = '-';
-                  moodColor = scheme.outline.withOpacity(0.05);
-                } else if (mood <= 1.5) {
-                  moodLabel = '😢';
-                  moodColor = Colors.red.withOpacity(0.2);
-                } else if (mood <= 2.5) {
-                  moodLabel = '😕';
-                  moodColor = Colors.orange.withOpacity(0.2);
-                } else if (mood <= 3.5) {
-                  moodLabel = '😐';
-                  moodColor = Colors.yellow.withOpacity(0.2);
-                } else if (mood <= 4.5) {
-                  moodLabel = '🙂';
-                  moodColor = Colors.lightGreen.withOpacity(0.2);
-                } else {
-                  moodLabel = '😄';
-                  moodColor = Colors.green.withOpacity(0.2);
-                }
+                final mood = moodByDay[dayNumber] ?? '';
+                final moodColor = _moodColor(mood, scheme);
+                final moodEmoji = mood.isEmpty ? '-' : _moodEmoji(mood);
 
                 return Expanded(
                   child: Tooltip(
-                    message: mood == 0
+                    message: mood.isEmpty
                         ? 'Day $dayNumber: No entry'
-                        : 'Day $dayNumber: ${mood.toStringAsFixed(1)}/5',
+                        : 'Day $dayNumber: ${_displayMood(mood)}',
                     child: Container(
                       height: 50,
                       decoration: BoxDecoration(
@@ -1608,7 +2036,7 @@ class MoodInsights extends StatelessWidget {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text(moodLabel, style: const TextStyle(fontSize: 18)),
+                          Text(moodEmoji, style: const TextStyle(fontSize: 18)),
                           Text(
                             '$dayNumber',
                             style: TextStyle(
@@ -1645,7 +2073,7 @@ class MeditationInsights extends StatelessWidget {
           .from('meditation_logs')
           .select('day, duration_minutes')
           .gte('day', _ymd(_startOfMonth(selectedMonth)))
-          .lte('day', _ymd(_endOfMonthInclusive(selectedMonth))),
+          .lt('day', _ymd(_startOfNextMonth(selectedMonth))),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -1658,7 +2086,8 @@ class MeditationInsights extends StatelessWidget {
         double totalMeditationMins = 0;
 
         for (final r in rows) {
-          final day = DateTime.parse(r['day'].toString()).day;
+          final day = _dayInSelectedMonth(r['day'], selectedMonth);
+          if (day == null) continue;
           final mins = (r['duration_minutes'] as num?)?.toDouble() ?? 0.0;
           if (mins > 0) {
             meditationDays++;
@@ -1666,6 +2095,18 @@ class MeditationInsights extends StatelessWidget {
           }
           medMap[day] = mins;
         }
+        _debugMonthQuery(
+          label: 'MeditationInsights',
+          selectedMonth: selectedMonth,
+          start: _startOfMonth(selectedMonth),
+          endExclusive: _startOfNextMonth(selectedMonth),
+          rows: rows,
+          rawTimestamp: (row) => row['day'],
+          groupedDayKeys: medMap.keys.map(
+            (day) =>
+                _ymd(DateTime(selectedMonth.year, selectedMonth.month, day)),
+          ),
+        );
 
         final avgMeditationMins = meditationDays > 0
             ? totalMeditationMins / meditationDays
@@ -1859,8 +2300,8 @@ class ActivityTrendItem extends StatelessWidget {
       future: Supabase.instance.client
           .from(table)
           .select('day, $valueColumn')
-          .gte('day', _startOfMonth(selectedMonth).toIso8601String())
-          .lte('day', _endOfMonthInclusive(selectedMonth).toIso8601String()),
+          .gte('day', _ymd(_startOfMonth(selectedMonth)))
+          .lt('day', _ymd(_startOfNextMonth(selectedMonth))),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SizedBox(
@@ -1876,7 +2317,8 @@ class ActivityTrendItem extends StatelessWidget {
         double total = 0;
 
         for (final r in rows) {
-          final day = DateTime.parse(r['day'].toString()).day;
+          final day = _dayInSelectedMonth(r['day'], selectedMonth);
+          if (day == null) continue;
 
           if (unit == 'sessions' || unit == 'times') {
             dailyValues[day] = (dailyValues[day] ?? 0) + 1;
@@ -1892,6 +2334,18 @@ class ActivityTrendItem extends StatelessWidget {
             total += val;
           }
         }
+        _debugMonthQuery(
+          label: 'ActivityTrendItem-$table',
+          selectedMonth: selectedMonth,
+          start: _startOfMonth(selectedMonth),
+          endExclusive: _startOfNextMonth(selectedMonth),
+          rows: rows,
+          rawTimestamp: (row) => row['day'],
+          groupedDayKeys: dailyValues.keys.map(
+            (day) =>
+                _ymd(DateTime(selectedMonth.year, selectedMonth.month, day)),
+          ),
+        );
 
         final daysLogged = dailyValues.length;
         final average = daysLogged > 0 ? total / daysLogged : 0;
@@ -2020,9 +2474,9 @@ class ActivityTrendItem extends StatelessWidget {
     final weekTotals = <double>[0, 0, 0, 0];
 
     dailyValues.forEach((day, value) {
-      if (day <= 7)
+      if (day <= 7) {
         weekTotals[0] += value;
-      else if (day <= 14)
+      } else if (day <= 14)
         weekTotals[1] += value;
       else if (day <= 21)
         weekTotals[2] += value;
@@ -2345,7 +2799,6 @@ class WorkoutInsights extends StatelessWidget {
     'stretching': '🧘',
     'swimming': '🏊',
     'cycling': '🚴',
-    'bike': '🚴',
     'pilates': '🤸',
     'gymnastics': '🤸',
     'hiit': '⚡',
@@ -2358,19 +2811,15 @@ class WorkoutInsights extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final start = _startOfMonth(selectedMonth);
-    final end = _endOfMonthInclusive(selectedMonth);
-    final startIso = start.toIso8601String();
-    final endIso = DateTime(
-      end.year,
-      end.month,
-      end.day,
-      23,
-      59,
-      59,
-    ).toIso8601String();
+    final endExclusive = _startOfNextMonth(selectedMonth);
+    final startDay = _ymd(start);
+    final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<Map<String, dynamic>>(
-      future: _fetchWorkoutData(startIso, endIso),
+      future: _fetchWorkoutData(
+        startDay: startDay,
+        endExclusiveDay: endExclusiveDay,
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -2389,10 +2838,23 @@ class WorkoutInsights extends StatelessWidget {
 
         final Map<int, String> workoutMap = {};
         for (final r in rows) {
-          final day = DateTime.parse(r['day'].toString()).day;
+          final day = _dayInSelectedMonth(r['day'], selectedMonth);
+          if (day == null) continue;
           final exercise = (r['exercise'] ?? '').toString().toLowerCase();
           workoutMap[day] = exercise;
         }
+        _debugMonthQuery(
+          label: 'WorkoutInsights',
+          selectedMonth: selectedMonth,
+          start: start,
+          endExclusive: endExclusive,
+          rows: List<Map<String, dynamic>>.from(rows),
+          rawTimestamp: (row) => row['day'],
+          groupedDayKeys: workoutMap.keys.map(
+            (day) =>
+                _ymd(DateTime(selectedMonth.year, selectedMonth.month, day)),
+          ),
+        );
 
         final int daysLogged = workoutMap.length;
 
@@ -2452,17 +2914,17 @@ class WorkoutInsights extends StatelessWidget {
     );
   }
 
-  Future<Map<String, dynamic>> _fetchWorkoutData(
-    String startIso,
-    String endIso,
-  ) async {
+  Future<Map<String, dynamic>> _fetchWorkoutData({
+    required String startDay,
+    required String endExclusiveDay,
+  }) async {
     try {
       // Fetch all workouts for the month
       final workoutRows = await Supabase.instance.client
           .from('workout_logs')
           .select('day, exercise')
-          .gte('day', startIso)
-          .lte('day', endIso);
+          .gte('day', startDay)
+          .lt('day', endExclusiveDay);
 
       // Fetch the most recent weight log from workout_logs
       final weightRows = await Supabase.instance.client
@@ -2532,23 +2994,16 @@ class SocialOutingsInsights extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     final start = _startOfMonth(selectedMonth);
-    final end = _endOfMonthInclusive(selectedMonth);
-    final startIso = start.toIso8601String();
-    final endIso = DateTime(
-      end.year,
-      end.month,
-      end.day,
-      23,
-      59,
-      59,
-    ).toIso8601String();
+    final endExclusive = _startOfNextMonth(selectedMonth);
+    final startDay = _ymd(start);
+    final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: Supabase.instance.client
           .from('social_logs')
           .select('day')
-          .gte('day', startIso)
-          .lte('day', endIso),
+          .gte('day', startDay)
+          .lt('day', endExclusiveDay),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -2567,9 +3022,22 @@ class SocialOutingsInsights extends StatelessWidget {
 
         final Map<int, bool> socialMap = {};
         for (final r in rows) {
-          final day = DateTime.parse(r['day'].toString()).day;
+          final day = _dayInSelectedMonth(r['day'], selectedMonth);
+          if (day == null) continue;
           socialMap[day] = true;
         }
+        _debugMonthQuery(
+          label: 'SocialOutingsInsights',
+          selectedMonth: selectedMonth,
+          start: start,
+          endExclusive: endExclusive,
+          rows: rows,
+          rawTimestamp: (row) => row['day'],
+          groupedDayKeys: socialMap.keys.map(
+            (day) =>
+                _ymd(DateTime(selectedMonth.year, selectedMonth.month, day)),
+          ),
+        );
 
         final int daysLogged = socialMap.length;
 
@@ -2600,7 +3068,7 @@ class SocialOutingsInsights extends StatelessWidget {
               ),
               child: Text(
                 '$daysLogged days with social activities • Stay connected!',
-                style: TextStyle(
+                style: const TextStyle(
                   color: Colors.purple,
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -2643,23 +3111,16 @@ class FastingInsights extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     final start = _startOfMonth(selectedMonth);
-    final end = _endOfMonthInclusive(selectedMonth);
-    final startIso = start.toIso8601String();
-    final endIso = DateTime(
-      end.year,
-      end.month,
-      end.day,
-      23,
-      59,
-      59,
-    ).toIso8601String();
+    final endExclusive = _startOfNextMonth(selectedMonth);
+    final startDay = _ymd(start);
+    final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: Supabase.instance.client
           .from('fast_logs')
           .select('day, duration_hours')
-          .gte('day', startIso)
-          .lte('day', endIso),
+          .gte('day', startDay)
+          .lt('day', endExclusiveDay),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -2679,11 +3140,24 @@ class FastingInsights extends StatelessWidget {
         final Map<int, double> fastingMap = {};
         double totalHours = 0;
         for (final r in rows) {
-          final day = DateTime.parse(r['day'].toString()).day;
+          final day = _dayInSelectedMonth(r['day'], selectedMonth);
+          if (day == null) continue;
           final hours = (r['duration_hours'] as num?)?.toDouble() ?? 0.0;
           fastingMap[day] = hours;
           totalHours += hours;
         }
+        _debugMonthQuery(
+          label: 'FastingInsights',
+          selectedMonth: selectedMonth,
+          start: start,
+          endExclusive: endExclusive,
+          rows: rows,
+          rawTimestamp: (row) => row['day'],
+          groupedDayKeys: fastingMap.keys.map(
+            (day) =>
+                _ymd(DateTime(selectedMonth.year, selectedMonth.month, day)),
+          ),
+        );
 
         final int daysLogged = fastingMap.length;
         final double avgHours = daysLogged > 0 ? totalHours / daysLogged : 0;
@@ -2715,7 +3189,7 @@ class FastingInsights extends StatelessWidget {
               ),
               child: Text(
                 '$daysLogged days fasted • Total: ${totalHours.toStringAsFixed(0)} hrs',
-                style: TextStyle(
+                style: const TextStyle(
                   color: Colors.blue,
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
@@ -3003,20 +3477,18 @@ class WaterInsights extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final bottomInset = MediaQuery.of(context).padding.bottom;
     final start = _startOfMonth(selectedMonth);
-    final end = _endOfMonthInclusive(selectedMonth);
-    final startIso = start.toIso8601String();
-    final endIso = DateTime(
-      end.year,
-      end.month,
-      end.day,
-      23,
-      59,
-      59,
-    ).toIso8601String();
+    final endExclusive = _startOfNextMonth(selectedMonth);
+    final startDay = _ymd(start);
+    final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<Map<String, dynamic>>(
-      future: _fetchWaterData(startIso, endIso),
+      future: _fetchWaterData(
+        selectedMonth: selectedMonth,
+        startDay: startDay,
+        endExclusiveDay: endExclusiveDay,
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -3030,10 +3502,12 @@ class WaterInsights extends StatelessWidget {
         }
 
         final data = snapshot.data ?? {};
-        final dailyWater = (data['daily'] as Map<int, double>) ?? {};
-        final dailyGoalStatus = (data['goalStatus'] as Map<int, bool>) ?? {};
-        final goalsReached = (data['goalsReached'] as int) ?? 0;
-        final totalLiters = (data['totalLiters'] as double) ?? 0.0;
+        final dailyWater =
+            (data['daily'] as Map<int, double>?) ?? <int, double>{};
+        final dailyGoalStatus =
+            (data['goalStatus'] as Map<int, bool>?) ?? <int, bool>{};
+        final goalsReached = (data['goalsReached'] as int?) ?? 0;
+        final totalLiters = (data['totalLiters'] as double?) ?? 0.0;
 
         final daysLogged = dailyWater.length;
         final avgDaily = daysLogged > 0 ? totalLiters / daysLogged : 0.0;
@@ -3041,153 +3515,206 @@ class WaterInsights extends StatelessWidget {
             ? 1.0
             : dailyWater.values.reduce((a, b) => a > b ? a : b);
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _SectionHeaderRow(
-              title: 'Water Intake',
-              subtitle: _monthLabel(selectedMonth),
-              trailing: Text(
-                '${totalLiters.toStringAsFixed(1)}L',
-                style: TextStyle(
-                  color: Colors.blue.shade600,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth.isFinite
+                ? constraints.maxWidth
+                : MediaQuery.of(context).size.width;
+            final screenHeight = MediaQuery.of(context).size.height;
+            final chartSectionHeight = math
+                .min(220.0, math.min(width * 0.48, screenHeight * 0.35))
+                .clamp(132.0, 220.0);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: _StatCard(
-                    label: 'Days Goal Reached',
-                    value: '$goalsReached',
-                    icon: Icons.local_drink,
-                    scheme: scheme,
-                    valueColor: Colors.blue.shade600,
+                _SectionHeaderRow(
+                  title: 'Water Intake',
+                  subtitle: _monthLabel(selectedMonth),
+                  trailing: Text(
+                    '${totalLiters.toStringAsFixed(1)}L',
+                    style: TextStyle(
+                      color: Colors.blue.shade600,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _StatCard(
-                    label: 'Daily Average',
-                    value: '${avgDaily.toStringAsFixed(1)}L',
-                    icon: Icons.trending_up,
-                    scheme: scheme,
-                    valueColor: Colors.blue.shade500,
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _StatCard(
+                        label: 'Days Goal Reached',
+                        value: '$goalsReached',
+                        icon: Icons.local_drink,
+                        scheme: scheme,
+                        valueColor: Colors.blue.shade600,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _StatCard(
+                        label: 'Daily Average',
+                        value: '${avgDaily.toStringAsFixed(1)}L',
+                        icon: Icons.trending_up,
+                        scheme: scheme,
+                        valueColor: Colors.blue.shade500,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: chartSectionHeight,
+                  child: _buildWaterChart(
+                    dailyWater,
+                    dailyGoalStatus,
+                    maxDay,
+                    scheme,
                   ),
                 ),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: Colors.blue.withOpacity(0.08),
+                    border: Border.all(color: Colors.blue.withOpacity(0.2)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Success Rate',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: scheme.onSurfaceVariant.withOpacity(
+                                    0.7,
+                                  ),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                daysLogged > 0
+                                    ? '${((goalsReached / daysLogged) * 100).toStringAsFixed(0)}%'
+                                    : '0%',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.blue.shade600,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.center,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Text(
+                                'Days Logged',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: scheme.onSurfaceVariant.withOpacity(
+                                    0.7,
+                                  ),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '$daysLogged',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.blue.shade600,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                'Total Intake',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: scheme.onSurfaceVariant.withOpacity(
+                                    0.7,
+                                  ),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${totalLiters.toStringAsFixed(1)}L',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: Colors.blue.shade600,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: bottomInset + 16),
               ],
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 220,
-              child: _buildWaterChart(
-                dailyWater,
-                dailyGoalStatus,
-                maxDay,
-                scheme,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                color: Colors.blue.withOpacity(0.08),
-                border: Border.all(color: Colors.blue.withOpacity(0.2)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Success Rate',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant.withOpacity(0.7),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        daysLogged > 0
-                            ? '${((goalsReached / daysLogged) * 100).toStringAsFixed(0)}%'
-                            : '0%',
-                        style: TextStyle(
-                          color: Colors.blue.shade600,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Days Logged',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant.withOpacity(0.7),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '$daysLogged',
-                        style: TextStyle(
-                          color: Colors.blue.shade600,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        'Total Intake',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant.withOpacity(0.7),
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${totalLiters.toStringAsFixed(1)}L',
-                        style: TextStyle(
-                          color: Colors.blue.shade600,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
+            );
+          },
         );
       },
     );
   }
 
-  Future<Map<String, dynamic>> _fetchWaterData(
-    String startIso,
-    String endIso,
-  ) async {
+  Future<Map<String, dynamic>> _fetchWaterData({
+    required DateTime selectedMonth,
+    required String startDay,
+    required String endExclusiveDay,
+  }) async {
     try {
       final rows = await Supabase.instance.client
           .from('water_logs')
           .select('day, amount, unit, goal_reached')
-          .gte('day', startIso)
-          .lte('day', endIso)
+          .gte('day', startDay)
+          .lt('day', endExclusiveDay)
           .order('day', ascending: true);
 
       final Map<int, double> dailyWater = {};
@@ -3196,7 +3723,8 @@ class WaterInsights extends StatelessWidget {
       int goalsReached = 0;
 
       for (final row in rows) {
-        final day = DateTime.parse(row['day'].toString()).day;
+        final day = _dayInSelectedMonth(row['day'], selectedMonth);
+        if (day == null) continue;
         final amount = (row['amount'] as num?)?.toDouble() ?? 0.0;
         final unit = (row['unit'] as String?)?.toLowerCase() ?? 'ml';
         final goalReached = (row['goal_reached'] as bool?) ?? false;
@@ -3210,6 +3738,23 @@ class WaterInsights extends StatelessWidget {
           dailyGoalStatus[day] = true;
           goalsReached++;
         }
+      }
+      _debugMonthQuery(
+        label: 'WaterInsights',
+        selectedMonth: selectedMonth,
+        start: _startOfMonth(selectedMonth),
+        endExclusive: _startOfNextMonth(selectedMonth),
+        rows: List<Map<String, dynamic>>.from(rows),
+        rawTimestamp: (row) => row['day'],
+        groupedDayKeys: dailyWater.keys.map(
+          (day) => _ymd(DateTime(selectedMonth.year, selectedMonth.month, day)),
+        ),
+      );
+      if (kDebugMode) {
+        debugPrint(
+          '📅 [WaterInsights] totals rows=${rows.length} daysLogged=${dailyWater.length} '
+          'totalLiters=${totalLiters.toStringAsFixed(2)} goalsReached=$goalsReached',
+        );
       }
 
       return {
@@ -3265,93 +3810,182 @@ class WaterInsights extends StatelessWidget {
     double maxDay,
     ColorScheme scheme,
   ) {
-    final daysInMonth = _daysInMonth(selectedMonth);
-    final scaledMax = (maxDay * 1.2).ceilToDouble();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final daysInMonth = _daysInMonth(selectedMonth);
+        final availableHeight = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 220.0;
+        final footerHeight = availableHeight < 170 ? 20.0 : 28.0;
+        final verticalGap = availableHeight < 170 ? 4.0 : 8.0;
+        final minChartHeight = availableHeight < 170 ? 84.0 : 120.0;
+        final chartHeight = (availableHeight - footerHeight - verticalGap)
+            .clamp(minChartHeight, 260.0);
+        final barTrackHeight = (chartHeight - 30).clamp(84.0, 220.0);
+        final leftFontSize = chartHeight < 150 ? 8.0 : 9.0;
+        final dayFontSize = chartHeight < 150 ? 7.0 : 8.0;
+        final axisWidth = chartHeight < 150 ? 30.0 : 36.0;
+        final scaledMax = (maxDay * 1.2).ceilToDouble().clamp(1.0, 20.0);
+        final interval = scaledMax <= 2
+            ? 0.5
+            : scaledMax <= 4
+            ? 1.0
+            : scaledMax <= 10
+            ? 2.0
+            : 5.0;
+        final yTicks = <double>[];
+        for (double tick = scaledMax; tick >= 0; tick -= interval) {
+          yTicks.add(double.parse(tick.toStringAsFixed(2)));
+        }
+        if (yTicks.isEmpty || yTicks.last != 0) {
+          yTicks.add(0);
+        }
 
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: List.generate(daysInMonth, (index) {
-            final day = index + 1;
-            final liters = dailyWater[day] ?? 0.0;
-            final percentage = scaledMax > 0 ? (liters / scaledMax) : 0.0;
-            final height = percentage * 180;
-            final reachedGoal = dailyGoalStatus[day] ?? false;
+        return Column(
+          children: [
+            SizedBox(
+              height: chartHeight,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  SizedBox(
+                    width: axisWidth,
+                    height: chartHeight,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: yTicks
+                          .map(
+                            (tick) => Text(
+                              '${tick.toStringAsFixed(tick % 1 == 0 ? 0 : 1)}L',
+                              style: TextStyle(
+                                fontSize: leftFontSize,
+                                color: scheme.onSurfaceVariant.withOpacity(0.6),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: List.generate(daysInMonth, (index) {
+                        final day = index + 1;
+                        final liters = dailyWater[day] ?? 0.0;
+                        final percentage = scaledMax > 0
+                            ? (liters / scaledMax)
+                            : 0.0;
+                        final barHeight = (percentage * barTrackHeight).clamp(
+                          0.0,
+                          barTrackHeight,
+                        );
+                        final reachedGoal = dailyGoalStatus[day] ?? false;
 
-            return Expanded(
-              child: Tooltip(
-                message:
-                    '$day: ${liters.toStringAsFixed(1)}L${reachedGoal ? ' ✓ Goal' : ''}',
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    if (reachedGoal)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: Text(
-                          '✓',
-                          style: TextStyle(
-                            color: Colors.green.shade600,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                        return Expanded(
+                          child: Tooltip(
+                            message:
+                                '$day: ${liters.toStringAsFixed(1)}L${reachedGoal ? ' ✓ Goal' : ''}',
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                Expanded(
+                                  child: Align(
+                                    alignment: Alignment.bottomCenter,
+                                    child: Stack(
+                                      clipBehavior: Clip.none,
+                                      alignment: Alignment.bottomCenter,
+                                      children: [
+                                        Container(
+                                          height: barHeight,
+                                          width: double.infinity,
+                                          margin: const EdgeInsets.symmetric(
+                                            horizontal: 2,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            borderRadius:
+                                                const BorderRadius.vertical(
+                                                  top: Radius.circular(4),
+                                                ),
+                                            gradient: LinearGradient(
+                                              begin: Alignment.bottomCenter,
+                                              end: Alignment.topCenter,
+                                              colors: [
+                                                Colors.blue.shade600,
+                                                Colors.blue.shade400,
+                                              ],
+                                            ),
+                                            border: Border.all(
+                                              color: reachedGoal
+                                                  ? Colors.green.shade600
+                                                  : Colors.blue.withOpacity(
+                                                      0.3,
+                                                    ),
+                                              width: reachedGoal ? 2 : 0,
+                                            ),
+                                          ),
+                                        ),
+                                        if (reachedGoal)
+                                          Positioned(
+                                            top: -8,
+                                            child: Text(
+                                              '✓',
+                                              style: TextStyle(
+                                                color: Colors.green.shade600,
+                                                fontSize: dayFontSize + 2,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  day == 1 ||
+                                          day == 15 ||
+                                          day == _daysInMonth(selectedMonth)
+                                      ? '$day'
+                                      : '',
+                                  style: TextStyle(
+                                    fontSize: dayFontSize,
+                                    color: scheme.onSurfaceVariant.withOpacity(
+                                      0.5,
+                                    ),
+                                    fontWeight: FontWeight.w400,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ),
-                    Container(
-                      height: height.toDouble(),
-                      width: double.infinity,
-                      margin: const EdgeInsets.symmetric(horizontal: 2),
-                      decoration: BoxDecoration(
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(4),
-                        ),
-                        gradient: LinearGradient(
-                          begin: Alignment.bottomCenter,
-                          end: Alignment.topCenter,
-                          colors: [Colors.blue.shade600, Colors.blue.shade400],
-                        ),
-                        border: Border.all(
-                          color: reachedGoal
-                              ? Colors.green.shade600
-                              : Colors.blue.withOpacity(0.3),
-                          width: reachedGoal ? 2 : 0,
-                        ),
-                      ),
+                        );
+                      }),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      day == 1 ||
-                              day == 15 ||
-                              day == _daysInMonth(selectedMonth)
-                          ? '$day'
-                          : '',
-
-                      style: TextStyle(
-                        fontSize: 8,
-                        color: scheme.onSurfaceVariant.withOpacity(0.5),
-                        fontWeight: FontWeight.w400,
-                      ),
-                    ),
-                  ],
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(height: verticalGap),
+            SizedBox(
+              height: footerHeight,
+              child: Align(
+                alignment: Alignment.center,
+                child: Text(
+                  'Days',
+                  style: TextStyle(
+                    fontSize: leftFontSize + 1,
+                    color: scheme.onSurfaceVariant.withOpacity(0.5),
+                  ),
                 ),
               ),
-            );
-          }),
-        ),
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.center,
-          child: Text(
-            'Days',
-            style: TextStyle(
-              fontSize: 10,
-              color: scheme.onSurfaceVariant.withOpacity(0.5),
             ),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
@@ -3380,8 +4014,8 @@ class ActivityTrendLineChart extends StatelessWidget {
       future: Supabase.instance.client
           .from(table)
           .select('day, $valueColumn')
-          .gte('day', _startOfMonth(selectedMonth).toIso8601String())
-          .lte('day', _endOfMonthInclusive(selectedMonth).toIso8601String()),
+          .gte('day', _ymd(_startOfMonth(selectedMonth)))
+          .lt('day', _ymd(_startOfNextMonth(selectedMonth))),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SizedBox(
@@ -3397,11 +4031,24 @@ class ActivityTrendLineChart extends StatelessWidget {
         double total = 0;
 
         for (final r in rows) {
-          final day = DateTime.parse(r['day'].toString()).day;
+          final day = _dayInSelectedMonth(r['day'], selectedMonth);
+          if (day == null) continue;
           final val = (r[valueColumn] as num?)?.toDouble() ?? 0.0;
           dailyValues[day] = (dailyValues[day] ?? 0) + val;
           total += val;
         }
+        _debugMonthQuery(
+          label: 'ActivityTrendLineChart-$table',
+          selectedMonth: selectedMonth,
+          start: _startOfMonth(selectedMonth),
+          endExclusive: _startOfNextMonth(selectedMonth),
+          rows: rows,
+          rawTimestamp: (row) => row['day'],
+          groupedDayKeys: dailyValues.keys.map(
+            (day) =>
+                _ymd(DateTime(selectedMonth.year, selectedMonth.month, day)),
+          ),
+        );
 
         final daysLogged = dailyValues.length;
         final average = daysLogged > 0 ? total / daysLogged : 0;

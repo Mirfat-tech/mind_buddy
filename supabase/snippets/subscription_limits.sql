@@ -9,6 +9,15 @@ as $$
     ('full','full_support','full support','full_support_mode','full support mode');
 $$;
 
+create or replace function public.is_light_support(uid uuid)
+returns boolean
+language sql
+stable
+as $$
+  select lower(coalesce((select subscription_tier from public.profiles where id = uid), '')) in
+    ('light','light_support','light support','light_support_mode','light support mode');
+$$;
+
 create or replace function public.is_pending_support(uid uuid)
 returns boolean
 language sql
@@ -47,7 +56,14 @@ returns int
 language sql
 stable
 as $$
-  select case when public.is_full_support(uid) then 5 else 1 end;
+  select case
+    when public.is_full_support(uid) then coalesce(
+      nullif(current_setting('app.full_device_limit', true), '')::int,
+      5
+    )
+    when public.is_light_support(uid) then 3
+    else 1
+  end;
 $$;
 
 -- Allow multiple chats for Full Support (remove hard unique constraint)

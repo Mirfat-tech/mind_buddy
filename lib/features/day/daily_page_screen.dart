@@ -132,7 +132,7 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                 value: 'chat',
                 icon: Icons.chat_bubble_outline,
                 title: 'Chat box',
-                subtitle: 'Talk to Mind Buddy about this day',
+                subtitle: 'Talk to MyBrainBubble about this day',
               ),
               _AddTile(
                 value: 'checklist',
@@ -255,7 +255,7 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                           // 0 = habit grid
                           if (i == 0) {
                             return Padding(
-                              padding: EdgeInsets.only(bottom: 10),
+                              padding: const EdgeInsets.only(bottom: 10),
                               child: HabitMonthGrid(
                                 month: DateTime.now(),
                                 onManageTap: () {

@@ -1,12 +1,20 @@
 // lib/features/insights/habit_streaks_summary.dart
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:mind_buddy/features/insights/habit_completion_stats.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class HabitStreaksSummary extends StatefulWidget {
-  const HabitStreaksSummary({super.key, required this.month, this.onManageTap});
+  const HabitStreaksSummary({
+    super.key,
+    required this.month,
+    required this.refreshTick,
+    this.onManageTap,
+  });
 
   final DateTime month;
+  final int refreshTick;
   final VoidCallback? onManageTap;
 
   @override
@@ -30,13 +38,6 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
     return '$y-$m-$day';
   }
 
-  String _habitKey(String name) => name.trim().toLowerCase();
-
-  DateTime _asDateTime(dynamic v) {
-    if (v is DateTime) return v;
-    return DateTime.parse(v.toString()); // handles "YYYY-MM-DD"
-  }
-
   Future<void> _load() async {
     if (!mounted) return;
 
@@ -56,23 +57,12 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
         return;
       }
 
-      // 1) Active habits count (denominator)
-      final habitsRows = await supabase
-          .from('user_habits')
-          .select('name')
-          .eq('user_id', user.id)
-          .eq('is_active', true)
-          .order('sort_order');
+      final stats = await fetchHabitMonthlyCompletionStats(
+        supabase: supabase,
+        selectedMonth: widget.month,
+      );
 
-      final activeHabits = (habitsRows as List)
-          .map((r) => (r as Map)['name'].toString().trim())
-          .where((s) => s.isNotEmpty)
-          .toList();
-
-      final activeCount = activeHabits.length;
-      final activeKeys = activeHabits.map(_habitKey).toSet();
-
-      if (activeCount == 0) {
+      if (stats.activeHabitsCount == 0) {
         if (!mounted) return;
         setState(() {
           _activeHabitsCount = 0;
@@ -83,50 +73,22 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
         return;
       }
 
-      // 2) Date ranges
-      final todayKey = _ymd(DateTime.now());
-      final start = DateTime(widget.month.year, widget.month.month, 1);
-      final end = DateTime(widget.month.year, widget.month.month + 1, 1);
-
-      // 3) Pull completed logs for the month
-      final monthRows = await supabase
-          .from('habit_logs')
-          .select('habit_name, day, is_completed')
-          .eq('user_id', user.id)
-          .gte('day', _ymd(start))
-          .lt('day', _ymd(end))
-          .eq('is_completed', true);
-
-      // Count each row = a tick (one habit on one day)
-      int monthTicks = 0;
-
-      // Today = unique habits completed today
-      final Set<String> doneTodayHabits = <String>{};
-
-      for (final r in (monthRows as List)) {
-        final row = Map<String, dynamic>.from(r as Map);
-
-        final habit = (row['habit_name'] ?? '').toString().trim();
-        if (habit.isEmpty) continue;
-
-        final hk = _habitKey(habit);
-        if (!activeKeys.contains(hk)) continue;
-
-        final dayDt = _asDateTime(row['day']).toLocal();
-        final dayKey = _ymd(dayDt);
-
-        monthTicks++;
-
-        if (dayKey == todayKey) {
-          doneTodayHabits.add(hk);
-        }
-      }
-
       if (!mounted) return;
+      if (kDebugMode) {
+        debugPrint(
+          '📅 [HabitStreaksSummary] month=${widget.month.year}-${widget.month.month.toString().padLeft(2, '0')} '
+          'start=${_ymd(stats.monthStart)} end(exclusive)=${_ymd(stats.monthEndExclusive)} tzOffset=${DateTime.now().timeZoneOffset}',
+        );
+        debugPrint(
+          '📅 [HabitStreaksSummary] totals completions=${stats.totalCompletedInstances} '
+          'uniqueDays=${stats.uniqueDaysWithCompletion} activeHabits=${stats.activeHabitsCount} '
+          'doneToday=${stats.doneTodayCount}',
+        );
+      }
       setState(() {
-        _activeHabitsCount = activeCount;
-        _doneTodayCount = doneTodayHabits.length;
-        _monthTicks = monthTicks;
+        _activeHabitsCount = stats.activeHabitsCount;
+        _doneTodayCount = stats.doneTodayCount;
+        _monthTicks = stats.totalCompletedInstances;
         _loading = false;
       });
     } catch (e) {
@@ -148,7 +110,8 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
   void didUpdateWidget(covariant HabitStreaksSummary oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.month.year != widget.month.year ||
-        oldWidget.month.month != widget.month.month) {
+        oldWidget.month.month != widget.month.month ||
+        oldWidget.refreshTick != widget.refreshTick) {
       _load();
     }
   }

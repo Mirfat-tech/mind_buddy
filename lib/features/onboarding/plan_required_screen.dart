@@ -8,7 +8,7 @@ class PlanRequiredScreen extends StatelessWidget {
     super.key,
     required this.title,
     required this.message,
-    this.ctaLabel = 'Choose a plan',
+    this.ctaLabel = 'View modes',
   });
 
   final String title;

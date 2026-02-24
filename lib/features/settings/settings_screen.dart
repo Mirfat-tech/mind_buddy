@@ -7,16 +7,18 @@ import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final settings = ref.watch(settingsControllerProvider).settings;
+    final controller = ref.watch(settingsControllerProvider);
+    final settings = controller.settings;
     final themeStyle = styleById(settings.themeId);
-    final userEmail =
-        Supabase.instance.client.auth.currentUser?.email ?? 'Signed out';
+    final user = Supabase.instance.client.auth.currentUser;
+    final userEmail = user?.email ?? 'Signed out';
 
     final quietLabel = settings.quietHoursEnabled
         ? '${settings.quietStart}–${settings.quietEnd}'
@@ -51,6 +53,32 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (controller.loadError != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.errorContainer,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.wifi_off_outlined),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${controller.loadError} Tap to retry.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () =>
+                        ref.read(settingsControllerProvider).retryInit(),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            ),
           _SettingsHeader(email: userEmail),
           const SizedBox(height: 16),
           _SettingsSection(
@@ -90,6 +118,56 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
           _SettingsSection(
+            title: 'Feedback',
+            children: [
+              _SettingsTile(
+                icon: Icons.vibration_outlined,
+                title: 'Haptics',
+                subtitle: 'Vibration feedback across the app',
+                trailing: Switch(
+                  value: ref
+                      .watch(settingsControllerProvider)
+                      .settings
+                      .hapticsEnabled,
+                  onChanged: (value) => ref
+                      .read(settingsControllerProvider)
+                      .setHapticsEnabled(value),
+                ),
+                onTap: () => ref
+                    .read(settingsControllerProvider)
+                    .setHapticsEnabled(
+                      !ref
+                          .read(settingsControllerProvider)
+                          .settings
+                          .hapticsEnabled,
+                    ),
+              ),
+              _SettingsTile(
+                icon: Icons.volume_up_outlined,
+                title: 'Sounds',
+                subtitle: 'Sound feedback across the app',
+                trailing: Switch(
+                  value: ref
+                      .watch(settingsControllerProvider)
+                      .settings
+                      .soundsEnabled,
+                  onChanged: (value) => ref
+                      .read(settingsControllerProvider)
+                      .setSoundsEnabled(value),
+                ),
+                onTap: () => ref
+                    .read(settingsControllerProvider)
+                    .setSoundsEnabled(
+                      !ref
+                          .read(settingsControllerProvider)
+                          .settings
+                          .soundsEnabled,
+                    ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _SettingsSection(
             title: 'Guidance',
             children: [
               _SettingsTile(
@@ -101,9 +179,11 @@ class SettingsScreen extends ConsumerWidget {
               _SettingsTile(
                 icon: Icons.visibility_outlined,
                 title: 'Keep instructions visible',
-                subtitle: 'Show floating hints every time',
+                subtitle: 'Show spotlight guides every time',
                 trailing: Switch(
-                  value: ref.watch(settingsControllerProvider).settings
+                  value: ref
+                      .watch(settingsControllerProvider)
+                      .settings
                       .keepInstructionsEnabled,
                   onChanged: (value) => ref
                       .read(settingsControllerProvider)
@@ -111,10 +191,12 @@ class SettingsScreen extends ConsumerWidget {
                 ),
                 onTap: () => ref
                     .read(settingsControllerProvider)
-                    .setKeepInstructionsEnabled(!ref
-                        .read(settingsControllerProvider)
-                        .settings
-                        .keepInstructionsEnabled),
+                    .setKeepInstructionsEnabled(
+                      !ref
+                          .read(settingsControllerProvider)
+                          .settings
+                          .keepInstructionsEnabled,
+                    ),
               ),
             ],
           ),
@@ -129,28 +211,77 @@ class SettingsScreen extends ConsumerWidget {
                 onTap: () => context.go('/subscription'),
               ),
               _SettingsTile(
-                icon: Icons.logout,
-                title: 'Sign out',
-                subtitle: 'Log out of this device',
-                onTap: () => _confirmSignOut(context),
+                icon: Icons.block,
+                title: 'Blocked users',
+                subtitle: 'Manage people you’ve blocked',
+                onTap: () => context.go('/settings/blocked'),
               ),
-              _SettingsTile(
-                icon: Icons.logout_outlined,
-                title: 'Sign out everywhere',
-                subtitle: 'Sign out of all devices',
-                onTap: () => _confirmGlobalSignOut(context),
-              ),
+              _AccountActions(user: user),
             ],
           ),
           const SizedBox(height: 16),
-          _SettingsSection(
-            title: 'Devices',
-            children: [
-              _DevicesList(),
-            ],
-          ),
+          _SettingsSection(title: 'Devices', children: [_DevicesList()]),
         ],
       ),
+    );
+  }
+}
+
+class _AccountActions extends StatelessWidget {
+  const _AccountActions({required this.user});
+
+  final User? user;
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<SubscriptionInfo>(
+      future: SubscriptionLimits.fetchForCurrentUser(),
+      builder: (context, snapshot) {
+        final info = snapshot.data;
+        final showSignIn = user == null || (info?.isPending ?? false);
+
+        if (showSignIn) {
+          return Column(
+            children: [
+              _SettingsTile(
+                icon: Icons.login,
+                title: 'Sign in',
+                subtitle: 'Continue onboarding and choose a plan',
+                onTap: () => context.push('/onboarding/auth'),
+              ),
+              _SettingsTile(
+                icon: Icons.person_add_alt_1,
+                title: 'Create account',
+                subtitle: 'Start with email or social sign-in',
+                onTap: () => context.push('/onboarding/auth'),
+              ),
+            ],
+          );
+        }
+
+        return Column(
+          children: [
+            _SettingsTile(
+              icon: Icons.logout,
+              title: 'Sign out',
+              subtitle: 'Log out of this device',
+              onTap: () => _confirmSignOut(context),
+            ),
+            _SettingsTile(
+              icon: Icons.logout_outlined,
+              title: 'Sign out everywhere',
+              subtitle: 'Sign out of all devices',
+              onTap: () => _confirmGlobalSignOut(context),
+            ),
+            _SettingsTile(
+              icon: Icons.person_off_outlined,
+              title: 'Deactivate account',
+              subtitle: 'Temporarily disable until you sign in again',
+              onTap: () => _confirmDeactivateAccount(context),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -182,9 +313,9 @@ Future<void> _confirmSignOut(BuildContext context) async {
     context.go('/signin');
   } catch (e) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Sign out failed: $e')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Sign out failed: $e')));
   }
 }
 
@@ -193,9 +324,7 @@ Future<void> _confirmGlobalSignOut(BuildContext context) async {
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('Sign out everywhere'),
-      content: const Text(
-        'This will sign you out of all devices. Continue?',
-      ),
+      content: const Text('This will sign you out of all devices. Continue?'),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(ctx).pop(false),
@@ -212,16 +341,57 @@ Future<void> _confirmGlobalSignOut(BuildContext context) async {
   if (confirmed != true) return;
 
   try {
-    await Supabase.instance.client.auth.signOut(
-      scope: SignOutScope.global,
-    );
+    await Supabase.instance.client.auth.signOut(scope: SignOutScope.global);
     if (!context.mounted) return;
     context.go('/signin');
   } catch (e) {
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Sign out failed: $e')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Sign out failed: $e')));
+  }
+}
+
+Future<void> _confirmDeactivateAccount(BuildContext context) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Deactivate account'),
+      content: const Text(
+        'Your account will be inactive until you sign in again. '
+        'You can reactivate anytime by logging back in.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Deactivate'),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true) return;
+
+  try {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      await Supabase.instance.client
+          .from('profiles')
+          .update({'is_active': false})
+          .eq('id', user.id);
+    }
+    await Supabase.instance.client.auth.signOut();
+    if (!context.mounted) return;
+    context.go('/signin');
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Deactivate failed: $e')));
   }
 }
 
@@ -305,10 +475,7 @@ class _SettingsSection extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            child: Text(
-              title,
-              style: Theme.of(context).textTheme.labelLarge,
-            ),
+            child: Text(title, style: Theme.of(context).textTheme.labelLarge),
           ),
           ...children,
         ],
@@ -345,7 +512,27 @@ class _SettingsTile extends StatelessWidget {
   }
 }
 
-class _DevicesList extends StatelessWidget {
+class _DevicesList extends StatefulWidget {
+  @override
+  State<_DevicesList> createState() => _DevicesListState();
+}
+
+class _DevicesListState extends State<_DevicesList> {
+  Future<void> _removeDevice(String deviceId) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    await Supabase.instance.client
+        .from('user_devices')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('device_id', deviceId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Device removed.')));
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<_DeviceListData>(
@@ -379,12 +566,14 @@ class _DevicesList extends StatelessWidget {
                 contentPadding: const EdgeInsets.symmetric(horizontal: 4),
                 leading: const Icon(Icons.devices),
                 title: Text(session.deviceName),
-                subtitle: Text(
-                  '${session.platform} • ${session.lastSeen}',
-                ),
+                subtitle: Text('${session.platform} • ${session.lastSeen}'),
                 trailing: session.deviceId == data.localDeviceId
                     ? const Chip(label: Text('This device'))
-                    : null,
+                    : IconButton(
+                        onPressed: () => _removeDevice(session.deviceId),
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Remove device',
+                      ),
               ),
           ],
         );
@@ -400,27 +589,33 @@ Future<_DeviceListData> _loadDeviceListData() async {
   }
 
   final localDeviceId = await DeviceSessionService.getOrCreateDeviceId();
-  final rows = await Supabase.instance.client
-      .from('user_sessions')
-      .select('device_id, device_name, platform, last_seen_at')
-      .eq('user_id', user.id)
-      .order('last_seen_at', ascending: false);
+  List rows;
+  try {
+    rows = await Supabase.instance.client
+        .from('user_devices')
+        .select('device_id, device_name, platform, last_seen')
+        .eq('user_id', user.id)
+        .order('last_seen', ascending: false);
+  } on PostgrestException {
+    rows = await Supabase.instance.client
+        .from('user_sessions')
+        .select('device_id, device_name, platform, last_seen_at')
+        .eq('user_id', user.id)
+        .order('last_seen_at', ascending: false);
+  }
 
-  final sessions = (rows as List)
+  final sessions = rows
       .map(
         (row) => _DeviceSession(
           deviceId: (row['device_id'] ?? '').toString(),
           deviceName: (row['device_name'] ?? 'Unknown').toString(),
           platform: (row['platform'] ?? 'Unknown').toString(),
-          lastSeen: _formatLastSeen(row['last_seen_at']),
+          lastSeen: _formatLastSeen(row['last_seen'] ?? row['last_seen_at']),
         ),
       )
       .toList();
 
-  return _DeviceListData(
-    localDeviceId: localDeviceId,
-    sessions: sessions,
-  );
+  return _DeviceListData(localDeviceId: localDeviceId, sessions: sessions);
 }
 
 String _formatLastSeen(dynamic value) {

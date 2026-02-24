@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:mind_buddy/common/input_sanitizer.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
@@ -1480,14 +1481,6 @@ class MindBuddyEnhancedApi {
     return (tier ?? '').toString().trim().toLowerCase();
   }
 
-  bool _isFullTier(String normalizedTier) {
-    return normalizedTier == 'full' ||
-        normalizedTier == 'full_support' ||
-        normalizedTier == 'full support' ||
-        normalizedTier == 'full_support_mode' ||
-        normalizedTier == 'full support mode';
-  }
-
   bool _isUsageQuestion(String message) {
     final m = message.toLowerCase();
     return m.contains('how many messages') ||
@@ -1525,6 +1518,7 @@ class MindBuddyEnhancedApi {
         .from('chat_messages')
         .select()
         .eq('user_id', userId)
+        .eq('role', 'user')
         .gte('created_at', startOfDay.toIso8601String())
         .lt('created_at', endOfDay.toIso8601String())
         .count();
@@ -1546,13 +1540,13 @@ class MindBuddyEnhancedApi {
         .count();
 
     final deviceCountResponse = await _supabase
-        .from('user_sessions')
+        .from('user_devices')
         .select()
         .eq('user_id', userId)
         .count();
 
     final messageLimit = info.messageLimit;
-    final chatLimit = isFull ? null : 1;
+    final chatLimit = info.chatLimit;
     final journalLimit = info.journalLimit;
     final deviceLimit = info.deviceLimit;
 
@@ -1560,14 +1554,15 @@ class MindBuddyEnhancedApi {
       'rawTier': rawTier,
       'normalizedTier': normalizedTier,
       'isFull': isFull,
+      'planName': info.planName,
       'isPending': info.isPending,
-      'messageCount': messageCountResponse.count ?? 0,
+      'messageCount': messageCountResponse.count,
       'messageLimit': messageLimit,
-      'chatCount': chatCountResponse.count ?? 0,
+      'chatCount': chatCountResponse.count,
       'chatLimit': chatLimit,
-      'journalCount': journalCountResponse.count ?? 0,
+      'journalCount': journalCountResponse.count,
       'journalLimit': journalLimit,
-      'deviceCount': deviceCountResponse.count ?? 0,
+      'deviceCount': deviceCountResponse.count,
       'deviceLimit': deviceLimit,
       'dayId': dayId,
     };
@@ -1575,17 +1570,24 @@ class MindBuddyEnhancedApi {
 
   Future<String> sendMessage(
     String message,
-    List<Map<String, dynamic>> conversationHistory,
-  ) async {
+    List<Map<String, dynamic>> conversationHistory, {
+    String? memoryContext,
+  }) async {
     final session = _supabase.auth.currentSession;
     if (session == null) {
       throw Exception('User is not logged in (no Supabase session)');
     }
 
+    final systemPrompt = buildSystemPrompt();
+    final fullSystemPrompt =
+        (memoryContext != null && memoryContext.trim().isNotEmpty)
+        ? '$systemPrompt\n\n$memoryContext'
+        : systemPrompt;
+
     try {
       if (_isUsageQuestion(message)) {
         final usage = await getChatUsageSummary();
-        final isFull = usage['isFull'] == true;
+        final planName = (usage['planName'] ?? '').toString();
         final messageCount = usage['messageCount'] as int;
         final messageLimit = usage['messageLimit'] as int;
         final chatCount = usage['chatCount'] as int;
@@ -1596,16 +1598,14 @@ class MindBuddyEnhancedApi {
         final deviceLimit = usage['deviceLimit'] as int? ?? 0;
 
         final isPending = usage['isPending'] == true;
-        final tierLabel = isPending
-            ? 'Choose a plan'
-            : (isFull ? 'Full Support' : 'Light Support');
-        final chatLimitText =
-            isPending ? 'Pick a plan to start chats' : (isFull ? 'Unlimited chats per day' : '1 chat per day');
+        final tierLabel = isPending ? 'FREE MODE' : planName;
+        final chatLimitText = isPending
+            ? 'No AI chats in FREE MODE'
+            : '$chatLimit chats per day';
 
         return 'You are on $tierLabel. '
-            'Messages today (including replies): $messageCount / $messageLimit. '
-            'Chats started today: $chatCount / '
-            '${chatLimit ?? 'Unlimited'}. '
+            'AI chats today: $messageCount / $messageLimit. '
+            'Conversations started today: $chatCount / $chatLimit. '
             '$chatLimitText. '
             'Journal entries today: $journalCount / $journalLimit. '
             'Devices: $deviceCount / $deviceLimit.';
@@ -1617,6 +1617,7 @@ class MindBuddyEnhancedApi {
           'message': message,
           'history': conversationHistory,
           'tools': availableFunctions, // ✅ enable tools
+          'system_prompt': fullSystemPrompt,
           // Optional but nice: pass your system prompt if you want server to use it
           // 'system_prompt': buildSystemPrompt(),
         },
@@ -1643,6 +1644,7 @@ class MindBuddyEnhancedApi {
           toolCalls,
           conversationHistory,
           assistantMessage,
+          fullSystemPrompt,
         );
       }
 
@@ -1670,6 +1672,7 @@ class MindBuddyEnhancedApi {
     List<Map<String, dynamic>> toolCalls,
     List<Map<String, dynamic>> conversationHistory,
     Map<String, dynamic> assistantMessage,
+    String systemPrompt,
   ) async {
     final functionResults = <Map<String, dynamic>>[];
 
@@ -1681,7 +1684,7 @@ class MindBuddyEnhancedApi {
       if (argsValue is String) {
         args = Map<String, dynamic>.from(jsonDecode(argsValue) as Map);
       } else if (argsValue is Map) {
-        args = Map<String, dynamic>.from(argsValue as Map);
+        args = Map<String, dynamic>.from(argsValue);
       } else {
         throw Exception('Unexpected arguments type: ${argsValue.runtimeType}');
       }
@@ -1709,6 +1712,7 @@ class MindBuddyEnhancedApi {
         'history': conversationHistory,
         'assistant_message': assistantMessage,
         'tool_results': functionResults,
+        'system_prompt': systemPrompt,
       },
     );
 
@@ -1731,7 +1735,7 @@ class MindBuddyEnhancedApi {
         .toIso8601String()
         .split('T')[0];
 
-    return '''You are a helpful wellbeing assistant for Mind Buddy app. 
+    return '''You are a helpful wellbeing assistant for MyBrainBubble app. 
 
 TODAY'S DATE: $today
 CURRENT YEAR: ${DateTime.now().year}
@@ -1780,11 +1784,16 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
       return {'success': false, 'error': 'User not authenticated'};
     }
 
-    String getDate(String? dateStr) {
-      if (dateStr == null || dateStr.isEmpty) {
-        return DateTime.now().toIso8601String().split('T')[0];
+    String getDate(dynamic dateValue) {
+      return parseDateOrToday(dateValue);
+    }
+
+    void sanitizeIntegerDateParts(Map<String, dynamic> target) {
+      for (final key in target.keys.toList()) {
+        if (key == 'day') continue;
+        if (!isDateComponentFieldName(key)) continue;
+        target[key] = parseNullableIntLike(target[key], fieldName: key);
       }
-      return dateStr;
     }
 
     try {
@@ -1833,34 +1842,58 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
 
         // MOODS - ADD
         case 'log_mood':
-          await supabase.from('mood_logs').insert({
+          final moodDate = getDate(args['date']);
+          final moodIntensity =
+              parseNullableIntLike(args['intensity'], fieldName: 'intensity') ??
+              5;
+          final moodPayload = {
             'user_id': user.id,
             'feeling': args['mood'],
-            'intensity': args['intensity'] ?? 5,
+            'intensity': moodIntensity,
             'notes': args['notes'],
-            'day': getDate(args['date']),
-          });
+            'day': moodDate,
+          };
+          final existingMood = await supabase
+              .from('mood_logs')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('day', moodDate)
+              .limit(1);
+          if ((existingMood as List).isNotEmpty) {
+            await supabase
+                .from('mood_logs')
+                .update(moodPayload)
+                .eq('id', existingMood.first['id']);
+            return {'success': true, 'message': 'Mood updated for that day'};
+          }
+          await supabase.from('mood_logs').insert(moodPayload);
           return {'success': true, 'message': 'Mood logged'};
 
         // MOODS - UPDATE
         case 'update_mood_log':
+          final moodUpdateDate = getDate(args['date']);
+          final updatedIntensity =
+              parseNullableIntLike(args['intensity'], fieldName: 'intensity') ??
+              5;
           await supabase
               .from('mood_logs')
               .update({
                 'feeling': args['mood'],
-                'intensity': args['intensity'] ?? 5,
+                'intensity': updatedIntensity,
+                'day': moodUpdateDate,
               })
               .eq('user_id', user.id)
-              .eq('day', getDate(args['date']));
+              .eq('day', moodUpdateDate);
           return {'success': true, 'message': 'Mood updated'};
 
         // MOODS - DELETE
         case 'delete_mood_log':
+          final moodDeleteDate = getDate(args['date']);
           await supabase
               .from('mood_logs')
               .delete()
               .eq('user_id', user.id)
-              .eq('day', getDate(args['date']));
+              .eq('day', moodDeleteDate);
           return {'success': true, 'message': 'Mood deleted'};
 
         // HABITS - ADD
@@ -1999,35 +2032,59 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
 
         // CYCLE - ADD
         case 'log_cycle':
-          await supabase.from('menstrual_logs').insert({
+          final cycleDate = getDate(args['date']);
+          final cycleInsert = <String, dynamic>{
             'user_id': user.id,
-            'day': args['date'],
+            'day': cycleDate,
             'flow': args['flow'],
             'symptoms': args['symptoms'],
-          });
+          };
+          sanitizeIntegerDateParts(cycleInsert);
+          final existingCycle = await supabase
+              .from('menstrual_logs')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('day', cycleDate)
+              .limit(1);
+          if ((existingCycle as List).isNotEmpty) {
+            await supabase
+                .from('menstrual_logs')
+                .update(cycleInsert)
+                .eq('id', existingCycle.first['id']);
+            return {
+              'success': true,
+              'message': 'Cycle log updated for that day',
+            };
+          }
+          await supabase.from('menstrual_logs').insert(cycleInsert);
           return {'success': true, 'message': 'Cycle logged'};
 
         // CYCLE - UPDATE
         case 'update_cycle_log':
+          final cycleUpdateDate = getDate(args['date']);
           final cycleUpdate = <String, dynamic>{};
           if (args['flow'] != null) cycleUpdate['flow'] = args['flow'];
-          if (args['symptoms'] != null)
+          if (args['symptoms'] != null) {
             cycleUpdate['symptoms'] = args['symptoms'];
+          }
+          cycleUpdate['day'] = cycleUpdateDate;
+          sanitizeIntegerDateParts(cycleUpdate);
 
           await supabase
               .from('menstrual_logs')
               .update(cycleUpdate)
               .eq('user_id', user.id)
-              .eq('day', args['date']);
+              .eq('day', cycleUpdateDate);
           return {'success': true, 'message': 'Cycle log updated'};
 
         // CYCLE - DELETE
         case 'delete_cycle_log':
+          final cycleDeleteDate = getDate(args['date']);
           await supabase
               .from('menstrual_logs')
               .delete()
               .eq('user_id', user.id)
-              .eq('day', args['date']);
+              .eq('day', cycleDeleteDate);
           return {'success': true, 'message': 'Cycle log deleted'};
 
         // EXPENSES - ADD
@@ -2045,8 +2102,9 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         case 'update_expense':
           final expenseUpdate = <String, dynamic>{};
           if (args['amount'] != null) expenseUpdate['cost'] = args['amount'];
-          if (args['category'] != null)
+          if (args['category'] != null) {
             expenseUpdate['category'] = args['category'];
+          }
 
           await supabase
               .from('expense_logs')
@@ -2111,8 +2169,9 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         // FASTING - UPDATE
         case 'update_fast_log':
           final fastUpdate = <String, dynamic>{};
-          if (args['duration_hours'] != null)
+          if (args['duration_hours'] != null) {
             fastUpdate['duration_hours'] = args['duration_hours'];
+          }
           if (args['feeling'] != null) fastUpdate['feeling'] = args['feeling'];
 
           await supabase
@@ -2174,10 +2233,12 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         // TASKS - UPDATE
         case 'update_task':
           final taskUpdate = <String, dynamic>{};
-          if (args['completed'] != null)
+          if (args['completed'] != null) {
             taskUpdate['is_done'] = args['completed'];
-          if (args['priority'] != null)
+          }
+          if (args['priority'] != null) {
             taskUpdate['priority'] = args['priority'];
+          }
 
           await supabase
               .from('task_logs')
@@ -2210,8 +2271,9 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         case 'update_wishlist_item':
           final wishlistUpdate = <String, dynamic>{};
           if (args['price'] != null) wishlistUpdate['price'] = args['price'];
-          if (args['priority'] != null)
+          if (args['priority'] != null) {
             wishlistUpdate['priority'] = args['priority'];
+          }
 
           await supabase
               .from('wishlist')
@@ -2342,8 +2404,9 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         // RESTAURANTS - UPDATE
         case 'update_restaurant_log':
           final restaurantUpdate = <String, dynamic>{};
-          if (args['rating'] != null)
+          if (args['rating'] != null) {
             restaurantUpdate['rating'] = args['rating'];
+          }
           if (args['notes'] != null) restaurantUpdate['notes'] = args['notes'];
 
           await supabase
@@ -2439,8 +2502,9 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
           final workoutUpdate = <String, dynamic>{};
           if (args['sets'] != null) workoutUpdate['sets'] = args['sets'];
           if (args['reps'] != null) workoutUpdate['reps'] = args['reps'];
-          if (args['weight_kg'] != null)
+          if (args['weight_kg'] != null) {
             workoutUpdate['weight_kg'] = args['weight_kg'];
+          }
 
           await supabase
               .from('workout_logs')
@@ -2475,10 +2539,12 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         // SKIN CARE - UPDATE
         case 'update_skin_care_log':
           final skinCareUpdate = <String, dynamic>{};
-          if (args['skin_condition'] != null)
+          if (args['skin_condition'] != null) {
             skinCareUpdate['skin_condition'] = args['skin_condition'];
-          if (args['products'] != null)
+          }
+          if (args['products'] != null) {
             skinCareUpdate['products'] = args['products'];
+          }
 
           await supabase
               .from('skin_care_logs')
@@ -2511,10 +2577,12 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         // STUDY - UPDATE
         case 'update_study_log':
           final studyUpdate = <String, dynamic>{};
-          if (args['duration_hours'] != null)
+          if (args['duration_hours'] != null) {
             studyUpdate['duration_hours'] = args['duration_hours'];
-          if (args['focus_rating'] != null)
+          }
+          if (args['focus_rating'] != null) {
             studyUpdate['focus_rating'] = args['focus_rating'];
+          }
 
           await supabase
               .from('study_logs')
@@ -2549,10 +2617,12 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         // SOCIAL - UPDATE
         case 'update_social_log':
           final socialUpdate = <String, dynamic>{};
-          if (args['social_energy'] != null)
+          if (args['social_energy'] != null) {
             socialUpdate['social_energy'] = args['social_energy'];
-          if (args['activity_type'] != null)
+          }
+          if (args['activity_type'] != null) {
             socialUpdate['activity_type'] = args['activity_type'];
+          }
 
           await supabase
               .from('social_logs')
@@ -2573,6 +2643,17 @@ Be conversational and encouraging. Confirm what you've logged/updated/deleted.''
         default:
           return {'success': false, 'error': 'Unknown function'};
       }
+    } on PostgrestException catch (e) {
+      if (e.code == '23505') {
+        return {
+          'success': false,
+          'error':
+              'You’ve already logged today — edit your existing entry instead.',
+        };
+      }
+      return {'success': false, 'error': e.message};
+    } on FormatException catch (e) {
+      return {'success': false, 'error': e.message};
     } catch (e) {
       return {'success': false, 'error': e.toString()};
     }

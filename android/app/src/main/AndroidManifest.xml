@@ -4,7 +4,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <application
-        android:label="mind_buddy"
+        android:label="MyBrainBubble"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -32,9 +32,12 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <!-- Handles mindbuddy://reset -->
+                <!-- Handles brainbubble://auth/callback -->
+                <data android:scheme="brainbubble" android:host="auth" android:path="/callback" />
+                <!-- Handles com.brainbubble.app://auth/callback -->
+                <data android:scheme="com.brainbubble.app" android:host="auth" android:path="/callback" />
+                <!-- Legacy callbacks -->
                 <data android:scheme="mindbuddy" android:host="reset" />
-                <!-- Handles mindbuddy://login-callback -->
                 <data android:scheme="mindbuddy" android:host="login-callback" />
         </intent-filter>
 

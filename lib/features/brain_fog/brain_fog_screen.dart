@@ -1,4 +1,3 @@
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -6,6 +5,8 @@ import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:mind_buddy/guides/guide_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class BrainFogScreen extends StatefulWidget {
   const BrainFogScreen({super.key});
@@ -29,6 +30,19 @@ class _BrainFogScreenState extends State<BrainFogScreen>
   bool _isLoading = true;
   late AnimationController _shakeController;
   final supabase = Supabase.instance.client;
+  final TransformationController _canvasController = TransformationController();
+  Size? _lastCanvasSize;
+  bool _figureOutMode = false;
+  int _figureStep =
+      0; // 0 = off, 1 = controllable, 2 = focus order, 3 = let go, 4 = next step
+  final Set<String> _controllableIds = <String>{};
+  final List<String> _focusOrder = <String>[];
+  final Map<String, Offset> _dragGrabOffsets = <String, Offset>{};
+  final GlobalKey _addBubbleButtonKey = GlobalKey();
+  final GlobalKey _brainFogCanvasContainerKey = GlobalKey();
+  final GlobalKey _modeToggleKey = GlobalKey();
+  final GlobalKey _deleteButtonKey = GlobalKey();
+  bool _guideStartedThisOpen = false;
 
   @override
   void initState() {
@@ -42,8 +56,135 @@ class _BrainFogScreenState extends State<BrainFogScreen>
 
   @override
   void dispose() {
+    GuideManager.dismissActiveGuideForPage('brainFog');
     _shakeController.dispose();
+    _canvasController.dispose();
     super.dispose();
+  }
+
+  Future<void> _showGuideIfNeeded({bool force = false}) async {
+    if (!force && _guideStartedThisOpen) return;
+    if (!force) {
+      _guideStartedThisOpen = true;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    final seenKey = 'pageGuideShown_brainFog';
+    final keepVisible = prefs.getBool('keepInstructionsVisible') ?? false;
+    final shown = prefs.getBool(seenKey) ?? false;
+
+    final fullSteps = _brainFogGuideSteps(includeDelete: true);
+    final reducedSteps = _brainFogGuideSteps(includeDelete: false);
+
+    for (var attempt = 1; attempt <= 10; attempt++) {
+      if (!mounted) return;
+      final addReady = _isTargetReady(_addBubbleButtonKey);
+      final canvasReady = _isTargetReady(_brainFogCanvasContainerKey);
+      final modeReady = _isTargetReady(_modeToggleKey);
+      final deleteReady = _isTargetReady(_deleteButtonKey);
+      final canRunFull = addReady && canvasReady && modeReady && deleteReady;
+
+      debugPrint(
+        '[Guide][brainFog] pageId=brainFog keepInstructionsVisible=$keepVisible '
+        'pageGuideShown_brainFog=$shown attempt=$attempt/10 steps.length=${fullSteps.length}',
+      );
+      for (final step in fullSteps) {
+        final hasContext = step.key.currentContext != null;
+        debugPrint(
+          '[Guide][brainFog] step="${step.title}" hasContext=$hasContext '
+          'targetReady=${_isTargetReady(step.key)}',
+        );
+      }
+
+      if (canRunFull) {
+        await GuideManager.showGuideIfNeeded(
+          context: context,
+          pageId: 'brainFog',
+          force: force,
+          steps: fullSteps,
+          requireAllTargetsVisible: true,
+          debugLogs: true,
+        );
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+    }
+
+    debugPrint(
+      '[Guide][brainFog] full target set not ready after retries. '
+      'Starting reduced guide with stable targets only.',
+    );
+    debugPrint(
+      '[Guide][brainFog] reduced steps.length=${reducedSteps.length} '
+      'targetsReady=${reducedSteps.map((e) => _isTargetReady(e.key)).toList()}',
+    );
+    final steps = <GuideStep>[
+      for (final step in reducedSteps)
+        if (_isTargetReady(step.key)) step,
+    ];
+    await GuideManager.showGuideIfNeeded(
+      context: context,
+      pageId: 'brainFog',
+      force: force,
+      steps: steps,
+      requireAllTargetsVisible: true,
+      debugLogs: true,
+    );
+  }
+
+  List<GuideStep> _brainFogGuideSteps({required bool includeDelete}) {
+    return <GuideStep>[
+      GuideStep(
+        key: _addBubbleButtonKey,
+        title: 'Got a thought floating?',
+        body: 'Tap + to release a new fog bubble.',
+        align: GuideAlign.top,
+      ),
+      GuideStep(
+        key: _brainFogCanvasContainerKey,
+        title: 'Let your mind wander',
+        body: 'Drag bubbles anywhere. No right place.',
+        align: GuideAlign.bottom,
+      ),
+      GuideStep(
+        key: _modeToggleKey,
+        title: '🫧 Ready to bring things into focus?',
+        body: 'Turn on Figure-Out Mode to organise your foggy thoughts.',
+        align: GuideAlign.bottom,
+      ),
+      if (includeDelete)
+        GuideStep(
+          key: _deleteButtonKey,
+          title: 'Ready to let it go?',
+          body: 'Hold a bubble to dissolve it.',
+          align: GuideAlign.bottom,
+        ),
+      GuideStep(
+        key: _brainFogCanvasContainerKey,
+        title: 'Need perspective?',
+        body: 'Pinch to zoom out.',
+        align: GuideAlign.top,
+      ),
+    ];
+  }
+
+  bool _isTargetReady(GlobalKey key) {
+    final context = key.currentContext;
+    if (context == null) return false;
+    final render = context.findRenderObject();
+    if (render is! RenderBox || !render.hasSize) return false;
+    final size = render.size;
+    return size.width > 0 && size.height > 0;
+  }
+
+  void _scheduleGuideAutoStart() {
+    if (!mounted || _guideStartedThisOpen) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _isLoading) return;
+      Future<void>.delayed(const Duration(milliseconds: 24), () {
+        if (!mounted || _isLoading || _guideStartedThisOpen) return;
+        _showGuideIfNeeded();
+      });
+    });
   }
 
   // --- SUPABASE LOGIC ---
@@ -92,9 +233,11 @@ class _BrainFogScreenState extends State<BrainFogScreen>
         }
         _isLoading = false;
       });
+      _scheduleGuideAutoStart();
     } catch (e) {
       debugPrint('Fetch error: $e');
       setState(() => _isLoading = false);
+      _scheduleGuideAutoStart();
     }
   }
 
@@ -143,36 +286,37 @@ class _BrainFogScreenState extends State<BrainFogScreen>
     });
 
     ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
-          SnackBar(
-            content: const Text('Thought cleared...'),
-            backgroundColor: Colors.teal.shade900,
-            // CHANGED: 15 seconds as requested
-            duration: const Duration(seconds: 15),
-            behavior: SnackBarBehavior.floating,
-            action: SnackBarAction(
-              label: 'UNDO',
-              textColor: Colors.white,
-              onPressed: () {
-                setState(() {
-                  _thoughts.insert(originalIndex, deletedThought);
-                });
-              },
-            ),
-          ),
-        )
-        .closed
-        .then((reason) async {
-          if (reason != SnackBarClosedReason.action) {
-            final bool isRealId = !RegExp(r'^\d+$').hasMatch(deletedThought.id);
-            if (isRealId) {
-              await supabase.from('brain_fog').delete().match({
-                'id': deletedThought.id,
-              });
-            }
-          }
-        });
+    final controller = ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Thought cleared...'),
+        backgroundColor: Colors.teal.shade900,
+        duration: const Duration(seconds: 4),
+        behavior: SnackBarBehavior.fixed,
+        action: SnackBarAction(
+          label: 'UNDO',
+          textColor: Colors.white,
+          onPressed: () {
+            setState(() {
+              _thoughts.insert(originalIndex, deletedThought);
+            });
+          },
+        ),
+      ),
+    );
+    Future<void>.delayed(const Duration(seconds: 4), () {
+      if (!mounted) return;
+      controller.close();
+    });
+    controller.closed.then((reason) async {
+      if (reason != SnackBarClosedReason.action) {
+        final bool isRealId = !RegExp(r'^\d+$').hasMatch(deletedThought.id);
+        if (isRealId) {
+          await supabase.from('brain_fog').delete().match({
+            'id': deletedThought.id,
+          });
+        }
+      }
+    });
   }
 
   // ... inside your build method AppBar ...
@@ -216,9 +360,78 @@ class _BrainFogScreenState extends State<BrainFogScreen>
     });
   }
 
+  void _toggleFigureOutMode() {
+    setState(() {
+      _figureOutMode = !_figureOutMode;
+      _figureStep = _figureOutMode ? 1 : 0;
+      _controllableIds.clear();
+      _focusOrder.clear();
+    });
+  }
+
+  void _advanceFigureStep() {
+    if (!_figureOutMode) return;
+    setState(() {
+      if (_figureStep < 4) {
+        _figureStep += 1;
+      } else {
+        _figureOutMode = false;
+        _figureStep = 0;
+        _controllableIds.clear();
+        _focusOrder.clear();
+      }
+    });
+  }
+
+  void _handleFigureTap(_Thought thought) {
+    if (!_figureOutMode) return;
+    if (_figureStep == 1) {
+      setState(() {
+        if (_controllableIds.contains(thought.id)) {
+          _controllableIds.remove(thought.id);
+          _focusOrder.remove(thought.id);
+        } else {
+          _controllableIds.add(thought.id);
+        }
+      });
+      return;
+    }
+    if (_figureStep == 2) {
+      if (!_controllableIds.contains(thought.id)) return;
+      setState(() {
+        if (_focusOrder.contains(thought.id)) {
+          _focusOrder.remove(thought.id);
+        } else {
+          _focusOrder.add(thought.id);
+        }
+      });
+      return;
+    }
+  }
+
+  void _goFigureAction(String route) {
+    setState(() {
+      _figureOutMode = false;
+      _figureStep = 0;
+      _controllableIds.clear();
+      _focusOrder.clear();
+    });
+    context.go(route);
+  }
+
   void _addThought() {
     final size = MediaQuery.of(context).size;
-    final center = Offset(size.width / 2 - 55, size.height / 2 - 100);
+    final viewportCenter = size.center(Offset.zero);
+    final worldCenter = _canvasController.toScene(viewportCenter);
+    final canvasSize = Size(size.width * 3, size.height * 3);
+    final worldOffset = Offset(
+      (canvasSize.width - size.width) / 2,
+      (canvasSize.height - size.height) / 2,
+    );
+    final center = Offset(
+      worldCenter.dx - worldOffset.dx - 55,
+      worldCenter.dy - worldOffset.dy - 100,
+    );
     final newThought = _Thought(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       offset: center,
@@ -268,14 +481,32 @@ class _BrainFogScreenState extends State<BrainFogScreen>
     );
   }
 
-  double _getBubbleSize(String text) {
-    return (110.0 + (text.length / 10) * 15).clamp(110.0, 220.0);
+  double _getBubbleSize(String text, {double scale = 1}) {
+    final size = (110.0 + (text.length / 10) * 15).clamp(110.0, 220.0);
+    return size * scale;
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final size = MediaQuery.of(context).size;
+    final crowdFactor = ((_thoughts.length - 8).clamp(0, 6)) / 6;
+    final crowdScale = (1 - (0.15 * crowdFactor)).clamp(0.75, 1.0);
+    final spreadFactor = 0.18 * crowdFactor;
+    final canvasSize = Size(size.width * 3, size.height * 3);
+    final worldOffset = Offset(
+      (canvasSize.width - size.width) / 2,
+      (canvasSize.height - size.height) / 2,
+    );
+
+    if (_lastCanvasSize != size) {
+      _lastCanvasSize = size;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _canvasController.value = Matrix4.identity()
+          ..translate(-worldOffset.dx, -worldOffset.dy);
+      });
+    }
 
     return MbScaffold(
       applyBackground: true,
@@ -293,6 +524,10 @@ class _BrainFogScreenState extends State<BrainFogScreen>
         ),
         actions: [
           MbGlowIconButton(
+            icon: Icons.help_outline,
+            onPressed: () => _showGuideIfNeeded(force: true),
+          ),
+          MbGlowIconButton(
             icon: Icons.notifications_outlined,
             onPressed: () => context.push('/settings/notifications'),
           ),
@@ -302,6 +537,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
               onPressed: _confirmClearAll,
             ),
             MbGlowIconButton(
+              key: _deleteButtonKey,
               icon: _isDeleteMode ? Icons.check_circle : Icons.delete_outline,
               iconColor: _isDeleteMode ? Colors.green : cs.onSurface,
               onPressed: _toggleDeleteMode,
@@ -310,6 +546,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
         ],
       ),
       floatingActionButton: FloatingActionButton(
+        key: _addBubbleButtonKey,
         onPressed: _addThought,
         backgroundColor: cs.primary,
         child: Icon(Icons.add, color: cs.onPrimary),
@@ -322,51 +559,201 @@ class _BrainFogScreenState extends State<BrainFogScreen>
             ? const Center(child: CircularProgressIndicator())
             : Stack(
                 children: [
-                Center(
-                  child: Text(
-                    "Let it out 💨 \nWhat's overwhelming you today?",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: cs.onSurface.withOpacity(0.3)),
-                  ),
-                ),
-                ..._thoughts.map((t) {
-                  double bSize = _getBubbleSize(t.text);
-                  return Positioned(
-                    left: t.offset.dx,
-                    top: t.offset.dy,
-                    child: Draggable<_Thought>(
-                      onDragEnd: (details) {
-                        setState(() {
-                          t.offset = Offset(
-                            details.offset.dx.clamp(0, size.width - bSize),
-                            details.offset.dy.clamp(0, size.height - 250),
-                          );
-                        });
-                        _upsertThought(t);
-                      },
-                      feedback: _buildBubble(t, isDragging: true),
-                      childWhenDragging: const SizedBox.shrink(),
-                      child: _buildBubble(t),
+                  Positioned.fill(
+                    child: Container(
+                      key: _brainFogCanvasContainerKey,
+                      child: InteractiveViewer(
+                        transformationController: _canvasController,
+                        minScale: 0.7,
+                        maxScale: 2.0,
+                        panEnabled: true,
+                        scaleEnabled: true,
+                        constrained: false,
+                        boundaryMargin: EdgeInsets.zero,
+                        clipBehavior: Clip.hardEdge,
+                        child: SizedBox(
+                          width: canvasSize.width,
+                          height: canvasSize.height,
+                          child: Stack(
+                            children: [
+                              Positioned.fill(
+                                child: Container(
+                                  color: Theme.of(
+                                    context,
+                                  ).scaffoldBackgroundColor,
+                                ),
+                              ),
+                              Center(
+                                child: Text(
+                                  "Let it out 💨 \nWhat's overwhelming you today?",
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: cs.onSurface.withOpacity(0.3),
+                                  ),
+                                ),
+                              ),
+                              ..._thoughts.map((t) {
+                                final bSize = _getBubbleSize(
+                                  t.text,
+                                  scale: crowdScale,
+                                );
+                                return Positioned(
+                                  left: t.offset.dx + worldOffset.dx,
+                                  top: t.offset.dy + worldOffset.dy,
+                                  child: GestureDetector(
+                                    onPanStart: (details) {
+                                      final box =
+                                          context.findRenderObject()
+                                              as RenderBox?;
+                                      final local = box != null
+                                          ? box.globalToLocal(
+                                              details.globalPosition,
+                                            )
+                                          : details.globalPosition;
+                                      final worldPos = _canvasController
+                                          .toScene(local);
+                                      _dragGrabOffsets[t.id] = Offset(
+                                        worldPos.dx -
+                                            (t.offset.dx + worldOffset.dx),
+                                        worldPos.dy -
+                                            (t.offset.dy + worldOffset.dy),
+                                      );
+                                    },
+                                    onPanUpdate: (details) {
+                                      final box =
+                                          context.findRenderObject()
+                                              as RenderBox?;
+                                      final local = box != null
+                                          ? box.globalToLocal(
+                                              details.globalPosition,
+                                            )
+                                          : details.globalPosition;
+                                      final worldPos = _canvasController
+                                          .toScene(local);
+                                      final grab =
+                                          _dragGrabOffsets[t.id] ?? Offset.zero;
+                                      setState(() {
+                                        t.offset = Offset(
+                                          worldPos.dx -
+                                              worldOffset.dx -
+                                              grab.dx,
+                                          worldPos.dy -
+                                              worldOffset.dy -
+                                              grab.dy,
+                                        );
+                                      });
+                                    },
+                                    onPanEnd: (_) {
+                                      _dragGrabOffsets.remove(t.id);
+                                      _upsertThought(t);
+                                    },
+                                    child: _buildBubble(
+                                      t,
+                                      crowdScale: crowdScale,
+                                      spreadFactor: spreadFactor,
+                                      canvasSize: canvasSize,
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
-                  );
-                }).toList(),
+                  ),
+                  Positioned(
+                    top: 10,
+                    left: 16,
+                    right: 16,
+                    child: KeyedSubtree(
+                      key: _modeToggleKey,
+                      child: _FigureOutCard(
+                        enabled: _figureOutMode,
+                        step: _figureStep,
+                        canAdvance: _figureStep == 1
+                            ? _controllableIds.isNotEmpty
+                            : (_figureStep == 2
+                                  ? _focusOrder.isNotEmpty
+                                  : true),
+                        onToggle: _toggleFigureOutMode,
+                        onNext: _advanceFigureStep,
+                      ),
+                    ),
+                  ),
+                  if (_thoughts.length >= 9)
+                    Positioned(
+                      top: 74,
+                      left: 24,
+                      right: 24,
+                      child: Text(
+                        'Too crowded? Pinch to zoom.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: cs.onSurface.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                  if (_figureOutMode && _figureStep == 4)
+                    Positioned(
+                      left: 16,
+                      right: 16,
+                      bottom: 28,
+                      child: _FigureOutActions(
+                        onVent: () => _goFigureAction('/chat'),
+                        onJournal: () => _goFigureAction('/journals'),
+                        onHabit: () => _goFigureAction('/habits'),
+                        onPomodoro: () => _goFigureAction('/pomodoro'),
+                      ),
+                    ),
                 ],
               ),
       ),
     );
   }
 
-  Widget _buildBubble(_Thought t, {bool isDragging = false}) {
+  Widget _buildBubble(
+    _Thought t, {
+    bool isDragging = false,
+    double crowdScale = 1,
+    double spreadFactor = 0,
+    Size? canvasSize,
+  }) {
     final cs = Theme.of(context).colorScheme;
-    double bSize = _getBubbleSize(t.text);
+    double bSize = _getBubbleSize(t.text, scale: crowdScale);
     final isPopping = _poppingIds.contains(t.id);
+    final isControllable = _controllableIds.contains(t.id);
+    final focusIndex = _focusOrder.indexOf(t.id);
+    final isFocused = focusIndex >= 0;
+    final isDimmed =
+        _figureOutMode &&
+        ((_figureStep == 1 && !isControllable) ||
+            (_figureStep >= 2 && !isFocused));
+    final lift = (_figureOutMode && isControllable) ? -10.0 : 0.0;
+    final driftDown = (_figureOutMode && _figureStep == 3 && !isFocused)
+        ? 12.0
+        : 0.0;
+    Offset spreadOffset = Offset.zero;
+    if (canvasSize != null && spreadFactor > 0) {
+      final center = canvasSize.center(Offset.zero);
+      final vec = t.offset - center;
+      spreadOffset = vec * spreadFactor;
+    }
+    final baseColor = cs.surface.withOpacity(0.6);
+    final highlightColor = cs.primary.withOpacity(0.35);
+    final bubbleColor = _figureOutMode && (isControllable || isFocused)
+        ? highlightColor
+        : baseColor;
+    final glowStrength = _figureOutMode && (isControllable || isFocused)
+        ? 0.65
+        : 0.4;
 
     return AnimatedScale(
       scale: isPopping ? 0.2 : 1,
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeOut,
       child: AnimatedOpacity(
-        opacity: isPopping ? 0 : 1,
+        opacity: isPopping ? 0 : (isDimmed ? 0.55 : 1),
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOut,
         child: AnimatedBuilder(
@@ -377,61 +764,325 @@ class _BrainFogScreenState extends State<BrainFogScreen>
                 : 0,
             child: child,
           ),
-          child: GestureDetector(
-            onLongPress: () => _popThought(t),
-            onTap: () => _isDeleteMode ? _deleteThought(t) : _showEditSheet(t),
-            child: Container(
-              width: bSize,
-              height: bSize,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: cs.surface.withOpacity(0.6),
-                boxShadow: [
-                  BoxShadow(
-                    color: cs.primary.withOpacity(0.4),
-                    blurRadius: 15,
-                    blurStyle: BlurStyle.outer,
+          child: Transform.translate(
+            offset: Offset(0, lift + driftDown) + spreadOffset,
+            child: GestureDetector(
+              onLongPress: () => _popThought(t),
+              onTap: () => _isDeleteMode
+                  ? _deleteThought(t)
+                  : (_figureOutMode ? _handleFigureTap(t) : _showEditSheet(t)),
+              child: Container(
+                width: bSize,
+                height: bSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: bubbleColor,
+                  boxShadow: [
+                    BoxShadow(
+                      color: cs.primary.withOpacity(glowStrength),
+                      blurRadius: 18,
+                      blurStyle: BlurStyle.outer,
+                    ),
+                  ],
+                  border: Border.all(
+                    color: _isDeleteMode
+                        ? Colors.red
+                        : cs.primary.withOpacity(0.25),
                   ),
-                ],
-                border: Border.all(
-                  color:
-                      _isDeleteMode ? Colors.red : cs.primary.withOpacity(0.2),
                 ),
-              ),
-              child: Stack(
-                children: [
-                  Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(15),
-                      child: Material(
-                        color: Colors.transparent,
-                        child: Text(
-                          t.text.isEmpty ? "Tap..." : t.text,
-                          textAlign: TextAlign.center,
-                          maxLines: 5,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: cs.onSurface,
-                            fontSize: 12,
-                            decoration: TextDecoration.none,
+                child: Stack(
+                  children: [
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(15),
+                        child: Material(
+                          color: Colors.transparent,
+                          child: Text(
+                            t.text.isEmpty ? "Tap..." : t.text,
+                            textAlign: TextAlign.center,
+                            maxLines: 5,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: cs.onSurface,
+                              fontSize: 12,
+                              decoration: TextDecoration.none,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  if (_isDeleteMode)
-                    const Positioned(
-                      top: 0,
-                      right: 0,
-                      child: CircleAvatar(
-                        radius: 12,
-                        backgroundColor: Colors.red,
-                        child: Icon(Icons.remove, size: 16, color: Colors.white),
+                    if (_isDeleteMode)
+                      const Positioned(
+                        top: 0,
+                        right: 0,
+                        child: CircleAvatar(
+                          radius: 12,
+                          backgroundColor: Colors.red,
+                          child: Icon(
+                            Icons.remove,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
                       ),
-                    ),
-                ],
+                    if (_figureOutMode && isFocused)
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: cs.primary.withOpacity(0.85),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${focusIndex + 1}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FigureOutCard extends StatelessWidget {
+  const _FigureOutCard({
+    required this.enabled,
+    required this.step,
+    required this.canAdvance,
+    required this.onToggle,
+    required this.onNext,
+  });
+
+  final bool enabled;
+  final int step;
+  final bool canAdvance;
+  final VoidCallback onToggle;
+  final VoidCallback onNext;
+
+  String _prompt() {
+    if (!enabled) {
+      return 'Figure-Out Mode';
+    }
+    switch (step) {
+      case 1:
+        return 'Out of all of this… what can you actually control?';
+      case 2:
+        return 'Okay… what do you want to work on first?';
+      case 3:
+        return 'What can we let go of for now? (hold to pop)';
+      case 4:
+        return 'Do you want to talk it out… plan it out… focus on it… or just let it out?';
+      default:
+        return 'Figure-Out Mode';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: cs.surface.withOpacity(0.9),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: cs.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: cs.primary.withOpacity(0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          const Text('🧠'),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _prompt(),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Switch.adaptive(value: enabled, onChanged: (_) => onToggle()),
+          if (enabled && step > 0)
+            TextButton(
+              onPressed: canAdvance ? onNext : null,
+              child: Text(step < 4 ? 'Next' : 'Done'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FigureOutActions extends StatelessWidget {
+  const _FigureOutActions({
+    required this.onVent,
+    required this.onJournal,
+    required this.onHabit,
+    required this.onPomodoro,
+  });
+
+  final VoidCallback onVent;
+  final VoidCallback onJournal;
+  final VoidCallback onHabit;
+  final VoidCallback onPomodoro;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: cs.surface.withOpacity(0.92),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: cs.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: cs.primary.withOpacity(0.12),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'How do you want to handle this?',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Choose one gentle next step.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: cs.onSurface.withOpacity(0.7),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _ActionBubble(
+                icon: '🫧',
+                title: 'Let it out',
+                subtitle: 'Say what’s still sitting in your chest.',
+                onTap: onVent,
+              ),
+              _ActionBubble(
+                icon: '📖',
+                title: 'Write it through',
+                subtitle: 'Slow down and untangle it.',
+                onTap: onJournal,
+              ),
+              _ActionBubble(
+                icon: '✅',
+                title: 'Build something small',
+                subtitle: 'Make it easier for future you.',
+                onTap: onHabit,
+              ),
+              _ActionBubble(
+                icon: '⏱',
+                title: 'Focus for 10',
+                subtitle: 'Start small. Just begin.',
+                onTap: onPomodoro,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionBubble extends StatefulWidget {
+  const _ActionBubble({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final String icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  State<_ActionBubble> createState() => _ActionBubbleState();
+}
+
+class _ActionBubbleState extends State<_ActionBubble> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.97 : 1,
+        duration: const Duration(milliseconds: 120),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          width: 150,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: cs.surface.withOpacity(0.95),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: cs.primary.withOpacity(0.25)),
+            boxShadow: [
+              BoxShadow(
+                color: cs.primary.withOpacity(_pressed ? 0.3 : 0.18),
+                blurRadius: _pressed ? 16 : 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.icon, style: const TextStyle(fontSize: 16)),
+              const SizedBox(height: 4),
+              Text(
+                widget.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                widget.subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: cs.onSurface.withOpacity(0.65),
+                ),
+              ),
+            ],
           ),
         ),
       ),

@@ -19,8 +19,12 @@ Deno.serve(async (req) => {
   const body = await req.json();
   const message = body?.message ?? "";
   const history = Array.isArray(body?.history) ? body.history : [];
+  const systemPrompt = body?.system_prompt ?? "";
 
   const messages = [
+    ...(systemPrompt
+      ? [{ role: "system", content: systemPrompt }]
+      : []),
     ...history.map((m: { role: string; content: string }) => ({
       role: m.role,
       content: m.content,
@@ -53,7 +57,7 @@ Deno.serve(async (req) => {
   const assistantMessage = data?.choices?.[0]?.message?.content ?? "";
 
   return new Response(
-    JSON.stringify({ assistant_message: assistantMessage }),
+    JSON.stringify({ assistant_message: assistantMessage, reply: assistantMessage }),
     { headers: { "Content-Type": "application/json" } },
   );
 });

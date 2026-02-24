@@ -6,15 +6,24 @@ class TemplatesSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = _items;
+    const items = _items;
+    final width = MediaQuery.of(context).size.width;
+    final crossAxisCount = width < 360 ? 2 : 3;
+    final childAspectRatio = width < 360 ? 1.85 : 1.6;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
-            Text('Templates', style: Theme.of(context).textTheme.titleLarge),
-            const Spacer(),
+            Expanded(
+              child: Text(
+                'Templates',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
             TextButton(
               onPressed: () => context.push('/templates'),
               child: const Text('See all'),
@@ -26,11 +35,11 @@ class TemplatesSection extends StatelessWidget {
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: items.length,
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
             mainAxisSpacing: 6,
             crossAxisSpacing: 6,
-            childAspectRatio: 1.6,
+            childAspectRatio: childAspectRatio,
           ),
           itemBuilder: (context, i) {
             final it = items[i];
@@ -110,22 +119,30 @@ class _TemplateCard extends StatelessWidget {
             Row(
               children: [
                 Icon(icon, size: 18),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: cs.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  child: Text(
-                    badge,
-                    style: Theme.of(context)
-                        .textTheme
-                        .labelSmall
-                        ?.copyWith(fontSize: 10),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: cs.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: Text(
+                          badge,
+                          maxLines: 1,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.labelSmall?.copyWith(fontSize: 10),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -135,10 +152,9 @@ class _TemplateCard extends StatelessWidget {
               title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context)
-                  .textTheme
-                  .labelLarge
-                  ?.copyWith(fontSize: 11),
+              style: Theme.of(
+                context,
+              ).textTheme.labelLarge?.copyWith(fontSize: 11),
             ),
           ],
         ),

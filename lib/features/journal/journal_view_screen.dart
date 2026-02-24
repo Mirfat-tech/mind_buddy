@@ -5,8 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
-import 'package:share_plus/share_plus.dart';
-import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
 
 import 'package:mind_buddy/common/mb_scaffold.dart';
@@ -16,6 +14,8 @@ import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/features/journal/quill_embeds.dart';
 import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:mind_buddy/services/subscription_plan_catalog.dart';
 
 class JournalViewScreen extends StatefulWidget {
   const JournalViewScreen({super.key, required this.journalId});
@@ -29,6 +29,12 @@ class JournalViewScreen extends StatefulWidget {
 class _JournalViewScreenState extends State<JournalViewScreen> {
   late Future<Map<String, dynamic>?> _future;
   Map<String, dynamic>? _loaded;
+  bool _isOwner = true;
+  bool _shareBusy = false;
+  bool _recipientCanComment = false;
+  bool _recipientMediaVisible = true;
+  List<Map<String, dynamic>> _shareRecipients = [];
+  List<Map<String, dynamic>> _replies = [];
 
   @override
   void initState() {
@@ -44,52 +50,14 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
         .maybeSingle();
     final data = row == null ? null : Map<String, dynamic>.from(row as Map);
     _loaded = data;
+    if (data != null) {
+      final user = Supabase.instance.client.auth.currentUser;
+      _isOwner = user != null && user.id == data['user_id'];
+      try {
+        await _loadShareState();
+      } catch (_) {}
+    }
     return data;
-  }
-
-  Future<void> _share() async {
-    final row = _loaded;
-    if (row == null) return;
-
-    final wasShared = row['is_shared'] == true;
-    final shareId = (row['share_id'] ?? const Uuid().v4()).toString();
-
-    if (!wasShared || row['share_id'] == null) {
-      await Supabase.instance.client
-          .from('journals')
-          .update({'is_shared': true, 'share_id': shareId})
-          .eq('id', row['id']);
-      _loaded = {...row, 'is_shared': true, 'share_id': shareId};
-    }
-
-    const baseUrl = 'mindbuddy://share';
-    final link = '$baseUrl/$shareId';
-    await Share.share(link, subject: 'Shared Journal Entry');
-  }
-
-  Future<void> _toggleShare() async {
-    final row = _loaded;
-    if (row == null) return;
-
-    final next = !(row['is_shared'] == true);
-    final nextShareId = const Uuid().v4();
-    await Supabase.instance.client
-        .from('journals')
-        .update({
-          'is_shared': next,
-          if (!next) 'share_id': nextShareId,
-        })
-        .eq('id', row['id']);
-
-    if (mounted) {
-      setState(() {
-        _loaded = {
-          ...row,
-          'is_shared': next,
-          if (!next) 'share_id': nextShareId,
-        };
-      });
-    }
   }
 
   Future<void> _deleteEntry() async {
@@ -125,6 +93,423 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
     context.pop(true);
   }
 
+  Future<void> _loadShareState() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    try {
+      if (_isOwner) {
+        final rows = await Supabase.instance.client
+            .from('journal_share_recipients')
+            .select(
+              'id, recipient_id, can_comment, media_visible, expires_at, '
+              'profile:recipient_id(username, full_name, email)',
+            )
+            .eq('journal_id', widget.journalId)
+            .order('created_at', ascending: true);
+        _shareRecipients = (rows as List).cast<Map<String, dynamic>>();
+      } else {
+        final row = await Supabase.instance.client
+            .from('journal_share_recipients')
+            .select('can_comment, media_visible, expires_at')
+            .eq('journal_id', widget.journalId)
+            .eq('recipient_id', user.id)
+            .maybeSingle();
+        _recipientCanComment = row?['can_comment'] == true;
+        _recipientMediaVisible = row?['media_visible'] != false;
+      }
+      await _loadReplies();
+    } catch (_) {}
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadReplies() async {
+    final rows = await Supabase.instance.client
+        .from('journal_share_replies')
+        .select('id, text, created_at, author:author_id(username)')
+        .eq('journal_id', widget.journalId)
+        .order('created_at', ascending: true);
+    _replies = (rows as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<void> _openShareSheet() async {
+    if (!_isOwner) return;
+    await _loadShareState();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        final count = _shareRecipients.length;
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 16,
+            bottom: 20 + MediaQuery.of(ctx).viewInsets.bottom,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Page Privacy',
+                style: Theme.of(ctx).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                count == 0
+                    ? 'Private (only you can see this page)'
+                    : 'Shared with $count ${count == 1 ? 'person' : 'people'}',
+                style: Theme.of(ctx).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              if (count > 0)
+                Column(
+                  children: _shareRecipients.map((r) {
+                    final profile = r['profile'] as Map<String, dynamic>?;
+                    final username =
+                        (profile?['username'] ?? '').toString();
+                    final canComment = r['can_comment'] == true;
+                    final expiresAt = r['expires_at']?.toString();
+                    final expiresLabel = expiresAt == null
+                        ? 'Forever'
+                        : DateFormat('MMM d').format(
+                            DateTime.parse(expiresAt).toLocal(),
+                          );
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        username.isEmpty ? 'Unknown user' : '@$username',
+                      ),
+                      subtitle: Text(
+                        '${canComment ? 'View + reply' : 'View only'} • $expiresLabel',
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => _removeRecipient(r['id']),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              if (count > 0) const Divider(),
+              FilledButton.icon(
+                onPressed: _shareBusy ? null : _addRecipient,
+                icon: const Icon(Icons.person_add_alt_1),
+                label: const Text('Share with someone'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Shared pages stay private inside MyBrainBubble.',
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 4),
+              FutureBuilder<SubscriptionInfo>(
+                future: SubscriptionLimits.fetchForCurrentUser(),
+                builder: (context, snapshot) {
+                  final info = snapshot.data;
+                  if (info == null) return const SizedBox.shrink();
+                  return Text(
+                    SubscriptionPlanCatalog.sharesPerDayHelpText(info.plan),
+                    style: Theme.of(ctx).textTheme.bodySmall,
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _addRecipient() async {
+    if (_shareBusy) return;
+    final info = await SubscriptionLimits.fetchForCurrentUser();
+    if (!info.plan.canShareEntries) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'FREE MODE can receive shares but cannot share entries.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    if (info.sharesPerDay >= 0) {
+      final usedShares = await JournalShareUsageTracker.todayCount();
+      if (usedShares >= info.sharesPerDay) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Shares per day reached on ${info.planName}: ${info.sharesPerDay}/${info.sharesPerDay}.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+    }
+    final usernameController = TextEditingController();
+    bool canComment = false;
+    bool mediaVisible = true;
+    String duration = '7d';
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setState) {
+          return AlertDialog(
+            title: const Text('Share with someone'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: usernameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Username',
+                    hintText: '@alex',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Allow replies'),
+                  value: canComment,
+                  onChanged: (v) => setState(() => canComment = v),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Show photos & videos'),
+                  value: mediaVisible,
+                  onChanged: (v) => setState(() => mediaVisible = v),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  initialValue: duration,
+                  decoration: const InputDecoration(labelText: 'Time limit'),
+                  items: const [
+                    DropdownMenuItem(value: '24h', child: Text('24 hours')),
+                    DropdownMenuItem(value: '7d', child: Text('7 days')),
+                    DropdownMenuItem(value: 'forever', child: Text('Forever')),
+                  ],
+                  onChanged: (v) => setState(() => duration = v ?? '7d'),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  final username = usernameController.text.trim().toLowerCase();
+                  if (username.isEmpty) return;
+                  final profile = await Supabase.instance.client
+                      .from('profiles')
+                      .select('id, username, is_active')
+                      .eq('username', username)
+                      .maybeSingle();
+                  if (profile == null) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('User not found')),
+                      );
+                    }
+                    return;
+                  }
+                  final recipientId = profile['id'].toString();
+                  final ownerId =
+                      Supabase.instance.client.auth.currentUser!.id;
+                  final existing = await Supabase.instance.client
+                      .from('journal_share_blocks')
+                      .select('id')
+                      .eq('blocker_id', ownerId)
+                      .eq('blocked_id', recipientId)
+                      .maybeSingle();
+                  if (existing == null) {
+                    await Supabase.instance.client
+                        .from('journal_share_blocks')
+                        .insert({
+                      'blocker_id': ownerId,
+                      'blocked_id': recipientId,
+                    });
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('User blocked')),
+                      );
+                    }
+                  } else {
+                    await Supabase.instance.client
+                        .from('journal_share_blocks')
+                        .delete()
+                        .eq('id', existing['id']);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('User unblocked')),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Block / Unblock'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Share'),
+              ),
+            ],
+          );
+        });
+      },
+    );
+    if (result != true) return;
+
+    final username = usernameController.text.trim().toLowerCase();
+    if (username.isEmpty) return;
+
+    setState(() => _shareBusy = true);
+    try {
+      final profile = await Supabase.instance.client
+          .from('profiles')
+          .select('id, username, is_active')
+          .eq('username', username)
+          .maybeSingle();
+      if (profile == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('User not found')),
+          );
+        }
+        return;
+      }
+      final isActive = profile['is_active'] != false;
+      if (!isActive) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('This user\'s account is no longer active for sharing.'),
+            ),
+          );
+        }
+        return;
+      }
+      final recipientId = profile['id'].toString();
+      final ownerId = Supabase.instance.client.auth.currentUser!.id;
+      final blockedByYou = await Supabase.instance.client
+          .from('journal_share_blocks')
+          .select('id')
+          .eq('blocker_id', ownerId)
+          .eq('blocked_id', recipientId)
+          .maybeSingle();
+      if (blockedByYou != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('You have blocked this user. Unblock to share.'),
+            ),
+          );
+        }
+        return;
+      }
+      final blockedByThem = await Supabase.instance.client
+          .from('journal_share_blocks')
+          .select('id')
+          .eq('blocker_id', recipientId)
+          .eq('blocked_id', ownerId)
+          .maybeSingle();
+      if (blockedByThem != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('This user isn’t accepting shares right now.'),
+            ),
+          );
+        }
+        return;
+      }
+      final expiresAt = duration == 'forever'
+          ? null
+          : DateTime.now().add(
+              duration == '24h'
+                  ? const Duration(hours: 24)
+                  : const Duration(days: 7),
+            );
+      await Supabase.instance.client.from('journal_share_recipients').upsert({
+        'journal_id': widget.journalId,
+        'owner_id': Supabase.instance.client.auth.currentUser!.id,
+        'recipient_id': recipientId,
+        'can_comment': canComment,
+        'media_visible': mediaVisible,
+        'expires_at': expiresAt?.toIso8601String(),
+      });
+      await Supabase.instance.client
+          .from('journals')
+          .update({'is_shared': true})
+          .eq('id', widget.journalId);
+      await JournalShareUsageTracker.increment();
+      await _loadShareState();
+    } finally {
+      if (mounted) setState(() => _shareBusy = false);
+    }
+  }
+
+  Future<void> _removeRecipient(dynamic recipientRowId) async {
+    await Supabase.instance.client
+        .from('journal_share_recipients')
+        .delete()
+        .eq('id', recipientRowId);
+    await _loadShareState();
+    if (_shareRecipients.isEmpty) {
+      await Supabase.instance.client
+          .from('journals')
+          .update({'is_shared': false})
+          .eq('id', widget.journalId);
+    }
+    if (mounted) Navigator.of(context).maybePop();
+  }
+
+  Future<void> _addReply() async {
+    final controller = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reply'),
+        content: TextField(
+          controller: controller,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            hintText: 'Share a gentle reply…',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final text = controller.text.trim();
+    if (text.isEmpty) return;
+    await Supabase.instance.client.from('journal_share_replies').insert({
+      'journal_id': widget.journalId,
+      'author_id': Supabase.instance.client.auth.currentUser!.id,
+      'text': text,
+    });
+    await _loadReplies();
+    if (mounted) setState(() {});
+  }
+
   quill.Document _parseDoc(String raw) {
     try {
       final jsonData = jsonDecode(raw);
@@ -149,36 +534,32 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
               context.canPop() ? context.pop() : context.go('/journals'),
         ),
         actions: [
-          MbGlowIconButton(
-            tooltip: 'Edit',
-            icon: Icons.edit_outlined,
-            onPressed: () async {
-              final updated =
-                  await context.push<bool>('/journals/edit/${widget.journalId}');
-              if (updated == true && mounted) {
-                setState(() {
-                  _future = _load();
-                });
-              }
-            },
-          ),
-          MbGlowIconButton(
-            tooltip: 'Share link',
-            icon: Icons.share_outlined,
-            onPressed: _share,
-          ),
-          MbGlowIconButton(
-            tooltip: 'Toggle sharing',
-            icon: (_loaded?['is_shared'] == true)
-                ? Icons.link_off_outlined
-                : Icons.link_outlined,
-            onPressed: _toggleShare,
-          ),
-          MbGlowIconButton(
-            tooltip: 'Delete',
-            icon: Icons.delete_outline,
-            onPressed: _deleteEntry,
-          ),
+          if (_isOwner)
+            MbGlowIconButton(
+              tooltip: 'Edit',
+              icon: Icons.edit_outlined,
+              onPressed: () async {
+                final updated = await context
+                    .push<bool>('/journals/edit/${widget.journalId}');
+                if (updated == true && mounted) {
+                  setState(() {
+                    _future = _load();
+                  });
+                }
+              },
+            ),
+          if (_isOwner)
+            MbGlowIconButton(
+              tooltip: 'Share',
+              icon: Icons.share_outlined,
+              onPressed: _openShareSheet,
+            ),
+          if (_isOwner)
+            MbGlowIconButton(
+              tooltip: 'Delete',
+              icon: Icons.delete_outline,
+              onPressed: _deleteEntry,
+            ),
         ],
       ),
       body: MbFloatingHintOverlay(
@@ -240,37 +621,140 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
                           ),
                         ),
                       ),
+                    if (_isOwner && _shareRecipients.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: GestureDetector(
+                            onTap: _openShareSheet,
+                            child: Text(
+                              'Shared with ${_shareRecipients.length} ${_shareRecipients.length == 1 ? 'person' : 'people'} 🤍',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(
+                                    color:
+                                        Theme.of(context).colorScheme.primary,
+                                  ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (!_isOwner)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Shared Page',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                  color:
+                                      Theme.of(context).colorScheme.primary,
+                                ),
+                          ),
+                        ),
+                      ),
                     const SizedBox(height: 10),
                     Expanded(
                       child: Container(
                         color: Theme.of(context).scaffoldBackgroundColor,
                         child: quill.QuillEditor.basic(
                           controller: controller,
-                          config: const quill.QuillEditorConfig(
+                          config: quill.QuillEditorConfig(
                             expands: true,
-                            padding: EdgeInsets.all(12),
+                            padding: const EdgeInsets.all(12),
                             autoFocus: false,
-                            embedBuilders: [
-                              LocalImageEmbedBuilder(),
-                              LocalVideoEmbedBuilder(),
-                            ],
+                            embedBuilders: (_isOwner || _recipientMediaVisible)
+                                ? const [
+                                    LocalImageEmbedBuilder(),
+                                    LocalVideoEmbedBuilder(),
+                                  ]
+                                : const [],
                           ),
                         ),
                       ),
                     ),
-                    _MediaPreviewStrip(
-                      items: media,
-                      onTap: (index) {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => JournalMediaViewer(
-                              items: media,
-                              initialIndex: index,
+                    if (_isOwner || _recipientMediaVisible)
+                      _MediaPreviewStrip(
+                        items: media,
+                        onTap: (index) {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => JournalMediaViewer(
+                                items: media,
+                                initialIndex: index,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      ),
+                    if (_replies.isNotEmpty || (!_isOwner && _recipientCanComment))
+                      Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              'Replies',
+                              style: Theme.of(context).textTheme.titleSmall,
+                            ),
+                            const SizedBox(height: 6),
+                            if (_replies.isNotEmpty)
+                              ..._replies.map((r) {
+                                final author = r['author'] is Map
+                                    ? (r['author']['username'] ?? '').toString()
+                                    : '';
+                                final created =
+                                    r['created_at']?.toString() ?? '';
+                                final createdLabel = created.isEmpty
+                                    ? ''
+                                    : DateFormat('MMM d • h:mm a').format(
+                                        DateTime.parse(created).toLocal(),
+                                      );
+                                return Padding(
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 4),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        author.isEmpty ? 'Reply' : '@$author',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall,
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        (r['text'] ?? '').toString(),
+                                      ),
+                                      if (createdLabel.isNotEmpty)
+                                        Text(
+                                          createdLabel,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall,
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              }),
+                            if (!_isOwner && _recipientCanComment)
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: TextButton.icon(
+                                  onPressed: _addReply,
+                                  icon: const Icon(Icons.reply),
+                                  label: const Text('Reply'),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ),

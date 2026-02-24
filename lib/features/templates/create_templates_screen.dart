@@ -152,6 +152,18 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
       }
       return;
     }
+    if (!info.supportsCustomTemplates) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${info.planName} includes template preview mode. Custom templates are available in PLUS SUPPORT MODE and FULL SUPPORT MODE.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
     final name = nameCtrl.text.trim();
     if (name.isEmpty) return;
 
@@ -269,7 +281,7 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
                 _inputWrapper(
                   scheme,
                   child: DropdownButtonFormField<String>(
-                    value: _examplePreset,
+                    initialValue: _examplePreset,
                     decoration: const InputDecoration(
                       hintText: 'Field examples',
                       border: InputBorder.none,
@@ -343,10 +355,11 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
                     onChanged: (f) => setState(() => fields[i] = f),
                     onDelete: () => setState(() {
                       fields.removeAt(i);
-                      if (fields.isEmpty)
+                      if (fields.isEmpty) {
                         fields.add(
                           _FieldDraft(label: 'Item', key: '', type: 'text'),
                         );
+                      }
                     }),
                   ),
                   const SizedBox(height: 12),
@@ -463,7 +476,7 @@ class _FieldEditor extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final types = const <({String value, String label})>[
+    const types = <({String value, String label})>[
       (value: 'text', label: 'Text'),
       (value: 'number', label: 'Number'),
       (value: 'rating', label: 'Rating (1–5)'),
@@ -514,7 +527,7 @@ class _FieldEditor extends StatelessWidget {
           ),
           DropdownButtonHideUnderline(
             child: DropdownButtonFormField<String>(
-              value: field.type,
+              initialValue: field.type,
               items: types
                   .map(
                     (t) => DropdownMenuItem(

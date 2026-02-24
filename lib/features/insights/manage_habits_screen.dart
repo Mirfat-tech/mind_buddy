@@ -24,6 +24,7 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   final List<Map<String, dynamic>> _habits = [];
   final List<Map<String, dynamic>> _categories = [];
   final Map<String, ({int current, int best})> _streaksByHabitName = {};
+  bool _hideStreaks = false;
 
   // ✅ MISSING STATE YOU REFERENCED IN UI
   bool _isSelectionMode = false;
@@ -41,7 +42,15 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     if (!mounted) return;
     setState(() {
       _trialBannerVisible = !(prefs.getBool('trial_banner_dismissed') ?? false);
+      _hideStreaks = prefs.getBool('habits_hide_streaks') ?? false;
     });
+  }
+
+  Future<void> _setHideStreaks(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('habits_hide_streaks', value);
+    if (!mounted) return;
+    setState(() => _hideStreaks = value);
   }
 
   Future<void> _dismissTrialBanner() async {
@@ -132,39 +141,27 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
-    final tpl = await supabase
-        .from('log_templates_v2')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('template_key', 'habits')
-        .maybeSingle();
-    if (tpl == null) return;
-
     final fromStr = DateTime.now()
         .subtract(const Duration(days: 370))
         .toIso8601String()
         .substring(0, 10);
 
     final rows = await supabase
-        .from('log_entries')
-        .select('day, data')
-        .eq('template_id', tpl['id'])
-        .gte('day', fromStr);
+        .from('habit_logs')
+        .select('habit_name, day, is_completed')
+        .eq('user_id', user.id)
+        .gte('day', fromStr)
+        .eq('is_completed', true);
 
     final Map<String, Set<DateTime>> doneDatesByHabit = {};
 
     for (final r in (rows as List)) {
-      final data = Map<String, dynamic>.from((r as Map)['data'] ?? {});
-      final habit = (data['habit'] ?? data['habit_name'] ?? data['name'] ?? '')
-          .toString()
-          .trim();
-
+      final row = Map<String, dynamic>.from(r as Map);
+      final habit = (row['habit_name'] ?? '').toString().trim();
       if (habit.isEmpty) continue;
-      if (data['done'] != true) continue;
 
-      final day = DateTime.parse((r)['day'].toString());
+      final day = DateTime.parse(row['day'].toString());
       final normalized = DateTime(day.year, day.month, day.day);
-
       doneDatesByHabit.putIfAbsent(habit, () => <DateTime>{}).add(normalized);
     }
 
@@ -332,7 +329,7 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
 
               // ✅ FIX: must be DropdownButtonFormField<String?> to allow null values
               DropdownButtonFormField<String?>(
-                value: selectedCategoryId,
+                initialValue: selectedCategoryId,
                 decoration: InputDecoration(
                   labelText: 'Category',
                   filled: true,
@@ -553,6 +550,7 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
                     onUpgrade: () => context.go('/subscription'),
                     onSkip: () => _dismissTrialBanner(),
                   ),
+                _buildDisplayOptionsCard(scheme),
                 if (habitsByCategory[null]?.isNotEmpty ?? false)
                   _buildCategorySection(
                     categoryName: 'Uncategorized',
@@ -723,6 +721,15 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     ColorScheme scheme,
   ) {
     if (!active) return const Text('Hidden • Tap eye to restore');
+    if (_hideStreaks) {
+      return Text(
+        'Streaks hidden',
+        style: TextStyle(
+          color: scheme.onSurface.withOpacity(0.6),
+          fontSize: 12,
+        ),
+      );
+    }
 
     return RichText(
       text: TextSpan(
@@ -766,6 +773,67 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
       ),
     );
   }
+
+  Widget _buildDisplayOptionsCard(ColorScheme scheme) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withOpacity(0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Display options',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: scheme.onSurface,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Hide streaks',
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Removes streak counts and streak badges. Your habits still save as normal.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurface.withOpacity(0.6),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch.adaptive(
+                value: _hideStreaks,
+                onChanged: _setHideStreaks,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _TrialBanner extends StatelessWidget {
@@ -798,7 +866,7 @@ class _TrialBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Trial mode: explore freely. Nothing is saved until you choose a plan.',
+              'FREE MODE uses 24-hour preview mode for templates. Preview data disappears after 24 hours.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
@@ -808,7 +876,7 @@ class _TrialBanner extends StatelessWidget {
             child: const Text('Skip for now'),
           ),
           const SizedBox(width: 6),
-          FilledButton(onPressed: onUpgrade, child: const Text('Choose plan')),
+          FilledButton(onPressed: onUpgrade, child: const Text('View modes')),
         ],
       ),
     );

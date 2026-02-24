@@ -4,6 +4,7 @@ import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/features/insights/insights_screen.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class InsightsGateScreen extends StatelessWidget {
   const InsightsGateScreen({super.key});
@@ -44,19 +45,27 @@ class InsightsGateScreen extends StatelessWidget {
                   const Icon(Icons.lock_outline, size: 48),
                   const SizedBox(height: 12),
                   Text(
-                    'Insights are available on Full Support',
+                    'Insights are available in FULL SUPPORT MODE',
                     style: Theme.of(context).textTheme.titleMedium,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Upgrade to unlock insights, trends, and summaries.',
+                    'PLUS SUPPORT MODE includes memory, but advanced insights for templates and habits are in FULL SUPPORT MODE.',
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
                   FilledButton(
-                    onPressed: () => context.go('/subscription'),
-                    child: const Text('Upgrade'),
+                    onPressed: () {
+                      final user =
+                          Supabase.instance.client.auth.currentUser;
+                      if (user == null) {
+                        context.go('/signin?from=/subscription');
+                      } else {
+                        context.go('/subscription');
+                      }
+                    },
+                    child: const Text('View modes'),
                   ),
                 ],
               ),

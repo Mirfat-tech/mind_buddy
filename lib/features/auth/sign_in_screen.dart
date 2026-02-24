@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/services/oauth_sign_in_coordinator.dart';
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -37,19 +38,33 @@ class _SignInScreenState extends State<SignInScreen> {
         email: _email.text.trim(),
         password: _password.text,
       );
+      if (Supabase.instance.client.auth.currentUser == null) {
+        throw Exception('Sign-in completed without an active session.');
+      }
 
-      final ok = await DeviceSessionService.recordSession();
-      if (!ok) {
-        await Supabase.instance.client.auth.signOut();
+      final registration = await DeviceSessionService.registerDevice();
+      if (!registration.allowed) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'This plan allows only 1 device. Upgrade to use more devices.',
+          SnackBar(
+            content: Text(registration.blockedMessage()),
+            action: SnackBarAction(
+              label: 'Manage devices',
+              onPressed: () => context.go('/settings'),
             ),
           ),
         );
+        context.go('/settings');
         return;
+      }
+      if (registration.entitlementCheckFailed && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not verify your subscription right now. Signed in with temporary access.',
+            ),
+          ),
+        );
       }
 
       if (!mounted) return;
@@ -62,36 +77,28 @@ class _SignInScreenState extends State<SignInScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text(e.message)));
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('Sign in failed: $e');
+      debugPrint('$st');
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Something went wrong. Please try again.'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Sign in failed: $e')));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _signInWithOAuth(OAuthProvider provider) async {
-    try {
-      await Supabase.instance.client.auth.signInWithOAuth(
-        provider,
-        redirectTo: 'mindbuddy://login-callback',
-        authScreenLaunchMode: LaunchMode.externalApplication,
-      );
-    } on AuthException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('OAuth failed: $e')),
-      );
-    }
+    final res = await OAuthSignInCoordinator.instance.start(provider);
+    if (!mounted || res.started) return;
+    final message =
+        (res.message ?? '').toLowerCase().contains('bad_code_verifier')
+        ? 'Login expired - please try again.'
+        : (res.message ?? 'OAuth sign in could not be started.');
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _sendPasswordReset() async {
@@ -110,7 +117,7 @@ class _SignInScreenState extends State<SignInScreen> {
       await Supabase.instance.client.auth.resetPasswordForEmail(
         email,
         // Keep yours if you already set it:
-        redirectTo: 'mindbuddy://reset',
+        redirectTo: 'brainbubble://auth/callback',
       );
 
       if (!mounted) return;
@@ -164,89 +171,123 @@ class _SignInScreenState extends State<SignInScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                // Email
-                TextField(
-                  controller: _email,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(labelText: 'Email'),
-                ),
+                      // Email
+                      TextField(
+                        controller: _email,
+                        keyboardType: TextInputType.emailAddress,
+                        decoration: const InputDecoration(labelText: 'Email'),
+                      ),
 
-                const SizedBox(height: 12),
+                      const SizedBox(height: 12),
 
-                // Password
-                TextField(
-                  controller: _password,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: 'Password'),
-                ),
+                      // Password
+                      TextField(
+                        controller: _password,
+                        obscureText: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Password',
+                        ),
+                      ),
 
-                const SizedBox(height: 8),
+                      const SizedBox(height: 8),
 
-                // Forgot password link
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: TextButton(
-                    onPressed: _resetSending ? null : _sendPasswordReset,
-                    child: _resetSending
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Forgot password?'),
-                  ),
-                ),
+                      // Forgot password link
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: _resetSending ? null : _sendPasswordReset,
+                          child: _resetSending
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('Forgot password?'),
+                        ),
+                      ),
 
-                const SizedBox(height: 8),
+                      const SizedBox(height: 8),
 
-                // Continue button
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed: _loading ? null : _signIn,
-                    child: _loading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Continue'),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: const [
-                    Expanded(child: Divider()),
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: Text('OR'),
-                    ),
-                    Expanded(child: Divider()),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.g_mobiledata),
-                    label: const Text('Continue with Google'),
-                    onPressed: () => _signInWithOAuth(OAuthProvider.google),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.apple),
-                    label: const Text('Continue with Apple'),
-                    onPressed: () => _signInWithOAuth(OAuthProvider.apple),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextButton(
-                  onPressed: () => context.go('/signup'),
-                  child: const Text('Create an account'),
-                ),
+                      // Continue button
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: _loading ? null : _signIn,
+                          child: _loading
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('Continue to MyBrainBubble'),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      const Row(
+                        children: [
+                          Expanded(child: Divider()),
+                          Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 8),
+                            child: Text('OR'),
+                          ),
+                          Expanded(child: Divider()),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      ValueListenableBuilder<bool>(
+                        valueListenable: OAuthSignInCoordinator
+                            .instance
+                            .isSigningInListenable,
+                        builder: (context, oauthBusy, _) {
+                          final disabled = oauthBusy || _loading;
+                          return Column(
+                            children: [
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.g_mobiledata),
+                                  label: Text(
+                                    oauthBusy
+                                        ? 'Continue in browser...'
+                                        : 'Continue with Google',
+                                  ),
+                                  onPressed: disabled
+                                      ? null
+                                      : () => _signInWithOAuth(
+                                          OAuthProvider.google,
+                                        ),
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.apple),
+                                  label: Text(
+                                    oauthBusy
+                                        ? 'Continue in browser...'
+                                        : 'Continue with Apple',
+                                  ),
+                                  onPressed: disabled
+                                      ? null
+                                      : () => _signInWithOAuth(
+                                          OAuthProvider.apple,
+                                        ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextButton(
+                        onPressed: () => context.go('/signup'),
+                        child: const Text('Create an account'),
+                      ),
                     ],
                   ),
                 ),

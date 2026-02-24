@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 
@@ -10,6 +11,9 @@ class HabitMonthGrid extends StatefulWidget {
     this.onPrevMonth,
     this.onNextMonth,
     this.onChanged,
+    this.prevMonthKey,
+    this.nextMonthKey,
+    this.gridKey,
   });
 
   final DateTime month;
@@ -17,6 +21,9 @@ class HabitMonthGrid extends StatefulWidget {
   final VoidCallback? onPrevMonth;
   final VoidCallback? onNextMonth;
   final VoidCallback? onChanged;
+  final GlobalKey? prevMonthKey;
+  final GlobalKey? nextMonthKey;
+  final GlobalKey? gridKey;
 
   @override
   State<HabitMonthGrid> createState() => _HabitMonthGridState();
@@ -67,6 +74,15 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
       '${d.day.toString().padLeft(2, '0')}';
 
   String _habitKey(String name) => name.trim().toLowerCase();
+
+  DateTime? _parseLocalDay(dynamic raw) {
+    if (raw == null) return null;
+    final parsed = raw is DateTime
+        ? raw.toLocal()
+        : DateTime.tryParse(raw.toString())?.toLocal();
+    if (parsed == null) return null;
+    return DateTime(parsed.year, parsed.month, parsed.day);
+  }
 
   int _daysInMonth(DateTime m) => DateTime(
     m.year,
@@ -155,13 +171,30 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
       for (final r in rows as List) {
         if (r['is_completed'] != true) continue;
         final hk = _habitKey(r['habit_name'] ?? '');
-        final DateTime dayDt = DateTime.parse(r['day'].toString());
+        final dayDt = _parseLocalDay(r['day']);
+        if (dayDt == null) continue;
+        if (dayDt.year != widget.month.year ||
+            dayDt.month != widget.month.month) {
+          continue;
+        }
         final dayKey = _ymd(dayDt);
         _doneByHabitKey.putIfAbsent(hk, () => <String>{}).add(dayKey);
       }
+      if (kDebugMode) {
+        final grouped = _doneByHabitKey.values.expand((v) => v).toSet().toList()
+          ..sort();
+        debugPrint(
+          '📅 [HabitMonthGrid] month=${widget.month.year}-${widget.month.month.toString().padLeft(2, '0')} '
+          'start=${_ymd(start)} end(exclusive)=${_ymd(end)} tzOffset=${DateTime.now().timeZoneOffset}',
+        );
+        debugPrint('📅 [HabitMonthGrid] rows=${(rows as List).length}');
+        debugPrint('📅 [HabitMonthGrid] groupedDays=${grouped.join(', ')}');
+      }
 
+      if (!mounted) return;
       setState(() => _loading = false);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -187,7 +220,6 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
     });
 
     final nowDone = _doneByHabitKey[hk]!.contains(dayKey);
-    widget.onChanged?.call();
 
     try {
       final info = await SubscriptionLimits.fetchForCurrentUser();
@@ -196,6 +228,8 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
           context,
           onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
         );
+        // Revert optimistic toggle if trial blocks saving.
+        _load();
         return;
       }
 
@@ -220,7 +254,11 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
           'is_completed': nowDone,
         });
       }
+
+      // Refresh summary after the write completes so it reflects new data.
+      widget.onChanged?.call();
     } catch (e) {
+      if (!mounted) return;
       _load(); // Rollback on error
     }
   }
@@ -231,11 +269,12 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading)
+    if (_loading) {
       return const Padding(
         padding: EdgeInsets.all(16),
         child: Center(child: CircularProgressIndicator()),
       );
+    }
     if (_error != null) {
       return Padding(
         padding: const EdgeInsets.all(16.0),
@@ -247,8 +286,9 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
         ),
       );
     }
-    if (_habitsWithMetadata.isEmpty)
+    if (_habitsWithMetadata.isEmpty) {
       return const Center(child: Text('No active habits.'));
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -265,6 +305,7 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
     return Row(
       children: [
         IconButton(
+          key: widget.prevMonthKey,
           icon: const Icon(Icons.chevron_left),
           onPressed: widget.onPrevMonth,
         ),
@@ -277,10 +318,10 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
           ),
         ),
         IconButton(
+          key: widget.nextMonthKey,
           icon: const Icon(Icons.chevron_right),
           onPressed: widget.onNextMonth,
         ),
-        TextButton(onPressed: widget.onManageTap, child: const Text('Manage')),
       ],
     );
   }
@@ -298,44 +339,48 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
       grouped.putIfAbsent(catName, () => []).add(habit);
     }
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // LEFT COLUMN: Labels
-        SizedBox(
-          width: _labelWidth,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: _numbersRowHeight),
-              for (var entry in grouped.entries) ...[
-                _buildCategoryLabel(entry.key),
-                for (var habit in entry.value) _buildHabitLabel(habit['name']),
-              ],
-            ],
-          ),
-        ),
-        // RIGHT COLUMN: Scrollable Grid
-        Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
+    return Container(
+      key: widget.gridKey,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // LEFT COLUMN: Labels
+          SizedBox(
+            width: _labelWidth,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildDaysRow(days),
+                const SizedBox(height: _numbersRowHeight),
                 for (var entry in grouped.entries) ...[
-                  SizedBox(
-                    height: _categoryHeaderHeight,
-                  ), // Spacer for category header
+                  _buildCategoryLabel(entry.key),
                   for (var habit in entry.value)
-                    _buildDotsRow(habit['name'], days, base, cs),
+                    _buildHabitLabel(habit['name']),
                 ],
               ],
             ),
           ),
-        ),
-      ],
+          // RIGHT COLUMN: Scrollable Grid
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildDaysRow(days),
+                  for (var entry in grouped.entries) ...[
+                    const SizedBox(
+                      height: _categoryHeaderHeight,
+                    ), // Spacer for category header
+                    for (var habit in entry.value)
+                      _buildDotsRow(habit['name'], days, base, cs),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

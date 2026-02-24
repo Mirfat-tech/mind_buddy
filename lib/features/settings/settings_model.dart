@@ -103,6 +103,8 @@ class SettingsModel {
     required this.maxNotificationsPerDay,
     required this.calendarRemindersEnabled,
     required this.pomodoroAlertsEnabled,
+    required this.hapticsEnabled,
+    required this.soundsEnabled,
     required this.keepInstructionsEnabled,
     required this.updatedAt,
     required this.version,
@@ -122,6 +124,8 @@ class SettingsModel {
   final int maxNotificationsPerDay;
   final bool calendarRemindersEnabled;
   final bool pomodoroAlertsEnabled;
+  final bool hapticsEnabled;
+  final bool soundsEnabled;
   final bool keepInstructionsEnabled;
   final String updatedAt; // ISO string
   final int version;
@@ -142,6 +146,8 @@ class SettingsModel {
       maxNotificationsPerDay: 2,
       calendarRemindersEnabled: true,
       pomodoroAlertsEnabled: true,
+      hapticsEnabled: true,
+      soundsEnabled: true,
       keepInstructionsEnabled: false,
       updatedAt: DateTime.fromMillisecondsSinceEpoch(0).toIso8601String(),
       version: 1,
@@ -163,6 +169,8 @@ class SettingsModel {
     int? maxNotificationsPerDay,
     bool? calendarRemindersEnabled,
     bool? pomodoroAlertsEnabled,
+    bool? hapticsEnabled,
+    bool? soundsEnabled,
     bool? keepInstructionsEnabled,
     String? updatedAt,
     int? version,
@@ -177,14 +185,18 @@ class SettingsModel {
       notificationDays: notificationDays ?? this.notificationDays,
       notificationTime: notificationTime ?? this.notificationTime,
       notificationRepeat: notificationRepeat ?? this.notificationRepeat,
-      notificationCategories: notificationCategories ?? this.notificationCategories,
+      notificationCategories:
+          notificationCategories ?? this.notificationCategories,
       notificationSpaceSettings:
           notificationSpaceSettings ?? this.notificationSpaceSettings,
       maxNotificationsPerDay:
           maxNotificationsPerDay ?? this.maxNotificationsPerDay,
       calendarRemindersEnabled:
           calendarRemindersEnabled ?? this.calendarRemindersEnabled,
-      pomodoroAlertsEnabled: pomodoroAlertsEnabled ?? this.pomodoroAlertsEnabled,
+      pomodoroAlertsEnabled:
+          pomodoroAlertsEnabled ?? this.pomodoroAlertsEnabled,
+      hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
+      soundsEnabled: soundsEnabled ?? this.soundsEnabled,
       keepInstructionsEnabled:
           keepInstructionsEnabled ?? this.keepInstructionsEnabled,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -204,11 +216,14 @@ class SettingsModel {
       'notificationTime': notificationTime,
       'notificationRepeat': notificationRepeat,
       'notificationCategories': notificationCategories,
-      'notificationSpaceSettings':
-          notificationSpaceSettings.map((key, value) => MapEntry(key, value.toJson())),
+      'notificationSpaceSettings': notificationSpaceSettings.map(
+        (key, value) => MapEntry(key, value.toJson()),
+      ),
       'maxNotificationsPerDay': maxNotificationsPerDay,
       'calendarRemindersEnabled': calendarRemindersEnabled,
       'pomodoroAlertsEnabled': pomodoroAlertsEnabled,
+      'hapticsEnabled': hapticsEnabled,
+      'soundsEnabled': soundsEnabled,
       'keepInstructionsEnabled': keepInstructionsEnabled,
       'updatedAt': updatedAt,
       'version': version,
@@ -237,10 +252,10 @@ class SettingsModel {
     if (rawSpaceSettings is Map) {
       rawSpaceSettings.forEach((key, value) {
         if (value is Map) {
-          parsedSpaceSettings[key.toString()] =
-              NotificationSpaceSetting.fromJson(
-                Map<String, dynamic>.from(value),
-              );
+          parsedSpaceSettings[key
+              .toString()] = NotificationSpaceSetting.fromJson(
+            Map<String, dynamic>.from(value),
+          );
         }
       });
     }
@@ -261,17 +276,19 @@ class SettingsModel {
       calendarRemindersEnabled:
           (json['calendarRemindersEnabled'] ?? true) as bool,
       pomodoroAlertsEnabled: (json['pomodoroAlertsEnabled'] ?? true) as bool,
+      hapticsEnabled: (json['hapticsEnabled'] ?? true) as bool,
+      soundsEnabled: (json['soundsEnabled'] ?? true) as bool,
       keepInstructionsEnabled:
           (json['keepInstructionsEnabled'] ?? false) as bool,
-      updatedAt: (updatedAtOverride ??
-              json['updatedAt'] ??
-              DateTime.fromMillisecondsSinceEpoch(0).toIso8601String())
-          as String,
+      updatedAt:
+          (updatedAtOverride ??
+                  json['updatedAt'] ??
+                  DateTime.fromMillisecondsSinceEpoch(0).toIso8601String())
+              as String,
       version: (json['version'] ?? 1) as int,
     );
   }
 
   DateTime get updatedAtDateTime =>
-      DateTime.tryParse(updatedAt) ??
-      DateTime.fromMillisecondsSinceEpoch(0);
+      DateTime.tryParse(updatedAt) ?? DateTime.fromMillisecondsSinceEpoch(0);
 }

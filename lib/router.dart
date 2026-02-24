@@ -9,7 +9,7 @@ import 'package:mind_buddy/features/templates/templates_screen.dart';
 import 'package:mind_buddy/features/templates/template_screen.dart';
 
 // screens
-import 'features/splash/splash_screen.dart';
+import 'features/splash/bootstrap_gate_screen.dart';
 import 'features/auth/sign_in_screen.dart';
 import 'features/auth/sign_up_screen.dart';
 import 'features/auth/reset_password_screen.dart';
@@ -22,9 +22,18 @@ import 'features/journal/journal_share_view_screen.dart';
 import 'features/journal/edit_journal_screen.dart';
 import 'features/day/daily_page_screen.dart';
 import 'features/chat/chat_screen.dart';
+import 'package:mind_buddy/features/chat/chat_launch_screen.dart';
 import 'package:mind_buddy/features/templates/log_table_screen.dart';
 import 'package:mind_buddy/features/insights/insights_gate_screen.dart';
 import 'package:mind_buddy/features/onboarding/plan_selection_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_doorway_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_promise_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_auth_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_expression_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_lookback_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_confirm_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_username_screen.dart';
 //import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'package:mind_buddy/features/insights/manage_habits_screen.dart'
     show ManageHabitsScreen;
@@ -44,6 +53,8 @@ import 'package:mind_buddy/features/settings/appearance_settings_screen.dart';
 import 'package:mind_buddy/features/settings/notifications_settings_screen.dart';
 import 'package:mind_buddy/features/settings/usage_settings_screen.dart';
 import 'package:mind_buddy/features/settings/quiet_guide_screen.dart';
+import 'package:mind_buddy/features/settings/blocked_users_screen.dart';
+import 'package:mind_buddy/services/startup_user_data_service.dart';
 
 //
 
@@ -119,10 +130,11 @@ Widget themed(Widget child) => ThemedPage(child: child);
 
 /// Use CupertinoPage so iOS back-swipe works consistently.
 Page<void> cupertinoPage(Widget child, GoRouterState state) {
-  return CupertinoPage<void>(
-    key: state.pageKey,
-    child: themed(child),
-  );
+  return CupertinoPage<void>(key: state.pageKey, child: themed(child));
+}
+
+Page<void> cupertinoPlainPage(Widget child, GoRouterState state) {
+  return CupertinoPage<void>(key: state.pageKey, child: child);
 }
 
 GoRouter createRouter() {
@@ -130,7 +142,7 @@ GoRouter createRouter() {
 
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
-    initialLocation: '/home',
+    initialLocation: '/bootstrap',
 
     // Re-run redirect when auth changes
     refreshListenable: GoRouterRefreshStream(supabase.auth.onAuthStateChange),
@@ -139,39 +151,67 @@ GoRouter createRouter() {
       final session = supabase.auth.currentSession;
 
       final loggingIn = state.matchedLocation == '/signin';
+      final onSignup = state.matchedLocation == '/signup';
       final onSplash = state.matchedLocation == '/splash';
+      final onBootstrap = state.matchedLocation == '/bootstrap';
       final onReset = state.matchedLocation == '/reset';
-      final onOnboarding = state.matchedLocation == '/onboarding/plan';
+      final onOnboarding = state.matchedLocation.startsWith('/onboarding');
+      final onOnboardingAuth = state.matchedLocation == '/onboarding/auth';
+      final onOnboardingPlan = state.matchedLocation == '/onboarding/plan';
+      final onOnboardingUsername =
+          state.matchedLocation == '/onboarding/username';
       final onSubscription = state.matchedLocation == '/subscription';
       final onShare = state.matchedLocation.startsWith('/share/');
 
       // let splash/reset handle themselves
-      if (onSplash || onReset || onShare) return null;
+      if (onSplash || onBootstrap || onReset || onShare) return null;
 
-      // not logged in -> go signin
-      if (session == null && !loggingIn) return '/signin';
+      // not logged in -> onboarding or signin
+      if (session == null) {
+        final completed = await OnboardingController.isCompleted();
+        final authSkipped = await OnboardingController.isAuthSkipped();
+        final onboardingDone = completed || authSkipped;
 
-      if (session != null) {
-        // pending plan -> force onboarding choice
-        final profile = await supabase
-            .from('profiles')
-            .select('subscription_tier')
-            .eq('id', session.user.id)
-            .maybeSingle();
-        final tier =
-            (profile?['subscription_tier'] ?? '').toString().trim().toLowerCase();
-        final pending = tier.isEmpty || tier == 'pending';
-
-        if (pending &&
-            !onOnboarding &&
-            !onSubscription &&
-            !loggingIn) {
-          return '/onboarding/plan';
+        if (onboardingDone && onOnboarding && !onOnboardingAuth) {
+          return '/home';
         }
-
-        // logged in but on signin -> go home
-        if (loggingIn) return '/home';
+        if (loggingIn || onSignup || onOnboardingAuth) return null;
+        if (!onboardingDone && !onOnboarding) return '/onboarding/doorway';
+        return null;
       }
+
+      final bundle = await StartupUserDataService.instance.fetchCombinedForUser(
+        session.user.id,
+      );
+      final profile = bundle.profileRow;
+      final hasProfileRow = profile != null;
+      final username = (profile?['username'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final missingUsername = hasProfileRow && username.isEmpty;
+
+      if (missingUsername && !onOnboardingUsername) {
+        return '/onboarding/username';
+      }
+
+      // pending plan -> force onboarding choice
+      final tier = (profile?['subscription_tier'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      final pending = hasProfileRow && (tier.isEmpty || tier == 'pending');
+
+      if (pending &&
+          !onOnboardingPlan &&
+          !onOnboarding &&
+          !onSubscription &&
+          !loggingIn) {
+        return '/onboarding/plan';
+      }
+
+      // logged in but on signin -> go home
+      if (loggingIn) return '/home';
 
       return null;
     },
@@ -179,10 +219,11 @@ GoRouter createRouter() {
     routes: [
       // SPLASH
       GoRoute(
-        path: '/splash',
+        path: '/bootstrap',
         pageBuilder: (context, state) =>
-            cupertinoPage(const SplashScreen(), state),
+            cupertinoPlainPage(const BootstrapGateScreen(), state),
       ),
+      GoRoute(path: '/splash', redirect: (_, __) => '/bootstrap'),
 
       // AUTH
       GoRoute(
@@ -199,6 +240,41 @@ GoRouter createRouter() {
         path: '/reset',
         pageBuilder: (context, state) =>
             cupertinoPage(const ResetPasswordScreen(), state),
+      ),
+      GoRoute(
+        path: '/onboarding/doorway',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingDoorwayScreen(), state),
+      ),
+      GoRoute(
+        path: '/onboarding/promise',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingPromiseScreen(), state),
+      ),
+      GoRoute(
+        path: '/onboarding/auth',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingAuthScreen(), state),
+      ),
+      GoRoute(
+        path: '/onboarding/expression',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingExpressionScreen(), state),
+      ),
+      GoRoute(
+        path: '/onboarding/lookback',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingLookbackScreen(), state),
+      ),
+      GoRoute(
+        path: '/onboarding/confirm',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingConfirmScreen(), state),
+      ),
+      GoRoute(
+        path: '/onboarding/username',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingUsernameScreen(), state),
       ),
       GoRoute(
         path: '/onboarding/plan',
@@ -229,7 +305,7 @@ GoRouter createRouter() {
       GoRoute(
         path: '/journals',
         pageBuilder: (context, state) =>
-            cupertinoPage(const JournalsListScreen(), state),
+            cupertinoPage(JournalsListScreen(), state),
       ),
       GoRoute(
         path: '/journals/new',
@@ -269,7 +345,20 @@ GoRouter createRouter() {
 
       // CHAT (attached to a day)
       GoRoute(
+        path: '/chat',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const ChatLaunchScreen(), state),
+      ),
+      GoRoute(
         path: '/chat/:dayId/:chatId',
+        pageBuilder: (context, state) {
+          final dayId = state.pathParameters['dayId']!;
+          final chatId = int.parse(state.pathParameters['chatId']!);
+          return cupertinoPage(ChatScreen(dayId: dayId, chatId: chatId), state);
+        },
+      ),
+      GoRoute(
+        path: '/day/:dayId/chat/:chatId',
         pageBuilder: (context, state) {
           final dayId = state.pathParameters['dayId']!;
           final chatId = int.parse(state.pathParameters['chatId']!);
@@ -323,6 +412,11 @@ GoRouter createRouter() {
         path: '/settings/notifications',
         pageBuilder: (context, state) =>
             cupertinoPage(const NotificationsSettingsScreen(), state),
+      ),
+      GoRoute(
+        path: '/settings/blocked',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const BlockedUsersScreen(), state),
       ),
       GoRoute(
         path: '/settings/usage',

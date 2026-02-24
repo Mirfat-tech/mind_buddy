@@ -8,7 +8,8 @@ import 'package:mind_buddy/services/notification_service.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
-import 'dart:ui'; // Required for FontFeature
+// Required for FontFeature
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PomodoroScreen extends StatelessWidget {
   const PomodoroScreen({super.key});
@@ -56,11 +57,11 @@ class PomodoroStandalone extends ConsumerStatefulWidget {
   const PomodoroStandalone({super.key});
 
   @override
-  ConsumerState<PomodoroStandalone> createState() =>
-      _PomodoroStandaloneState();
+  ConsumerState<PomodoroStandalone> createState() => _PomodoroStandaloneState();
 }
 
-class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
+class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone>
+    with WidgetsBindingObserver {
   Timer? _timer;
   int focusMinutes = 25;
   int breakMinutes = 5;
@@ -69,18 +70,113 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
   bool running = false;
   int focusedMinutesToday = 0;
   int _messageSeed = 0;
+  DateTime? _endTime;
+  final int _lastNotifTick = 0;
+  SharedPreferences? _prefs;
+  bool _stopRequested = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     secondsLeft = focusMinutes * 60;
     _messageSeed = DateTime.now().millisecondsSinceEpoch;
+    _restoreState();
+    _loadPrefs();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _syncFromEndTime();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _persistState();
+    }
+  }
+
+  Future<void> _restoreState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedRunning = prefs.getBool('pomodoro_running') ?? false;
+    final savedMode = prefs.getString('pomodoro_mode') ?? mode;
+    final savedEnd = prefs.getString('pomodoro_end_time');
+    final savedFocus = prefs.getInt('pomodoro_focus_minutes');
+    final savedBreak = prefs.getInt('pomodoro_break_minutes');
+    if (savedFocus != null) focusMinutes = savedFocus;
+    if (savedBreak != null) breakMinutes = savedBreak;
+    mode = savedMode;
+    if (savedEnd != null) {
+      _endTime = DateTime.tryParse(savedEnd);
+    }
+    if (savedRunning && _endTime != null) {
+      running = true;
+      _syncFromEndTime();
+      _startTimer();
+    } else {
+      secondsLeft = (mode == 'focus' ? focusMinutes : breakMinutes) * 60;
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _persistState() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('pomodoro_running', running);
+    await prefs.setString('pomodoro_mode', mode);
+    await prefs.setInt('pomodoro_focus_minutes', focusMinutes);
+    await prefs.setInt('pomodoro_break_minutes', breakMinutes);
+    if (_endTime != null) {
+      await prefs.setString('pomodoro_end_time', _endTime!.toIso8601String());
+    } else {
+      await prefs.remove('pomodoro_end_time');
+    }
+  }
+
+  void _syncFromEndTime() {
+    if (!running || _endTime == null) return;
+    final now = DateTime.now();
+    final diff = _endTime!.difference(now).inSeconds;
+    if (diff <= 0) {
+      secondsLeft = 0;
+      running = false;
+      _stopTimer();
+      _handleTimerFinished();
+    } else {
+      secondsLeft = diff;
+    }
+    if (mounted) setState(() {});
+    _consumeStopRequestIfNeeded();
+  }
+
+  Future<void> _loadPrefs() async {
+    _prefs = await SharedPreferences.getInstance();
+  }
+
+  void _consumeStopRequestIfNeeded() {
+    if (_prefs == null) return;
+    final requested = _prefs!.getBool('pomodoro_stop_requested') ?? false;
+    if (!requested) return;
+    _prefs!.setBool('pomodoro_stop_requested', false);
+    _stopRequested = true;
+    _handleExternalStop();
+  }
+
+  void _handleExternalStop() {
+    _stopTimer();
+    NotificationService.instance.cancelPomodoroStatusNotification();
+    NotificationService.instance.cancelPomodoroFinishedNotification();
+    setState(() {
+      running = false;
+      secondsLeft = (mode == 'focus' ? focusMinutes : breakMinutes) * 60;
+      _endTime = null;
+    });
+    _persistState();
   }
 
   // --- TIMER LOGIC ---
@@ -99,15 +195,25 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
     if (secondsLeft <= 0) return;
 
     setState(() => secondsLeft -= 1);
+    if (running && _endTime == null) {
+      _endTime = DateTime.now().add(Duration(seconds: secondsLeft));
+    }
+    if (running && secondsLeft % 60 == 0) {
+      _updatePomodoroStatusNotification();
+    }
 
     if (secondsLeft <= 0) {
+      if (_stopRequested) return;
       _stopTimer();
       setState(() => running = false);
+      NotificationService.instance.cancelPomodoroStatusNotification();
       _handleTimerFinished();
     }
+    _consumeStopRequestIfNeeded();
   }
 
   Future<void> _handleTimerFinished() async {
+    if (_stopRequested) return;
     final wasFocus = mode == 'focus';
     if (mode == 'focus') {
       setState(() => focusedMinutesToday += focusMinutes);
@@ -119,6 +225,8 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
       await NotificationService.instance.showPomodoroFinishedNotification(
         wasFocus: wasFocus,
         message: message,
+        hapticsEnabled: settings.hapticsEnabled,
+        soundsEnabled: settings.soundsEnabled,
       );
     }
     // Simple switch logic to keep flow clean
@@ -168,10 +276,25 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
   }
 
   void _toggleRunning() {
+    final settings = ref.read(settingsControllerProvider).settings;
     setState(() => running = !running);
     if (running) {
+      _endTime = DateTime.now().add(Duration(seconds: secondsLeft));
+      _updatePomodoroStatusNotification();
+      final message = _pickPomodoroMessage(mode == 'focus');
+      NotificationService.instance.schedulePomodoroEndNotification(
+        wasFocus: mode == 'focus',
+        endsAt: _endTime!,
+        message: message,
+        hapticsEnabled: settings.hapticsEnabled,
+        soundsEnabled: settings.soundsEnabled,
+      );
+      _persistState();
       _startTimer();
     } else {
+      NotificationService.instance.cancelPomodoroStatusNotification();
+      NotificationService.instance.cancelPomodoroFinishedNotification();
+      _persistState();
       _stopTimer();
     }
   }
@@ -181,7 +304,11 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
     setState(() {
       running = false;
       secondsLeft = (mode == 'focus' ? focusMinutes : breakMinutes) * 60;
+      _endTime = null;
     });
+    NotificationService.instance.cancelPomodoroStatusNotification();
+    NotificationService.instance.cancelPomodoroFinishedNotification();
+    _persistState();
   }
 
   void _setMode(String newMode) {
@@ -190,7 +317,22 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
       mode = newMode;
       running = false;
       secondsLeft = (mode == 'focus' ? focusMinutes : breakMinutes) * 60;
+      _endTime = null;
     });
+    NotificationService.instance.cancelPomodoroStatusNotification();
+    NotificationService.instance.cancelPomodoroFinishedNotification();
+    _persistState();
+  }
+
+  void _updatePomodoroStatusNotification() {
+    final totalSeconds = (mode == 'focus' ? focusMinutes : breakMinutes) * 60;
+    if (_endTime == null) return;
+    NotificationService.instance.showPomodoroStatusNotification(
+      wasFocus: mode == 'focus',
+      secondsLeft: secondsLeft,
+      totalSeconds: totalSeconds,
+      endsAt: _endTime!,
+    );
   }
 
   // --- THE SLIDERS (Your original logic) ---
@@ -252,10 +394,11 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
 
     if (selected != null) {
       setState(() {
-        if (isFocus)
+        if (isFocus) {
           focusMinutes = selected;
-        else
+        } else {
           breakMinutes = selected;
+        }
         if (!running) secondsLeft = selected * 60;
       });
     }
@@ -332,17 +475,26 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
                   ),
                 ),
                 const SizedBox(height: 4),
-                TextButton.icon(
+                TextButton(
                   onPressed: running ? null : _pickMinutes,
-                  icon: const Icon(Icons.tune, size: 16),
-                  label: Text(
-                    '${mode == 'focus' ? focusMinutes : breakMinutes} min',
-                    style: const TextStyle(fontSize: 13),
-                  ),
                   style: TextButton.styleFrom(
                     foregroundColor: (mode == 'focus'
                         ? scheme.primary
                         : Colors.teal),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        mode == 'focus'
+                            ? 'Adjust Focus Time'
+                            : 'Adjust Break Time',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -399,6 +551,18 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone> {
             const SizedBox(width: 12),
             OutlinedButton(onPressed: _reset, child: const Text('Reset')),
           ],
+        ),
+        const SizedBox(height: 10),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            onPressed: () {
+              NotificationService.instance.cancelPomodoroStatusNotification();
+              NotificationService.instance.cancelPomodoroFinishedNotification();
+            },
+            icon: const Icon(Icons.notifications_off_outlined, size: 16),
+            label: const Text('Stop alert'),
+          ),
         ),
         const SizedBox(height: 24),
 

@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
@@ -9,14 +10,31 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:mind_buddy/features/settings/settings_provider.dart';
+import 'package:mind_buddy/services/notification_service.dart';
+import 'package:mind_buddy/guides/guide_manager.dart';
 
-class CalendarScreen extends StatelessWidget {
+enum CalendarViewMode { month, week }
+
+final calendarViewProvider = StateProvider<CalendarViewMode>(
+  (ref) => CalendarViewMode.month,
+);
+
+class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+  State<CalendarScreen> createState() => _CalendarScreenState();
+}
 
+class _CalendarScreenState extends State<CalendarScreen> {
+  final GlobalKey<_CalendarBodyState> _calendarKey =
+      GlobalKey<_CalendarBodyState>();
+  final GlobalKey _filterButtonKey = GlobalKey();
+
+  @override
+  Widget build(BuildContext context) {
     return MbScaffold(
       applyBackground: false,
       appBar: AppBar(
@@ -33,32 +51,54 @@ class CalendarScreen extends StatelessWidget {
         ),
         actions: [
           MbGlowIconButton(
-            icon: Icons.notifications_outlined,
-            tooltip: 'Notifications',
-            onPressed: () => context.push('/settings/notifications?from=calendar'),
+            icon: Icons.calendar_month,
+            tooltip: 'View',
+            onPressed: () => _calendarKey.currentState?.showViewSheet(),
+          ),
+          MbGlowIconButton(
+            icon: Icons.event_available,
+            tooltip: 'Pick month',
+            onPressed: () => _calendarKey.currentState?._showMonthYearPicker(),
+          ),
+          MbGlowIconButton(
+            icon: Icons.help_outline,
+            tooltip: 'Guide',
+            onPressed: () => _calendarKey.currentState?.showGuide(force: true),
+          ),
+          MbGlowIconButton(
+            key: _filterButtonKey,
+            icon: Icons.filter_alt_rounded,
+            tooltip: 'Filters',
+            onPressed: () => _calendarKey.currentState?.showFilterSheet(),
           ),
         ],
       ),
-      body: const MbFloatingHintOverlay(
+      body: MbFloatingHintOverlay(
         hintKey: 'hint_calendar',
         text: 'Tap a day to see entries. Filters live at the top.',
         iconText: '✨',
-        child: _CalendarBody(),
+        child: _CalendarBody(
+          key: _calendarKey,
+          filterButtonKey: _filterButtonKey,
+        ),
       ),
     );
   }
 }
 
-class _CalendarBody extends StatefulWidget {
-  const _CalendarBody();
+class _CalendarBody extends ConsumerStatefulWidget {
+  const _CalendarBody({super.key, required this.filterButtonKey});
+
+  final GlobalKey filterButtonKey;
 
   @override
-  State<_CalendarBody> createState() => _CalendarBodyState();
+  ConsumerState<_CalendarBody> createState() => _CalendarBodyState();
 }
 
-class _CalendarBodyState extends State<_CalendarBody> {
+class _CalendarBodyState extends ConsumerState<_CalendarBody> {
   final SupabaseClient supabase = Supabase.instance.client;
   final DateFormat _fmt = DateFormat('yyyy-MM-dd');
+  static const int _maxReminderTimesPerDay = 50;
 
   late List<String> _currentFilters;
   final List<String> _allPossibleTemplates = [
@@ -87,11 +127,18 @@ class _CalendarBodyState extends State<_CalendarBody> {
   bool _loadingData = false;
   bool _isPending = false;
   bool _trialBannerVisible = true;
+  bool _savingReminder = false;
 
   final Set<String> _activeDays = <String>{};
   List<Map<String, dynamic>> _displayList = <Map<String, dynamic>>[];
 
   String _selectedTemplate = 'Reminders Only';
+  static const String _lastTemplateKey = 'calendar_last_template';
+  final GlobalKey _templateSelectorKey = GlobalKey();
+  final GlobalKey _calendarGridKey = GlobalKey();
+  final GlobalKey _completeCircleButtonKey = GlobalKey();
+  final GlobalKey _editButtonKey = GlobalKey();
+  final GlobalKey _deleteButtonKey = GlobalKey();
 
   @override
   void initState() {
@@ -124,6 +171,8 @@ class _CalendarBodyState extends State<_CalendarBody> {
     try {
       final info = await SubscriptionLimits.fetchForCurrentUser();
       _isPending = info.isPending;
+      final prefs = await SharedPreferences.getInstance();
+      final lastTemplate = prefs.getString(_lastTemplateKey);
       final data = await supabase
           .from('user_calendar_preferences')
           .select('visible_filters')
@@ -137,11 +186,21 @@ class _CalendarBodyState extends State<_CalendarBody> {
       } else {
         setState(() => _currentFilters = List.from(_allPossibleTemplates));
       }
+      if (lastTemplate != null && _currentFilters.contains(lastTemplate)) {
+        setState(() => _selectedTemplate = lastTemplate);
+      } else if (!_currentFilters.contains(_selectedTemplate)) {
+        setState(() => _selectedTemplate = _currentFilters.first);
+      }
     } catch (e) {
       debugPrint('Error loading preferences: $e');
       setState(() => _currentFilters = List.from(_allPossibleTemplates));
     }
     _refreshAll();
+  }
+
+  Future<void> _saveLastTemplate(String template) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_lastTemplateKey, template);
   }
 
   // --- NEW: SAVE TO SUPABASE ---
@@ -172,6 +231,122 @@ class _CalendarBodyState extends State<_CalendarBody> {
   void _refreshAll() {
     _loadFilteredDots(_focusedDay);
     _loadDataForSelectedDay(_selectedDay);
+  }
+
+  Future<void> showViewSheet() async {
+    final current = ref.read(calendarViewProvider);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _ViewOption(
+                label: 'Month',
+                selected: current == CalendarViewMode.month,
+                onTap: () {
+                  ref.read(calendarViewProvider.notifier).state =
+                      CalendarViewMode.month;
+                  setState(() => _focusedDay = _selectedDay);
+                  _loadFilteredDots(_focusedDay);
+                  Navigator.pop(ctx);
+                },
+              ),
+              _ViewOption(
+                label: 'Week',
+                selected: current == CalendarViewMode.week,
+                onTap: () {
+                  ref.read(calendarViewProvider.notifier).state =
+                      CalendarViewMode.week;
+                  setState(() => _focusedDay = _selectedDay);
+                  _loadFilteredDots(_focusedDay);
+                  Navigator.pop(ctx);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showMonthYearPicker() async {
+    final now = DateTime.now();
+    const minYear = 1980;
+    final maxYear = now.year + 5;
+    DateTime tempPicked = DateTime(_focusedDay.year, _focusedDay.month, 1);
+
+    final picked = await showModalBottomSheet<DateTime>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return Container(
+          decoration: BoxDecoration(
+            color: cs.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          padding: const EdgeInsets.only(top: 12),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Choose month',
+                  style: Theme.of(ctx).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 180,
+                  child: CupertinoDatePicker(
+                    mode: CupertinoDatePickerMode.monthYear,
+                    minimumYear: minYear,
+                    maximumYear: maxYear,
+                    initialDateTime: tempPicked,
+                    onDateTimeChanged: (value) {
+                      tempPicked = DateTime(value.year, value.month, 1);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.pop(ctx, tempPicked),
+                        child: const Text('Apply'),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _focusedDay = DateTime(picked.year, picked.month, 1);
+        _selectedDay = DateTime(picked.year, picked.month, 1);
+      });
+      _refreshAll();
+    }
   }
 
   String _getTableName(String template) {
@@ -230,30 +405,249 @@ class _CalendarBodyState extends State<_CalendarBody> {
     });
 
     try {
-      final tableName = _getTableName(_selectedTemplate);
       final start = DateTime(month.year, month.month, 1);
       final end = DateTime(month.year, month.month + 1, 0);
 
-      final rows = await supabase
-          .from(tableName)
-          .select('day')
-          .eq('user_id', user.id)
-          .gte('day', _fmt.format(start))
-          .lte('day', _fmt.format(end));
+      if (_selectedTemplate == 'Reminders Only') {
+        final rows = await supabase
+            .from('reminders')
+            .select('id, day, repeat, repeat_days, end_day')
+            .eq('user_id', user.id);
+        final skipRows = await supabase
+            .from('reminders_skips')
+            .select('reminder_id, day')
+            .eq('user_id', user.id)
+            .gte('day', _fmt.format(start))
+            .lte('day', _fmt.format(end));
+        final skipped = (skipRows as List)
+            .map((r) => '${r['reminder_id']}-${r['day']}')
+            .toSet();
+        final dates = _expandReminderDates(
+          rows as List,
+          start,
+          end,
+          skipped: skipped,
+        );
+        if (!mounted) return;
+        setState(() => _activeDays.addAll(dates));
+      } else {
+        final tableName = _getTableName(_selectedTemplate);
+        final rows = await supabase
+            .from(tableName)
+            .select('day')
+            .eq('user_id', user.id)
+            .gte('day', _fmt.format(start))
+            .lte('day', _fmt.format(end));
 
-      final list = (rows as List).cast<dynamic>();
-      final next = list
-          .map((r) => r['day'].toString().substring(0, 10))
-          .toSet()
-          .cast<String>();
+        final list = (rows as List).cast<dynamic>();
+        final next = list
+            .map((r) => r['day'].toString().substring(0, 10))
+            .toSet()
+            .cast<String>();
 
-      if (!mounted) return;
-      setState(() => _activeDays.addAll(next));
+        if (!mounted) return;
+        setState(() => _activeDays.addAll(next));
+      }
     } catch (e) {
       debugPrint('Dot Load Error: $e');
     } finally {
       if (!mounted) return;
       setState(() => _loadingDots = false);
+    }
+  }
+
+  Set<String> _expandReminderDates(
+    List rows,
+    DateTime start,
+    DateTime end, {
+    Set<String>? skipped,
+  }) {
+    final days = <String>{};
+    for (final raw in rows) {
+      final r = Map<String, dynamic>.from(raw as Map);
+      final repeat = (r['repeat'] ?? 'never').toString().toLowerCase();
+      final repeatDaysRaw = (r['repeat_days'] ?? '').toString().toLowerCase();
+      final repeatDays = repeatDaysRaw
+          .split(',')
+          .map((d) => d.trim())
+          .where((d) => d.isNotEmpty)
+          .toList();
+      final dayStr = (r['day'] ?? '').toString();
+      final endStr = (r['end_day'] ?? '').toString();
+      final reminderId = (r['id'] ?? '').toString();
+      if (dayStr.isEmpty) continue;
+      final baseDate = DateTime.tryParse(dayStr);
+      final endDate = endStr.isEmpty ? null : DateTime.tryParse(endStr);
+      if (baseDate == null) continue;
+
+      if (repeat == 'never') {
+        if (baseDate.isBefore(start) || baseDate.isAfter(end)) continue;
+        final key = '$reminderId-${_fmt.format(baseDate)}';
+        if (skipped == null || !skipped.contains(key)) {
+          days.add(_fmt.format(baseDate));
+        }
+        continue;
+      }
+
+      DateTime cursor = DateTime(start.year, start.month, start.day);
+      while (!cursor.isAfter(end)) {
+        bool match = false;
+        switch (repeat) {
+          case 'daily':
+            match = !cursor.isBefore(baseDate);
+            break;
+          case 'weekly':
+            match =
+                cursor.isAfter(baseDate) || cursor.isAtSameMomentAs(baseDate)
+                ? cursor.weekday == baseDate.weekday
+                : false;
+            break;
+          case 'fortnightly':
+            if (cursor.isBefore(baseDate)) {
+              match = false;
+            } else {
+              final diff = cursor.difference(baseDate).inDays;
+              match = diff % 14 == 0;
+            }
+            break;
+          case 'monthly':
+            match =
+                cursor.day == baseDate.day &&
+                (cursor.isAfter(baseDate) || cursor.isAtSameMomentAs(baseDate));
+            break;
+          case 'weekdays':
+            match =
+                cursor.weekday >= DateTime.monday &&
+                cursor.weekday <= DateTime.friday &&
+                !cursor.isBefore(baseDate);
+            break;
+          case 'weekends':
+            match =
+                (cursor.weekday == DateTime.saturday ||
+                    cursor.weekday == DateTime.sunday) &&
+                !cursor.isBefore(baseDate);
+            break;
+          case 'custom':
+            final key = _weekdayKey(cursor.weekday);
+            match = repeatDays.contains(key) && !cursor.isBefore(baseDate);
+            break;
+        }
+
+        if (match) {
+          if (endDate != null && cursor.isAfter(endDate)) {
+            cursor = cursor.add(const Duration(days: 1));
+            continue;
+          }
+          final key = '$reminderId-${_fmt.format(cursor)}';
+          if (skipped == null || !skipped.contains(key)) {
+            days.add(_fmt.format(cursor));
+          }
+        }
+        cursor = cursor.add(const Duration(days: 1));
+      }
+    }
+    return days;
+  }
+
+  String _weekdayKey(int weekday) {
+    switch (weekday) {
+      case DateTime.monday:
+        return 'mon';
+      case DateTime.tuesday:
+        return 'tue';
+      case DateTime.wednesday:
+        return 'wed';
+      case DateTime.thursday:
+        return 'thu';
+      case DateTime.friday:
+        return 'fri';
+      case DateTime.saturday:
+        return 'sat';
+      case DateTime.sunday:
+        return 'sun';
+    }
+    return '';
+  }
+
+  List<String> _parseReminderTimes(dynamic raw) {
+    final text = raw?.toString() ?? '';
+    if (text.trim().isEmpty) return <String>[];
+    final seen = <String>{};
+    final parsed = <String>[];
+    for (final token in text.split(',')) {
+      final v = token.trim();
+      final parts = v.split(':');
+      if (parts.length != 2) continue;
+      final h = int.tryParse(parts[0]);
+      final m = int.tryParse(parts[1]);
+      if (h == null || m == null) continue;
+      if (h < 0 || h > 23 || m < 0 || m > 59) continue;
+      final normalized =
+          '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+      if (seen.add(normalized)) {
+        parsed.add(normalized);
+      }
+    }
+    parsed.sort();
+    return parsed;
+  }
+
+  String _joinReminderTimes(List<String> times) {
+    return _parseReminderTimes(
+      times.join(','),
+    ).take(_maxReminderTimesPerDay).join(',');
+  }
+
+  String _firstReminderTime(dynamic raw) {
+    final times = _parseReminderTimes(raw);
+    if (times.isEmpty) return '';
+    return times.first;
+  }
+
+  bool _reminderOccursOnDate(Map<String, dynamic> r, DateTime date) {
+    final repeat = (r['repeat'] ?? 'never').toString().toLowerCase();
+    final repeatDaysRaw = (r['repeat_days'] ?? '').toString().toLowerCase();
+    final repeatDays = repeatDaysRaw
+        .split(',')
+        .map((d) => d.trim())
+        .where((d) => d.isNotEmpty)
+        .toSet();
+    final dayStr = (r['day'] ?? '').toString();
+    final endStr = (r['end_day'] ?? '').toString();
+    final baseDate = DateTime.tryParse(dayStr);
+    final endDate = endStr.isEmpty ? null : DateTime.tryParse(endStr);
+    if (baseDate == null) return false;
+    final target = DateTime(date.year, date.month, date.day);
+    final base = DateTime(baseDate.year, baseDate.month, baseDate.day);
+
+    if (repeat == 'never') {
+      return target == base;
+    }
+    if (target.isBefore(base)) return false;
+    if (endDate != null) {
+      final end = DateTime(endDate.year, endDate.month, endDate.day);
+      if (target.isAfter(end)) return false;
+    }
+
+    switch (repeat) {
+      case 'daily':
+        return true;
+      case 'weekly':
+        return target.weekday == base.weekday;
+      case 'fortnightly':
+        return target.difference(base).inDays % 14 == 0;
+      case 'monthly':
+        return target.day == base.day;
+      case 'weekdays':
+        return target.weekday >= DateTime.monday &&
+            target.weekday <= DateTime.friday;
+      case 'weekends':
+        return target.weekday == DateTime.saturday ||
+            target.weekday == DateTime.sunday;
+      case 'custom':
+        return repeatDays.contains(_weekdayKey(target.weekday));
+      default:
+        return false;
     }
   }
 
@@ -316,6 +710,54 @@ class _CalendarBodyState extends State<_CalendarBody> {
         return;
       }
 
+      if (_selectedTemplate == 'Reminders Only') {
+        final rows = await supabase
+            .from('reminders')
+            .select('id, title, day, time, repeat, repeat_days, end_day')
+            .eq('user_id', user.id);
+        final doneRows = await supabase
+            .from('reminders_done')
+            .select('reminder_id, day')
+            .eq('user_id', user.id)
+            .eq('day', dayKey);
+        final skipRows = await supabase
+            .from('reminders_skips')
+            .select('reminder_id, day')
+            .eq('user_id', user.id)
+            .eq('day', dayKey);
+        final doneKeys = (doneRows as List)
+            .map((r) => '${r['reminder_id']}-${r['day']}')
+            .toSet();
+        final skipped = (skipRows as List)
+            .map((r) => '${r['reminder_id']}-${r['day']}')
+            .toSet();
+        final data = (rows as List)
+            .map((r) => Map<String, dynamic>.from(r as Map))
+            .where((r) {
+              final occurs = _reminderOccursOnDate(r, day);
+              if (!occurs) return false;
+              final key = '${r['id']}-$dayKey';
+              return !skipped.contains(key);
+            })
+            .map((r) {
+              final key = '${r['id']}-$dayKey';
+              return {
+                ...r,
+                '_occurrence_day': dayKey,
+                '_is_done_for_day': doneKeys.contains(key),
+              };
+            })
+            .toList();
+        data.sort((a, b) {
+          final ta = _firstReminderTime(a['time']);
+          final tb = _firstReminderTime(b['time']);
+          return ta.compareTo(tb);
+        });
+        if (!mounted) return;
+        setState(() => _displayList = data);
+        return;
+      }
+
       final tableName = _getTableName(_selectedTemplate);
       final rows = await supabase
           .from(tableName)
@@ -332,6 +774,366 @@ class _CalendarBodyState extends State<_CalendarBody> {
       if (!mounted) return;
       setState(() => _loadingData = false);
     }
+  }
+
+  Future<void> _showReminderDialog({Map<String, dynamic>? existing}) async {
+    if (_savingReminder) return;
+    if (_isPending) {
+      await SubscriptionLimits.showTrialUpgradeDialog(
+        context,
+        onUpgrade: () => context.go('/subscription'),
+      );
+      return;
+    }
+    final titleController = TextEditingController(
+      text: (existing?['title'] ?? '').toString(),
+    );
+    final selectedTimes = _parseReminderTimes(existing?['time']);
+    String repeat = (existing?['repeat'] ?? 'never').toString().toLowerCase();
+    String customDays = (existing?['repeat_days'] ?? '')
+        .toString()
+        .toLowerCase();
+    final selectedDays = <String>{
+      for (final d in customDays.split(','))
+        if (d.trim().isNotEmpty) d.trim(),
+    };
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(existing == null ? 'Add reminder' : 'Edit reminder'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: titleController,
+              decoration: const InputDecoration(labelText: 'Title'),
+            ),
+            const SizedBox(height: 12),
+            StatefulBuilder(
+              builder: (context, setTimesState) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Times'),
+                    const SizedBox(height: 8),
+                    if (selectedTimes.isEmpty)
+                      Text(
+                        'No times selected',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    if (selectedTimes.isNotEmpty)
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: selectedTimes
+                            .map(
+                              (time) => InputChip(
+                                label: Text(time),
+                                onDeleted: () {
+                                  setTimesState(() {
+                                    selectedTimes.remove(time);
+                                  });
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed:
+                              selectedTimes.length >= _maxReminderTimesPerDay
+                              ? null
+                              : () async {
+                                  final seed = selectedTimes.isNotEmpty
+                                      ? selectedTimes.last
+                                      : '09:00';
+                                  final parts = seed.split(':');
+                                  final h = int.tryParse(parts[0]) ?? 9;
+                                  final m = int.tryParse(parts[1]) ?? 0;
+                                  final picked = await showTimePicker(
+                                    context: ctx,
+                                    initialTime: TimeOfDay(hour: h, minute: m),
+                                  );
+                                  if (picked == null) return;
+                                  final value =
+                                      '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+                                  setTimesState(() {
+                                    if (!selectedTimes.contains(value)) {
+                                      selectedTimes.add(value);
+                                      selectedTimes.sort();
+                                    }
+                                  });
+                                },
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add time'),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          '${selectedTimes.length}/$_maxReminderTimesPerDay',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                    if (selectedTimes.length >= _maxReminderTimesPerDay)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          'Max 50 reminders per day',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            StatefulBuilder(
+              builder: (context, setInnerState) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      initialValue: repeat,
+                      decoration: const InputDecoration(labelText: 'Repeat'),
+                      items: const [
+                        DropdownMenuItem(value: 'never', child: Text('Never')),
+                        DropdownMenuItem(value: 'daily', child: Text('Daily')),
+                        DropdownMenuItem(
+                          value: 'custom',
+                          child: Text('Custom days'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'weekly',
+                          child: Text('Weekly'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'fortnightly',
+                          child: Text('Fortnightly'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'monthly',
+                          child: Text('Monthly'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'weekdays',
+                          child: Text('Weekdays only'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'weekends',
+                          child: Text('Weekends only'),
+                        ),
+                      ],
+                      onChanged: (v) =>
+                          setInnerState(() => repeat = v ?? 'never'),
+                    ),
+                    if (repeat == 'custom') ...[
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 6,
+                        children:
+                            const [
+                              'mon',
+                              'tue',
+                              'wed',
+                              'thu',
+                              'fri',
+                              'sat',
+                              'sun',
+                            ].map((d) {
+                              final label = d[0].toUpperCase() + d.substring(1);
+                              return FilterChip(
+                                label: Text(label),
+                                selected: selectedDays.contains(d),
+                                onSelected: (val) {
+                                  setInnerState(() {
+                                    if (val) {
+                                      selectedDays.add(d);
+                                    } else {
+                                      selectedDays.remove(d);
+                                    }
+                                  });
+                                },
+                              );
+                            }).toList(),
+                      ),
+                    ],
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    final title = titleController.text.trim();
+    final normalizedTimes = _parseReminderTimes(
+      _joinReminderTimes(selectedTimes),
+    );
+    if (title.isEmpty) return;
+    if (normalizedTimes.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pick at least one reminder time.')),
+        );
+      }
+      return;
+    }
+    if (normalizedTimes.length > _maxReminderTimesPerDay) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Max 50 reminders per day')),
+        );
+      }
+      return;
+    }
+    if (repeat == 'custom' && selectedDays.isEmpty) return;
+
+    setState(() => _savingReminder = true);
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+      final payload = {
+        'user_id': user.id,
+        'day': _fmt.format(_selectedDay),
+        'title': title,
+        'time': normalizedTimes.join(','),
+        'repeat': repeat,
+        'repeat_days': repeat == 'custom' ? selectedDays.join(',') : null,
+      };
+      if (existing == null) {
+        await supabase.from('reminders').insert(payload);
+      } else {
+        await supabase
+            .from('reminders')
+            .update(payload)
+            .eq('id', existing['id']);
+      }
+      await _loadDataForSelectedDay(_selectedDay);
+      await _loadFilteredDots(_focusedDay);
+      final settings = ref.read(settingsControllerProvider).settings;
+      await NotificationService.instance.rescheduleAll(settings);
+    } finally {
+      if (mounted) setState(() => _savingReminder = false);
+    }
+  }
+
+  Future<void> _deleteReminder(Map<String, dynamic> item) async {
+    if (_isPending) {
+      await SubscriptionLimits.showTrialUpgradeDialog(
+        context,
+        onUpgrade: () => context.go('/subscription'),
+      );
+      return;
+    }
+    final repeat = (item['repeat'] ?? 'never').toString().toLowerCase();
+    final isRepeating = repeat != 'never';
+    final ok = await showDialog<dynamic>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          isRepeating ? 'Delete repeating reminder?' : 'Delete reminder?',
+        ),
+        content: Text(
+          isRepeating
+              ? 'This will delete it for all future dates. To remove only one day, use “Skip this occurrence”.'
+              : 'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          if (isRepeating)
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'from_today'),
+              child: const Text('Delete from today'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(isRepeating ? 'Delete all' : 'Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok == null || ok == false) return;
+    if (ok == 'from_today') {
+      final endDay = _fmt.format(
+        _selectedDay.subtract(const Duration(days: 1)),
+      );
+      await supabase
+          .from('reminders')
+          .update({'end_day': endDay})
+          .eq('id', item['id']);
+    } else if (ok == true) {
+      await supabase.from('reminders').delete().eq('id', item['id']);
+    } else {
+      return;
+    }
+    await _loadDataForSelectedDay(_selectedDay);
+    await _loadFilteredDots(_focusedDay);
+    final settings = ref.read(settingsControllerProvider).settings;
+    await NotificationService.instance.rescheduleAll(settings);
+  }
+
+  Future<void> _skipReminderOccurrence(Map<String, dynamic> item) async {
+    if (_isPending) {
+      await SubscriptionLimits.showTrialUpgradeDialog(
+        context,
+        onUpgrade: () => context.go('/subscription'),
+      );
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Skip this occurrence?'),
+        content: const Text(
+          'We will skip only this day. The reminder repeats as usual next time.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Skip'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+    final dayKey = _fmt.format(_selectedDay);
+    await supabase.from('reminders_skips').upsert({
+      'user_id': user.id,
+      'reminder_id': item['id'],
+      'day': dayKey,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    await _loadDataForSelectedDay(_selectedDay);
+    await _loadFilteredDots(_focusedDay);
+    final settings = ref.read(settingsControllerProvider).settings;
+    await NotificationService.instance.rescheduleAll(settings);
   }
 
   void _showFilterManagement(BuildContext context) {
@@ -359,21 +1161,21 @@ class _CalendarBodyState extends State<_CalendarBody> {
                   const SizedBox(height: 10),
                   Expanded(
                     child: ListView(
-                      children: _allPossibleTemplates.map((t) {
-                        final isVisible = _currentFilters.contains(t);
-                        return CheckboxListTile(
-                          title: Text(t),
-                          value: isVisible,
+                      children: [
+                        CheckboxListTile(
+                          title: const Text('Select all'),
+                          value:
+                              _currentFilters.length ==
+                              _allPossibleTemplates.length,
                           activeColor: cs.primary,
-                          onChanged: (bool? checked) {
-                            // 1. Update UI inside Modal
+                          onChanged: (checked) {
                             setModalState(() {
                               if (checked == true) {
-                                _currentFilters.add(t);
+                                _currentFilters = List.from(
+                                  _allPossibleTemplates,
+                                );
                               } else {
-                                if (_currentFilters.length > 1) {
-                                  _currentFilters.remove(t);
-                                }
+                                _currentFilters = ['Reminders Only'];
                               }
                               _currentFilters.sort(
                                 (a, b) => _allPossibleTemplates
@@ -384,9 +1186,7 @@ class _CalendarBodyState extends State<_CalendarBody> {
                               );
                             });
 
-                            // 2. Update Main Calendar Screen UI
                             setState(() {
-                              // If current active template was hidden, reset to the first available one
                               if (!_currentFilters.contains(
                                 _selectedTemplate,
                               )) {
@@ -395,11 +1195,52 @@ class _CalendarBodyState extends State<_CalendarBody> {
                               }
                             });
 
-                            // 3. PERSIST TO DB
                             _saveFilterPreferences();
                           },
-                        );
-                      }).toList(),
+                        ),
+                        const Divider(height: 12),
+                        ..._allPossibleTemplates.map((t) {
+                          final isVisible = _currentFilters.contains(t);
+                          return CheckboxListTile(
+                            title: Text(t),
+                            value: isVisible,
+                            activeColor: cs.primary,
+                            onChanged: (bool? checked) {
+                              // 1. Update UI inside Modal
+                              setModalState(() {
+                                if (checked == true) {
+                                  _currentFilters.add(t);
+                                } else {
+                                  if (_currentFilters.length > 1) {
+                                    _currentFilters.remove(t);
+                                  }
+                                }
+                                _currentFilters.sort(
+                                  (a, b) => _allPossibleTemplates
+                                      .indexOf(a)
+                                      .compareTo(
+                                        _allPossibleTemplates.indexOf(b),
+                                      ),
+                                );
+                              });
+
+                              // 2. Update Main Calendar Screen UI
+                              setState(() {
+                                // If current active template was hidden, reset to the first available one
+                                if (!_currentFilters.contains(
+                                  _selectedTemplate,
+                                )) {
+                                  _selectedTemplate = _currentFilters.first;
+                                  _refreshAll();
+                                }
+                              });
+
+                              // 3. PERSIST TO DB
+                              _saveFilterPreferences();
+                            },
+                          );
+                        }),
+                      ],
                     ),
                   ),
                   Padding(
@@ -421,10 +1262,152 @@ class _CalendarBodyState extends State<_CalendarBody> {
     );
   }
 
+  void showFilterSheet() {
+    _showFilterManagement(context);
+  }
+
+  Future<void> showGuide({bool force = false}) async {
+    await GuideManager.showGuideIfNeeded(
+      context: context,
+      pageId: 'calendar',
+      force: force,
+      steps: [
+        GuideStep(
+          key: _templateSelectorKey,
+          title: 'Choose your template',
+          body: 'Select a template to view your monthly data.',
+          align: GuideAlign.bottom,
+        ),
+        GuideStep(
+          key: _calendarGridKey,
+          title: 'Spotted a dot?',
+          body: 'Dots mean something was logged that day.',
+          align: GuideAlign.bottom,
+        ),
+        GuideStep(
+          key: _completeCircleButtonKey,
+          title: 'Close the loop',
+          body: 'Tap the empty circle to mark complete.',
+          align: GuideAlign.top,
+        ),
+        GuideStep(
+          key: _editButtonKey,
+          title: 'Need to tweak something?',
+          body: 'Use edit or delete to adjust the entry.',
+          align: GuideAlign.top,
+        ),
+        GuideStep(
+          key: widget.filterButtonKey,
+          title: 'Too many bubbles?',
+          body: 'Use filter to narrow your view.',
+          align: GuideAlign.bottom,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCalendarContainer(ColorScheme cs, Widget child) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: cs.outline.withValues(alpha: 0.1)),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _buildMonthWeekCalendar(ColorScheme cs, CalendarViewMode mode) {
+    final format = mode == CalendarViewMode.week
+        ? CalendarFormat.week
+        : CalendarFormat.month;
+    return TableCalendar(
+      firstDay: DateTime.utc(1980, 1, 1),
+      lastDay: DateTime.utc(DateTime.now().year + 5, 12, 31),
+      focusedDay: _focusedDay,
+      startingDayOfWeek: StartingDayOfWeek.monday,
+      calendarFormat: format,
+      availableCalendarFormats: const {
+        CalendarFormat.month: 'Month',
+        CalendarFormat.week: 'Week',
+      },
+      selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+      onDaySelected: (selected, focused) {
+        setState(() {
+          _selectedDay = selected;
+          _focusedDay = focused;
+        });
+        _loadDataForSelectedDay(selected);
+      },
+      onPageChanged: (newFocused) {
+        setState(() => _focusedDay = newFocused);
+        _loadFilteredDots(newFocused);
+      },
+      calendarBuilders: CalendarBuilders(
+        headerTitleBuilder: (context, day) {
+          return GestureDetector(
+            onTap: _showMonthYearPicker,
+            child: Text(
+              DateFormat('MMMM yyyy').format(day),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          );
+        },
+        selectedBuilder: (context, day, focusedDay) => Container(
+          margin: const EdgeInsets.all(6),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(color: cs.primary, shape: BoxShape.circle),
+          child: Text(
+            '${day.day}',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        defaultBuilder: (context, day, focusedDay) {
+          final hasData = _activeDays.contains(_fmt.format(day));
+          return Opacity(
+            opacity: hasData ? 1.0 : 0.25,
+            child: Center(child: Text('${day.day}')),
+          );
+        },
+        markerBuilder: (context, day, events) {
+          if (!_activeDays.contains(_fmt.format(day))) return null;
+          return Positioned(
+            bottom: 6,
+            child: Container(
+              width: 5,
+              height: 5,
+              decoration: BoxDecoration(
+                color: cs.primary,
+                shape: BoxShape.circle,
+              ),
+            ),
+          );
+        },
+      ),
+      headerStyle: const HeaderStyle(
+        formatButtonVisible: false,
+        titleCentered: true,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final viewMode = ref.watch(calendarViewProvider);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      showGuide();
+    });
 
     return Column(
       children: [
@@ -435,6 +1418,7 @@ class _CalendarBodyState extends State<_CalendarBody> {
           ),
         // 1) FILTER CHIPS
         SingleChildScrollView(
+          key: _templateSelectorKey,
           scrollDirection: Axis.horizontal,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
@@ -450,6 +1434,7 @@ class _CalendarBodyState extends State<_CalendarBody> {
                     onSelected: (val) {
                       if (!val) return;
                       setState(() => _selectedTemplate = t);
+                      _saveLastTemplate(t);
                       _refreshAll();
                     },
                     selectedColor: cs.primary.withValues(alpha: 0.2),
@@ -465,12 +1450,6 @@ class _CalendarBodyState extends State<_CalendarBody> {
                   ),
                 );
               }),
-              IconButton(
-                icon: const Icon(Icons.settings_outlined, size: 20),
-                onPressed: () => _showFilterManagement(context),
-                tooltip: 'Manage Filters',
-                visualDensity: VisualDensity.compact,
-              ),
             ],
           ),
         ),
@@ -483,72 +1462,11 @@ class _CalendarBodyState extends State<_CalendarBody> {
           ),
 
         // 2) CALENDAR
-        Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16),
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: cs.surface,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: cs.outline.withValues(alpha: 0.1)),
-          ),
-          child: TableCalendar(
-            firstDay: DateTime.utc(2020, 1, 1),
-            lastDay: DateTime.utc(2035, 12, 31),
-            focusedDay: _focusedDay,
-            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-            onDaySelected: (selected, focused) {
-              setState(() {
-                _selectedDay = selected;
-                _focusedDay = focused;
-              });
-              _loadDataForSelectedDay(selected);
-            },
-            onPageChanged: (newFocused) {
-              setState(() => _focusedDay = newFocused);
-              _loadFilteredDots(newFocused);
-            },
-            calendarBuilders: CalendarBuilders(
-              selectedBuilder: (context, day, focusedDay) => Container(
-                margin: const EdgeInsets.all(6),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: cs.primary,
-                  shape: BoxShape.circle,
-                ),
-                child: Text(
-                  '${day.day}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              defaultBuilder: (context, day, focusedDay) {
-                final hasData = _activeDays.contains(_fmt.format(day));
-                return Opacity(
-                  opacity: hasData ? 1.0 : 0.25,
-                  child: Center(child: Text('${day.day}')),
-                );
-              },
-              markerBuilder: (context, day, events) {
-                if (!_activeDays.contains(_fmt.format(day))) return null;
-                return Positioned(
-                  bottom: 6,
-                  child: Container(
-                    width: 5,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: cs.primary,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                );
-              },
-            ),
-            headerStyle: const HeaderStyle(
-              formatButtonVisible: false,
-              titleCentered: true,
-            ),
+        KeyedSubtree(
+          key: _calendarGridKey,
+          child: _buildCalendarContainer(
+            cs,
+            _buildMonthWeekCalendar(cs, viewMode),
           ),
         ),
 
@@ -577,6 +1495,16 @@ class _CalendarBodyState extends State<_CalendarBody> {
                       ),
                       const Spacer(),
                       Text(_selectedTemplate, style: theme.textTheme.bodySmall),
+                      if (_selectedTemplate == 'Reminders Only') ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          onPressed: _savingReminder
+                              ? null
+                              : () => _showReminderDialog(),
+                          tooltip: 'Add reminder',
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -755,12 +1683,31 @@ class _CalendarBodyState extends State<_CalendarBody> {
           ),
           child: Row(
             children: [
-              Icon(
-                done ? Icons.check_circle : Icons.radio_button_unchecked,
-                color: done
-                    ? Colors.green
-                    : cs.onSurface.withValues(alpha: 0.3),
-                size: 20,
+              IconButton(
+                icon: Icon(
+                  done ? Icons.check_circle : Icons.radio_button_unchecked,
+                  color: done
+                      ? Colors.green
+                      : cs.onSurface.withValues(alpha: 0.3),
+                  size: 20,
+                ),
+                tooltip: 'Mark done',
+                onPressed: () async {
+                  final id = item['id'];
+                  if (id == null) return;
+                  final user = supabase.auth.currentUser;
+                  if (user == null) return;
+                  final next = !done;
+                  try {
+                    await supabase
+                        .from('task_logs')
+                        .update({'is_done': next})
+                        .eq('id', id)
+                        .eq('user_id', user.id);
+                    await _loadDataForSelectedDay(_selectedDay);
+                    await _loadFilteredDots(_focusedDay);
+                  } catch (_) {}
+                },
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -790,7 +1737,86 @@ class _CalendarBodyState extends State<_CalendarBody> {
       case 'Wishlist':
         title = (item['item_name'] ?? 'Item').toString();
         trailing = item['price'] != null ? '£${item['price']}' : '';
-        break;
+
+        final rawStatus = (item['status'] ?? '').toString();
+        final normalizedStatus = rawStatus
+            .replaceAll(RegExp(r'[^a-zA-Z\\s]'), '')
+            .toLowerCase()
+            .trim();
+        final bool done = normalizedStatus == 'received';
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: cs.surface,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: done
+                  ? Colors.green.withValues(alpha: 0.3)
+                  : cs.primary.withValues(alpha: 0.05),
+            ),
+          ),
+          child: Row(
+            children: [
+              IconButton(
+                icon: Icon(
+                  done ? Icons.check_circle : Icons.radio_button_unchecked,
+                  color: done
+                      ? Colors.green
+                      : cs.onSurface.withValues(alpha: 0.3),
+                  size: 20,
+                ),
+                tooltip: 'Mark done',
+                onPressed: () async {
+                  final id = item['id'];
+                  if (id == null) return;
+                  final user = supabase.auth.currentUser;
+                  if (user == null) return;
+                  try {
+                    await supabase
+                        .from('wishlist')
+                        .update({'status': done ? 'Waiting' : 'Received'})
+                        .eq('id', id)
+                        .eq('user_id', user.id)
+                        .select('id')
+                        .maybeSingle();
+                    await _loadDataForSelectedDay(_selectedDay);
+                    await _loadFilteredDots(_focusedDay);
+                  } catch (e) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Update failed: $e')),
+                      );
+                    }
+                  }
+                },
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    decoration: done ? TextDecoration.lineThrough : null,
+                    color: done
+                        ? cs.onSurface.withValues(alpha: 0.5)
+                        : cs.onSurface,
+                  ),
+                ),
+              ),
+              if (trailing.isNotEmpty)
+                Text(
+                  trailing,
+                  style: TextStyle(
+                    color: done ? Colors.green : cs.primary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+            ],
+          ),
+        );
 
       case 'Expenses':
         {
@@ -914,6 +1940,23 @@ class _CalendarBodyState extends State<_CalendarBody> {
           break;
         }
 
+      case 'Reminders Only':
+        title = (item['title'] ?? 'Reminder').toString().trim();
+        if (title.isEmpty) title = 'Reminder';
+        final reminderTimes = _parseReminderTimes(item['time']);
+        final repeat = (item['repeat'] ?? 'never').toString().toLowerCase();
+        if (reminderTimes.isEmpty) {
+          trailing = '';
+        } else if (reminderTimes.length == 1) {
+          trailing = reminderTimes.first;
+        } else {
+          trailing = '${reminderTimes.first} (+${reminderTimes.length - 1})';
+        }
+        if (repeat != 'never') {
+          trailing = trailing.isEmpty ? 'Repeats' : '$trailing · Repeats';
+        }
+        break;
+
       default:
         title =
             (item['title'] ??
@@ -935,21 +1978,114 @@ class _CalendarBodyState extends State<_CalendarBody> {
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              title,
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                if (trailing.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      trailing,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: cs.primary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
-          Text(
-            trailing,
-            style: TextStyle(
-              color: cs.primary,
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
+          if (_selectedTemplate == 'Reminders Only') ...[
+            const SizedBox(width: 8),
+            IconButton(
+              key: item == _displayList.first ? _completeCircleButtonKey : null,
+              icon: Icon(
+                (item['_is_done_for_day'] == true)
+                    ? Icons.check_circle
+                    : Icons.radio_button_unchecked,
+                color: (item['_is_done_for_day'] == true)
+                    ? Colors.green
+                    : cs.onSurface.withValues(alpha: 0.3),
+              ),
+              tooltip: 'Mark done',
+              onPressed: () async {
+                final next = !(item['_is_done_for_day'] == true);
+                final user = supabase.auth.currentUser;
+                if (user == null) return;
+                final dayKey = _fmt.format(_selectedDay);
+                if (next) {
+                  await supabase.from('reminders_done').upsert({
+                    'user_id': user.id,
+                    'reminder_id': item['id'],
+                    'day': dayKey,
+                    'created_at': DateTime.now().toIso8601String(),
+                  });
+                } else {
+                  await supabase
+                      .from('reminders_done')
+                      .delete()
+                      .eq('user_id', user.id)
+                      .eq('reminder_id', item['id'])
+                      .eq('day', dayKey);
+                }
+                await _loadDataForSelectedDay(_selectedDay);
+                await _loadFilteredDots(_focusedDay);
+              },
             ),
-          ),
+            if ((item['repeat'] ?? 'never').toString().toLowerCase() != 'never')
+              IconButton(
+                icon: const Icon(Icons.skip_next_rounded),
+                tooltip: 'Skip this occurrence',
+                onPressed: () => _skipReminderOccurrence(item),
+              ),
+            IconButton(
+              key: item == _displayList.first ? _editButtonKey : null,
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: 'Edit',
+              onPressed: () => _showReminderDialog(existing: item),
+            ),
+            IconButton(
+              key: item == _displayList.first ? _deleteButtonKey : null,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Delete',
+              onPressed: () => _deleteReminder(item),
+            ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _ViewOption extends StatelessWidget {
+  const _ViewOption({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return ListTile(
+      title: Text(label),
+      trailing: selected
+          ? Icon(Icons.check_circle, color: cs.primary)
+          : Icon(Icons.circle_outlined, color: cs.outline),
+      onTap: onTap,
     );
   }
 }
@@ -985,17 +2121,17 @@ class _TrialBanner extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Trial mode: explore freely. Nothing is saved until you choose a plan.',
+                'FREE MODE uses 24-hour preview mode for templates. Preview data disappears after 24 hours.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
             const SizedBox(width: 8),
-            TextButton(
-              onPressed: onSkip,
-              child: const Text('Skip for now'),
-            ),
+            TextButton(onPressed: onSkip, child: const Text('Skip for now')),
             const SizedBox(width: 6),
-            FilledButton(onPressed: onUpgrade, child: const Text('Choose plan')),
+            FilledButton(
+              onPressed: onUpgrade,
+              child: const Text('View modes'),
+            ),
           ],
         ),
       ),

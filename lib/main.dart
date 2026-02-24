@@ -10,8 +10,13 @@ import 'app.dart';
 import 'router.dart';
 import 'features/auth/device_session_service.dart';
 import 'features/settings/settings_provider.dart';
-import 'config/app_env.dart';
+import 'features/settings/settings_model.dart';
+import 'features/settings/settings_repository.dart';
 import 'services/notification_service.dart';
+import 'services/memory_service.dart';
+import 'services/startup_user_data_service.dart';
+import 'services/auth_deep_link_handler.dart';
+import 'services/oauth_sign_in_coordinator.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -22,22 +27,44 @@ Future<void> main() async {
     // .env is optional in dev; ignore if missing.
   }
 
+  final supabaseUrl = dotenv.isInitialized
+      ? (dotenv.maybeGet('SUPABASE_URL')?.trim().isNotEmpty == true
+            ? dotenv.maybeGet('SUPABASE_URL')!.trim()
+            : 'https://jntfxnjrtgliyzhefayh.supabase.co')
+      : 'https://jntfxnjrtgliyzhefayh.supabase.co';
+  final supabaseAnonKey = dotenv.isInitialized
+      ? (dotenv.maybeGet('SUPABASE_ANON_KEY')?.trim().isNotEmpty == true
+            ? dotenv.maybeGet('SUPABASE_ANON_KEY')!.trim()
+            : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpudGZ4bmpydGdsaXl6aGVmYXloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MjIzMDgsImV4cCI6MjA4MDQ5ODMwOH0.TgMtKwjswRTbMESjpep2FWq37_OG20Z8VCb6aR03Bo8')
+      : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpudGZ4bmpydGdsaXl6aGVmYXloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MjIzMDgsImV4cCI6MjA4MDQ5ODMwOH0.TgMtKwjswRTbMESjpep2FWq37_OG20Z8VCb6aR03Bo8';
+
+  const fallbackSupabaseUrl = 'https://jntfxnjrtgliyzhefayh.supabase.co';
+  if (supabaseUrl == fallbackSupabaseUrl) {
+    debugPrint(
+      '[Auth Config] Using fallback Supabase URL ($fallbackSupabaseUrl). '
+      'Google OAuth may show the supabase.co domain in consent UI.',
+    );
+  }
+
   // ✅ MUST happen before any Supabase.instance usage (router + auth listener)
-  await Supabase.initialize(
-    url: 'https://jntfxnjrtgliyzhefayh.supabase.co',
-    anonKey:
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpudGZ4bmpydGdsaXl6aGVmYXloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MjIzMDgsImV4cCI6MjA4MDQ5ODMwOH0.TgMtKwjswRTbMESjpep2FWq37_OG20Z8VCb6aR03Bo8',
-  );
-  //eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpudGZ4bmpydGdsaXl6aGVmYXloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MjIzMDgsImV4cCI6MjA4MDQ5ODMwOH0.TgMtKwjswRTbMESjpep2FWq37_OG20Z8VCb6aR03Bo8
+  await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+  final settingsRepo = SettingsRepository(Supabase.instance.client);
+  final SettingsModel? cachedSettings = await settingsRepo.loadLocal();
+
   // ✅ create router AFTER Supabase is initialized
   final appRouter = createRouter();
   //await dotenv.load();
-  runApp(ProviderScope(child: _Bootstrap(router: appRouter)));
+  runApp(
+    ProviderScope(
+      overrides: [initialSettingsProvider.overrideWithValue(cachedSettings)],
+      child: _Bootstrap(router: appRouter),
+    ),
+  );
 }
 
 /// Bootstraps app-level init that needs Riverpod (theme load) + auth listener.
 class _Bootstrap extends ConsumerStatefulWidget {
-  const _Bootstrap({super.key, required this.router});
+  const _Bootstrap({required this.router});
 
   final GoRouter router;
 
@@ -47,14 +74,35 @@ class _Bootstrap extends ConsumerStatefulWidget {
 
 class _BootstrapState extends ConsumerState<_Bootstrap> {
   StreamSubscription<AuthState>? _authSub;
-  bool _envWarned = false;
+  bool _startupErrorShown = false;
+  bool _deviceLimitSignOutInFlight = false;
 
   @override
   void initState() {
     super.initState();
 
+    Future.microtask(_syncStartupUserData);
+    Future.microtask(
+      () => AuthDeepLinkHandler.instance.init(
+        onSessionEstablished: () {
+          if (!mounted) return;
+          final session = Supabase.instance.client.auth.currentSession;
+          debugPrint(
+            'AuthDeepLinkHandler onSessionEstablished hasSession=${session != null} user=${session?.user.id}',
+          );
+          widget.router.go('/home');
+        },
+        onAuthError: (message) {
+          if (!mounted) return;
+          globalMessengerKey.currentState?.showSnackBar(
+            SnackBar(content: Text(message)),
+          );
+        },
+      ),
+    );
     // Load settings (includes theme)
     Future.microtask(() => ref.read(settingsControllerProvider).init());
+    Future.microtask(() => ref.read(memoryControllerProvider).init());
     NotificationService.instance.init();
 
     // If you're using Supabase Edge Function secrets for OpenAI,
@@ -62,20 +110,117 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
 
     // Password recovery deep link handling
     _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      debugPrint(
+        'Auth event=${data.event} hasSession=${data.session != null} user=${data.session?.user.id}',
+      );
       if (data.event == AuthChangeEvent.passwordRecovery) {
         widget.router.go('/reset');
       }
+      if (data.event == AuthChangeEvent.signedIn) {
+        OAuthSignInCoordinator.instance.markCompleted(
+          reason: 'auth_state_signed_in',
+        );
+        unawaited(_enforceDeviceLimitOnSignIn());
+      }
+      if (data.event == AuthChangeEvent.signedOut) {
+        OAuthSignInCoordinator.instance.markFailed(
+          reason: 'auth_state_signed_out',
+        );
+      }
       if (data.event == AuthChangeEvent.signedIn ||
           data.event == AuthChangeEvent.tokenRefreshed) {
-        DeviceSessionService.recordSession();
+        _maybeReactivateAccount();
+        _syncStartupUserData();
       }
       ref.read(settingsControllerProvider).handleAuthChange();
+      ref.read(memoryControllerProvider).handleAuthChange();
     });
+  }
+
+  Future<void> _enforceDeviceLimitOnSignIn() async {
+    if (_deviceLimitSignOutInFlight) return;
+    final registration = await DeviceSessionService.registerDevice();
+    if (!mounted) return;
+    if (registration.allowed) {
+      if (registration.entitlementCheckFailed) {
+        globalMessengerKey.currentState?.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not verify your subscription right now. Signed in with temporary access.',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    _deviceLimitSignOutInFlight = true;
+    try {
+      globalMessengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: Text(registration.blockedMessage()),
+          action: SnackBarAction(
+            label: 'Manage devices',
+            onPressed: () => widget.router.go('/settings'),
+          ),
+        ),
+      );
+      widget.router.go('/settings');
+    } finally {
+      _deviceLimitSignOutInFlight = false;
+    }
+  }
+
+  Future<void> _syncStartupUserData() async {
+    final bundle = await StartupUserDataService.instance
+        .fetchCombinedForCurrentUser();
+    if (!mounted) return;
+    if (bundle.failedTables.isNotEmpty) {
+      if (_startupErrorShown) return;
+      _startupErrorShown = true;
+      globalMessengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: const Text('Could not sync profile/settings. Tap to retry.'),
+          action: SnackBarAction(
+            label: 'Retry',
+            onPressed: () {
+              _startupErrorShown = false;
+              _syncStartupUserData();
+              ref.read(settingsControllerProvider).retryInit();
+              ref.read(memoryControllerProvider).retry();
+            },
+          ),
+        ),
+      );
+      return;
+    }
+    _startupErrorShown = false;
+  }
+
+  Future<void> _maybeReactivateAccount() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    try {
+      final bundle = await StartupUserDataService.instance.fetchCombinedForUser(
+        user.id,
+      );
+      final profile = bundle.profileRow;
+      final isActive = profile?['is_active'] != false;
+      if (!isActive) {
+        await Supabase.instance.client
+            .from('profiles')
+            .update({'is_active': true})
+            .eq('id', user.id);
+        globalMessengerKey.currentState?.showSnackBar(
+          const SnackBar(content: Text('Your account has been reactivated.')),
+        );
+      }
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _authSub?.cancel();
+    unawaited(AuthDeepLinkHandler.instance.dispose());
     super.dispose();
   }
 
