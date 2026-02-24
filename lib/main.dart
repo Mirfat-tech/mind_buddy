@@ -20,6 +20,7 @@ import 'services/oauth_sign_in_coordinator.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  const customSupabaseAuthDomain = 'https://auth.mybrainbubble.co.uk';
 
   try {
     await dotenv.load(fileName: '.env');
@@ -27,24 +28,14 @@ Future<void> main() async {
     // .env is optional in dev; ignore if missing.
   }
 
-  final supabaseUrl = dotenv.isInitialized
-      ? (dotenv.maybeGet('SUPABASE_URL')?.trim().isNotEmpty == true
-            ? dotenv.maybeGet('SUPABASE_URL')!.trim()
-            : 'https://jntfxnjrtgliyzhefayh.supabase.co')
-      : 'https://jntfxnjrtgliyzhefayh.supabase.co';
+  const supabaseUrl = customSupabaseAuthDomain;
   final supabaseAnonKey = dotenv.isInitialized
       ? (dotenv.maybeGet('SUPABASE_ANON_KEY')?.trim().isNotEmpty == true
             ? dotenv.maybeGet('SUPABASE_ANON_KEY')!.trim()
             : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpudGZ4bmpydGdsaXl6aGVmYXloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MjIzMDgsImV4cCI6MjA4MDQ5ODMwOH0.TgMtKwjswRTbMESjpep2FWq37_OG20Z8VCb6aR03Bo8')
       : 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpudGZ4bmpydGdsaXl6aGVmYXloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ5MjIzMDgsImV4cCI6MjA4MDQ5ODMwOH0.TgMtKwjswRTbMESjpep2FWq37_OG20Z8VCb6aR03Bo8';
 
-  const fallbackSupabaseUrl = 'https://jntfxnjrtgliyzhefayh.supabase.co';
-  if (supabaseUrl == fallbackSupabaseUrl) {
-    debugPrint(
-      '[Auth Config] Using fallback Supabase URL ($fallbackSupabaseUrl). '
-      'Google OAuth may show the supabase.co domain in consent UI.',
-    );
-  }
+  debugPrint('[Auth Config] Supabase URL: $supabaseUrl');
 
   // ✅ MUST happen before any Supabase.instance usage (router + auth listener)
   await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
@@ -76,6 +67,7 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
   StreamSubscription<AuthState>? _authSub;
   bool _startupErrorShown = false;
   bool _deviceLimitSignOutInFlight = false;
+  VoidCallback? _oauthTimeoutListener;
 
   @override
   void initState() {
@@ -104,6 +96,33 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
     Future.microtask(() => ref.read(settingsControllerProvider).init());
     Future.microtask(() => ref.read(memoryControllerProvider).init());
     NotificationService.instance.init();
+    _oauthTimeoutListener = () {
+      if (!mounted) return;
+      globalMessengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: const Text(OAuthSignInCoordinator.timeoutMessage),
+          action: SnackBarAction(
+            label: 'Retry',
+            onPressed: () async {
+              final res = await OAuthSignInCoordinator.instance.retryLastAttempt(
+                forceFreshSession: true,
+              );
+              if (!mounted || res.started) return;
+              globalMessengerKey.currentState?.showSnackBar(
+                SnackBar(
+                  content: Text(
+                    res.message ?? 'Could not restart Google sign-in.',
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    };
+    OAuthSignInCoordinator.instance.timeoutSignalListenable.addListener(
+      _oauthTimeoutListener!,
+    );
 
     // If you're using Supabase Edge Function secrets for OpenAI,
     // no local .env warning is necessary.
@@ -120,6 +139,9 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
         OAuthSignInCoordinator.instance.markCompleted(
           reason: 'auth_state_signed_in',
         );
+        if (mounted) {
+          widget.router.go('/home');
+        }
         unawaited(_enforceDeviceLimitOnSignIn());
       }
       if (data.event == AuthChangeEvent.signedOut) {
@@ -220,6 +242,12 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
   @override
   void dispose() {
     _authSub?.cancel();
+    final listener = _oauthTimeoutListener;
+    if (listener != null) {
+      OAuthSignInCoordinator.instance.timeoutSignalListenable.removeListener(
+        listener,
+      );
+    }
     unawaited(AuthDeepLinkHandler.instance.dispose());
     super.dispose();
   }

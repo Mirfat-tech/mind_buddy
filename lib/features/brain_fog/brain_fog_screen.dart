@@ -37,7 +37,6 @@ class _BrainFogScreenState extends State<BrainFogScreen>
       0; // 0 = off, 1 = controllable, 2 = focus order, 3 = let go, 4 = next step
   final Set<String> _controllableIds = <String>{};
   final List<String> _focusOrder = <String>[];
-  final Map<String, Offset> _dragGrabOffsets = <String, Offset>{};
   final GlobalKey _addBubbleButtonKey = GlobalKey();
   final GlobalKey _brainFogCanvasContainerKey = GlobalKey();
   final GlobalKey _modeToggleKey = GlobalKey();
@@ -492,7 +491,6 @@ class _BrainFogScreenState extends State<BrainFogScreen>
     final size = MediaQuery.of(context).size;
     final crowdFactor = ((_thoughts.length - 8).clamp(0, 6)) / 6;
     final crowdScale = (1 - (0.15 * crowdFactor)).clamp(0.75, 1.0);
-    final spreadFactor = 0.18 * crowdFactor;
     final canvasSize = Size(size.width * 3, size.height * 3);
     final worldOffset = Offset(
       (canvasSize.width - size.width) / 2,
@@ -507,7 +505,6 @@ class _BrainFogScreenState extends State<BrainFogScreen>
           ..translate(-worldOffset.dx, -worldOffset.dy);
       });
     }
-
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
@@ -559,153 +556,122 @@ class _BrainFogScreenState extends State<BrainFogScreen>
             ? const Center(child: CircularProgressIndicator())
             : Stack(
                 children: [
-                  Positioned.fill(
-                    child: Container(
-                      key: _brainFogCanvasContainerKey,
-                      child: InteractiveViewer(
-                        transformationController: _canvasController,
-                        minScale: 0.7,
-                        maxScale: 2.0,
-                        panEnabled: true,
-                        scaleEnabled: true,
-                        constrained: false,
-                        boundaryMargin: EdgeInsets.zero,
-                        clipBehavior: Clip.hardEdge,
-                        child: SizedBox(
-                          width: canvasSize.width,
-                          height: canvasSize.height,
-                          child: Stack(
-                            children: [
-                              Positioned.fill(
-                                child: Container(
-                                  color: Theme.of(
-                                    context,
-                                  ).scaffoldBackgroundColor,
-                                ),
-                              ),
-                              Center(
-                                child: Text(
-                                  "Let it out 💨 \nWhat's overwhelming you today?",
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: cs.onSurface.withOpacity(0.3),
+                    Positioned.fill(
+                      child: Container(
+                        key: _brainFogCanvasContainerKey,
+                        child: InteractiveViewer(
+                          transformationController: _canvasController,
+                          minScale: 0.7,
+                          maxScale: 2.0,
+                          panEnabled: true,
+                          scaleEnabled: true,
+                          constrained: false,
+                          boundaryMargin: EdgeInsets.zero,
+                          clipBehavior: Clip.hardEdge,
+                          child: SizedBox(
+                            width: canvasSize.width,
+                            height: canvasSize.height,
+                            child: Stack(
+                              children: [
+                                Positioned.fill(
+                                  child: Container(
+                                    color: Theme.of(
+                                      context,
+                                    ).scaffoldBackgroundColor,
                                   ),
                                 ),
-                              ),
-                              ..._thoughts.map((t) {
-                                final bSize = _getBubbleSize(
-                                  t.text,
-                                  scale: crowdScale,
-                                );
-                                return Positioned(
-                                  left: t.offset.dx + worldOffset.dx,
-                                  top: t.offset.dy + worldOffset.dy,
-                                  child: GestureDetector(
-                                    onPanStart: (details) {
-                                      final box =
-                                          context.findRenderObject()
-                                              as RenderBox?;
-                                      final local = box != null
-                                          ? box.globalToLocal(
-                                              details.globalPosition,
-                                            )
-                                          : details.globalPosition;
-                                      final worldPos = _canvasController
-                                          .toScene(local);
-                                      _dragGrabOffsets[t.id] = Offset(
-                                        worldPos.dx -
-                                            (t.offset.dx + worldOffset.dx),
-                                        worldPos.dy -
-                                            (t.offset.dy + worldOffset.dy),
-                                      );
-                                    },
-                                    onPanUpdate: (details) {
-                                      final box =
-                                          context.findRenderObject()
-                                              as RenderBox?;
-                                      final local = box != null
-                                          ? box.globalToLocal(
-                                              details.globalPosition,
-                                            )
-                                          : details.globalPosition;
-                                      final worldPos = _canvasController
-                                          .toScene(local);
-                                      final grab =
-                                          _dragGrabOffsets[t.id] ?? Offset.zero;
-                                      setState(() {
-                                        t.offset = Offset(
-                                          worldPos.dx -
-                                              worldOffset.dx -
-                                              grab.dx,
-                                          worldPos.dy -
-                                              worldOffset.dy -
-                                              grab.dy,
-                                        );
-                                      });
-                                    },
-                                    onPanEnd: (_) {
-                                      _dragGrabOffsets.remove(t.id);
-                                      _upsertThought(t);
-                                    },
-                                    child: _buildBubble(
-                                      t,
-                                      crowdScale: crowdScale,
-                                      spreadFactor: spreadFactor,
-                                      canvasSize: canvasSize,
+                                Center(
+                                  child: Text(
+                                    "Let it out 💨 \nWhat's overwhelming you today?",
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: cs.onSurface.withOpacity(0.3),
                                     ),
                                   ),
-                                );
-                              }),
-                            ],
+                                ),
+                                ..._thoughts.map((t) {
+                                  final bubbleSize = _getBubbleSize(
+                                    t.text,
+                                    scale: crowdScale,
+                                  );
+                                  return Positioned(
+                                    left: t.offset.dx + worldOffset.dx,
+                                    top: t.offset.dy + worldOffset.dy,
+                                    child: RepaintBoundary(
+                                      child: _DraggableThoughtBubble(
+                                        key: ValueKey<String>(t.id),
+                                        thought: t,
+                                        transformationController: _canvasController,
+                                        onLongPress: () => _popThought(t),
+                                        onTap: () => _isDeleteMode
+                                            ? _deleteThought(t)
+                                            : (_figureOutMode
+                                                ? _handleFigureTap(t)
+                                                : _showEditSheet(t)),
+                                        onCommit: (nextOffset) {
+                                          setState(() {
+                                            t.offset = nextOffset;
+                                          });
+                                          _upsertThought(t);
+                                        },
+                                        child: _buildBubble(
+                                          t,
+                                          bubbleSize: bubbleSize,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  Positioned(
-                    top: 10,
-                    left: 16,
-                    right: 16,
-                    child: KeyedSubtree(
-                      key: _modeToggleKey,
-                      child: _FigureOutCard(
-                        enabled: _figureOutMode,
-                        step: _figureStep,
-                        canAdvance: _figureStep == 1
-                            ? _controllableIds.isNotEmpty
-                            : (_figureStep == 2
+                    Positioned(
+                      top: 10,
+                      left: 16,
+                      right: 16,
+                      child: KeyedSubtree(
+                        key: _modeToggleKey,
+                        child: _FigureOutCard(
+                          enabled: _figureOutMode,
+                          step: _figureStep,
+                          canAdvance: _figureStep == 1
+                              ? _controllableIds.isNotEmpty
+                              : (_figureStep == 2
                                   ? _focusOrder.isNotEmpty
                                   : true),
-                        onToggle: _toggleFigureOutMode,
-                        onNext: _advanceFigureStep,
-                      ),
-                    ),
-                  ),
-                  if (_thoughts.length >= 9)
-                    Positioned(
-                      top: 74,
-                      left: 24,
-                      right: 24,
-                      child: Text(
-                        'Too crowded? Pinch to zoom.',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.onSurface.withOpacity(0.6),
+                          onToggle: _toggleFigureOutMode,
+                          onNext: _advanceFigureStep,
                         ),
                       ),
                     ),
-                  if (_figureOutMode && _figureStep == 4)
-                    Positioned(
-                      left: 16,
-                      right: 16,
-                      bottom: 28,
-                      child: _FigureOutActions(
-                        onVent: () => _goFigureAction('/chat'),
-                        onJournal: () => _goFigureAction('/journals'),
-                        onHabit: () => _goFigureAction('/habits'),
-                        onPomodoro: () => _goFigureAction('/pomodoro'),
+                    if (_thoughts.length >= 9)
+                      Positioned(
+                        top: 74,
+                        left: 24,
+                        right: 24,
+                        child: Text(
+                          'Too crowded? Pinch to zoom.',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: cs.onSurface.withOpacity(0.6),
+                          ),
+                        ),
                       ),
-                    ),
+                    if (_figureOutMode && _figureStep == 4)
+                      Positioned(
+                        left: 16,
+                        right: 16,
+                        bottom: 28,
+                        child: _FigureOutActions(
+                          onVent: () => _goFigureAction('/chat'),
+                          onJournal: () => _goFigureAction('/journals'),
+                          onHabit: () => _goFigureAction('/habits'),
+                          onPomodoro: () => _goFigureAction('/pomodoro'),
+                        ),
+                      ),
                 ],
               ),
       ),
@@ -714,13 +680,10 @@ class _BrainFogScreenState extends State<BrainFogScreen>
 
   Widget _buildBubble(
     _Thought t, {
-    bool isDragging = false,
-    double crowdScale = 1,
-    double spreadFactor = 0,
-    Size? canvasSize,
+    required double bubbleSize,
   }) {
     final cs = Theme.of(context).colorScheme;
-    double bSize = _getBubbleSize(t.text, scale: crowdScale);
+    double bSize = bubbleSize;
     final isPopping = _poppingIds.contains(t.id);
     final isControllable = _controllableIds.contains(t.id);
     final focusIndex = _focusOrder.indexOf(t.id);
@@ -729,16 +692,6 @@ class _BrainFogScreenState extends State<BrainFogScreen>
         _figureOutMode &&
         ((_figureStep == 1 && !isControllable) ||
             (_figureStep >= 2 && !isFocused));
-    final lift = (_figureOutMode && isControllable) ? -10.0 : 0.0;
-    final driftDown = (_figureOutMode && _figureStep == 3 && !isFocused)
-        ? 12.0
-        : 0.0;
-    Offset spreadOffset = Offset.zero;
-    if (canvasSize != null && spreadFactor > 0) {
-      final center = canvasSize.center(Offset.zero);
-      final vec = t.offset - center;
-      spreadOffset = vec * spreadFactor;
-    }
     final baseColor = cs.surface.withOpacity(0.6);
     final highlightColor = cs.primary.withOpacity(0.35);
     final bubbleColor = _figureOutMode && (isControllable || isFocused)
@@ -759,101 +712,154 @@ class _BrainFogScreenState extends State<BrainFogScreen>
         child: AnimatedBuilder(
           animation: _shakeController,
           builder: (context, child) => Transform.rotate(
-            angle: (_isDeleteMode && !isDragging)
+            angle: _isDeleteMode
                 ? (0.05 * _shakeController.value) - 0.025
                 : 0,
             child: child,
           ),
-          child: Transform.translate(
-            offset: Offset(0, lift + driftDown) + spreadOffset,
-            child: GestureDetector(
-              onLongPress: () => _popThought(t),
-              onTap: () => _isDeleteMode
-                  ? _deleteThought(t)
-                  : (_figureOutMode ? _handleFigureTap(t) : _showEditSheet(t)),
-              child: Container(
-                width: bSize,
-                height: bSize,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: bubbleColor,
-                  boxShadow: [
-                    BoxShadow(
-                      color: cs.primary.withOpacity(glowStrength),
-                      blurRadius: 18,
-                      blurStyle: BlurStyle.outer,
+          child: Container(
+            width: bSize,
+            height: bSize,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: bubbleColor,
+              boxShadow: [
+                BoxShadow(
+                  color: cs.primary.withOpacity(glowStrength),
+                  blurRadius: 18,
+                  blurStyle: BlurStyle.outer,
+                ),
+              ],
+              border: Border.all(
+                color: _isDeleteMode ? Colors.red : cs.primary.withOpacity(0.25),
+              ),
+            ),
+            child: Stack(
+              children: [
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(15),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: Text(
+                        t.text.isEmpty ? "Tap..." : t.text,
+                        textAlign: TextAlign.center,
+                        maxLines: 5,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: cs.onSurface,
+                          fontSize: 12,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
                     ),
-                  ],
-                  border: Border.all(
-                    color: _isDeleteMode
-                        ? Colors.red
-                        : cs.primary.withOpacity(0.25),
                   ),
                 ),
-                child: Stack(
-                  children: [
-                    Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(15),
-                        child: Material(
-                          color: Colors.transparent,
-                          child: Text(
-                            t.text.isEmpty ? "Tap..." : t.text,
-                            textAlign: TextAlign.center,
-                            maxLines: 5,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: cs.onSurface,
-                              fontSize: 12,
-                              decoration: TextDecoration.none,
-                            ),
-                          ),
+                if (_isDeleteMode)
+                  const Positioned(
+                    top: 0,
+                    right: 0,
+                    child: CircleAvatar(
+                      radius: 12,
+                      backgroundColor: Colors.red,
+                      child: Icon(
+                        Icons.remove,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                if (_figureOutMode && isFocused)
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: cs.primary.withOpacity(0.85),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${focusIndex + 1}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
-                    if (_isDeleteMode)
-                      const Positioned(
-                        top: 0,
-                        right: 0,
-                        child: CircleAvatar(
-                          radius: 12,
-                          backgroundColor: Colors.red,
-                          child: Icon(
-                            Icons.remove,
-                            size: 16,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    if (_figureOutMode && isFocused)
-                      Positioned(
-                        top: 6,
-                        left: 6,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: cs.primary.withOpacity(0.85),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '${focusIndex + 1}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+                  ),
+              ],
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DraggableThoughtBubble extends StatefulWidget {
+  const _DraggableThoughtBubble({
+    super.key,
+    required this.thought,
+    required this.transformationController,
+    required this.onTap,
+    required this.onLongPress,
+    required this.onCommit,
+    required this.child,
+  });
+
+  final _Thought thought;
+  final TransformationController transformationController;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+  final ValueChanged<Offset> onCommit;
+  final Widget child;
+
+  @override
+  State<_DraggableThoughtBubble> createState() => _DraggableThoughtBubbleState();
+}
+
+class _DraggableThoughtBubbleState extends State<_DraggableThoughtBubble> {
+  Offset? _draggedOffset;
+
+  Offset get _activeOffset => _draggedOffset ?? widget.thought.offset;
+
+  @override
+  Widget build(BuildContext context) {
+    final delta = _activeOffset - widget.thought.offset;
+    return Transform.translate(
+      offset: delta,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
+        onPanUpdate: (details) {
+          final scale = widget.transformationController.value.getMaxScaleOnAxis();
+          final sceneDelta = details.delta / (scale <= 0 ? 1 : scale);
+          final base = _draggedOffset ?? widget.thought.offset;
+          setState(() {
+            _draggedOffset = base + sceneDelta;
+          });
+        },
+        onPanEnd: (_) {
+          final committed = _draggedOffset;
+          if (committed != null) {
+            widget.onCommit(committed);
+          }
+          setState(() {
+            _draggedOffset = null;
+          });
+        },
+        onPanCancel: () {
+          setState(() {
+            _draggedOffset = null;
+          });
+        },
+        child: widget.child,
       ),
     );
   }

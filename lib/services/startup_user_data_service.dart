@@ -121,17 +121,42 @@ class StartupUserDataService {
     final user = _supabase.auth.currentUser;
     if (user == null || user.id != userId) return;
     try {
+      final existing = await _supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', userId)
+          .maybeSingle();
+      if (existing != null) {
+        debugPrint('[StartupUserData] profile already exists for user=$userId');
+        return;
+      }
+
       // Prefer RPC bootstrap (SECURITY DEFINER) when available.
       try {
         await _supabase.rpc('ensure_my_profile');
-      } catch (_) {
+      } catch (e) {
         // Backward compatibility for projects that have not deployed the RPC.
+        debugPrint(
+          '[StartupUserData] ensure_my_profile rpc unavailable/failed user=$userId error=$e',
+        );
       }
 
-      await _supabase.from('profiles').upsert({
-        'id': userId,
-        'email': user.email,
-      }, onConflict: 'id');
+      try {
+        await _supabase.from('profiles').insert({
+          'id': userId,
+          'email': user.email,
+          'subscription_tier': 'free',
+          'subscription_status': 'inactive',
+        });
+      } on PostgrestException catch (_) {
+        // Fallback to idempotent upsert for environments where insert paths vary.
+        await _supabase.from('profiles').upsert({
+          'id': userId,
+          'email': user.email,
+          'subscription_tier': 'free',
+          'subscription_status': 'inactive',
+        }, onConflict: 'id');
+      }
       debugPrint('[StartupUserData] ensured profiles row for user=$userId');
     } catch (e) {
       // Never block startup reads on bootstrap upsert failures.

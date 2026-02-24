@@ -79,6 +79,17 @@ class AuthDeepLinkHandler {
     }
 
     final auth = Supabase.instance.client.auth;
+    final existingSession = auth.currentSession;
+    if (existingSession != null) {
+      debugPrint(
+        'AuthDeepLinkHandler callback received with existing session; skipping code exchange.',
+      );
+      OAuthSignInCoordinator.instance.markCompleted(
+        reason: 'existing_session_before_exchange',
+      );
+      _onSessionEstablished?.call();
+      return;
+    }
     final fragment = uri.fragment.replaceFirst('#', '');
     final fragmentParams = fragment.isEmpty
         ? <String, String>{}
@@ -146,19 +157,52 @@ class AuthDeepLinkHandler {
         }
       } catch (e, st) {
         final raw = e.toString().toLowerCase();
+        final hasActiveAttempt = OAuthSignInCoordinator.instance.isSigningIn;
+        // Supabase Flutter can process the deep link in parallel and emit
+        // signedIn shortly after this call throws. Give it a brief chance to
+        // settle before treating this as a hard failure.
+        for (var i = 0; i < 20 && auth.currentSession == null; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 200));
+        }
+        if (auth.currentSession != null) {
+          OAuthSignInCoordinator.instance.markCompleted(
+            reason: 'session_established_after_exchange_error',
+          );
+          _onSessionEstablished?.call();
+          return;
+        }
         final isBadVerifier =
             raw.contains('bad_code_verifier') ||
             raw.contains(
               'code challenge does not match previously saved code verifier',
             );
-        _lastAuthError = isBadVerifier
+        final isMissingVerifier = raw.contains(
+          'code verifier could not be found in local storage',
+        );
+        final isFlowStateNotFound =
+            raw.contains('flow_state_not_found') ||
+            raw.contains('invalid flow state, no valid flow state found');
+        final isStalePkceState = isMissingVerifier || isFlowStateNotFound;
+        if (isStalePkceState && !hasActiveAttempt) {
+          // Stale callback after restart/hot-restart: no in-flight OAuth state.
+          debugPrint(
+            'AuthDeepLinkHandler ignoring stale callback (missing/invalid PKCE flow state, no active attempt).',
+          );
+          OAuthSignInCoordinator.instance.markFailed(
+            reason: 'stale_callback_no_flow_state',
+          );
+          return;
+        }
+        _lastAuthError = (isBadVerifier || isStalePkceState)
             ? 'Login expired - please try again.'
             : 'OAuth callback exchange failed: $e';
         debugPrint('AuthDeepLinkHandler $_lastAuthError');
         debugPrint('$st');
         _onAuthError?.call(_lastAuthError!);
         OAuthSignInCoordinator.instance.markFailed(
-          reason: isBadVerifier ? 'bad_code_verifier' : 'exchange_failed',
+          reason: (isBadVerifier || isStalePkceState)
+              ? 'pkce_verifier_invalid_or_missing'
+              : 'exchange_failed',
         );
         return;
       }

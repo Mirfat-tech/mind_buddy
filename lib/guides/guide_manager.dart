@@ -29,6 +29,7 @@ class GuideManager {
   static final Set<String> _activePages = <String>{};
   static TutorialCoachMark? _activeGuide;
   static String? _activeGuidePageId;
+  static bool _isSkipDismissing = false;
 
   static Future<void> setKeepInstructionsVisible(bool value) async {
     final prefs = await SharedPreferences.getInstance();
@@ -68,15 +69,32 @@ class GuideManager {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         Future<void>.delayed(const Duration(milliseconds: 16), () {
           if (!context.mounted) return;
-          final validSteps = steps
-              .where((step) => step.key.currentContext != null)
+          final indexedSteps = <({int index, GuideStep step})>[
+            for (var i = 0; i < steps.length; i++) (index: i, step: steps[i]),
+          ];
+          final visibleSteps = indexedSteps
+              .where((entry) => entry.step.key.currentContext != null)
               .toList();
+          final validSteps = <({int index, GuideStep step})>[];
+          for (final entry in visibleSteps) {
+            if (!keepVisible) {
+              final dismissed = prefs.getBool(
+                _dismissedStepKey(pageId, _stepId(entry.index, entry.step)),
+              );
+              if (dismissed == true) {
+                continue;
+              }
+            }
+            validSteps.add(entry);
+          }
           if (validSteps.isEmpty) return;
-          if (requireAllTargetsVisible && validSteps.length < steps.length) {
+          if (requireAllTargetsVisible &&
+              validSteps.length < indexedSteps.length) {
             return;
           }
           _activePages.add(pageId);
           _activeGuidePageId = pageId;
+          _isSkipDismissing = false;
           var closed = false;
           var currentStepIndex = -1;
           var overlayTapLocked = false;
@@ -98,14 +116,15 @@ class GuideManager {
           final targets = <TargetFocus>[
             for (var i = 0; i < validSteps.length; i++)
               TargetFocus(
-                identify: '${pageId}_${i}_${validSteps[i].title}',
-                keyTarget: validSteps[i].key,
+                identify:
+                    '${pageId}_${validSteps[i].index}_${validSteps[i].step.title}',
+                keyTarget: validSteps[i].step.key,
                 shape: ShapeLightFocus.RRect,
                 radius: 14,
                 // Taps anywhere (overlay + spotlight) advance one step.
                 enableOverlayTab: true,
                 enableTargetTab: true,
-                contents: [_buildClampedContent(context, validSteps[i])],
+                contents: [_buildClampedContent(context, validSteps[i].step)],
               ),
           ];
           final targetIndexById = <String, int>{
@@ -121,7 +140,24 @@ class GuideManager {
             pulseEnable: false,
             imageFilter: ImageFilter.blur(sigmaX: 0, sigmaY: 0),
             hideSkip: false,
+            showSkipInLastTarget: true,
             textSkip: 'SKIP',
+            skipWidget: Container(
+              margin: const EdgeInsets.only(top: 10, right: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: const Text(
+                'SKIP',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ),
             beforeFocus: (target) {
               final nextIndex = targetIndexById[target.identify] ?? -1;
               if (debugLogs) {
@@ -166,10 +202,28 @@ class GuideManager {
               await markClosedAndSeen();
             },
             onSkip: () {
+              if (_isSkipDismissing) {
+                if (debugLogs) {
+                  debugPrint(
+                    '[Guide][$pageId] skip ignored (dismiss already in progress)',
+                  );
+                }
+                return false;
+              }
+              _isSkipDismissing = true;
               if (debugLogs) {
                 debugPrint('[Guide][$pageId] skip at index=$currentStepIndex');
               }
-              unawaited(markClosedAndSeen());
+              unawaited(
+                _dismissCurrentInstruction(
+                  prefs: prefs,
+                  pageId: pageId,
+                  keepVisible: keepVisible,
+                  validSteps: validSteps,
+                  currentStepIndex: currentStepIndex,
+                  markClosedAndSeen: markClosedAndSeen,
+                ).whenComplete(() => _isSkipDismissing = false),
+              );
               return true;
             },
           );
@@ -191,6 +245,40 @@ class GuideManager {
     if (_activeGuidePageId == pageId) {
       dismissActiveGuide();
     }
+  }
+
+  static Future<void> _dismissCurrentInstruction({
+    required SharedPreferences prefs,
+    required String pageId,
+    required bool keepVisible,
+    required List<({int index, GuideStep step})> validSteps,
+    required int currentStepIndex,
+    required Future<void> Function() markClosedAndSeen,
+  }) async {
+    if (!keepVisible &&
+        currentStepIndex >= 0 &&
+        currentStepIndex < validSteps.length) {
+      final current = validSteps[currentStepIndex];
+      await prefs.setBool(
+        _dismissedStepKey(pageId, _stepId(current.index, current.step)),
+        true,
+      );
+    }
+    await markClosedAndSeen();
+  }
+
+  static String _dismissedStepKey(String pageId, String stepId) =>
+      'guideDismissed_${pageId}_$stepId';
+
+  static String _stepId(int index, GuideStep step) {
+    final normalized = step.title
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+    if (normalized.isNotEmpty) {
+      return normalized;
+    }
+    return 'step_$index';
   }
 
   static GuideAlign _resolvedAlign(BuildContext context, GuideStep step) {
@@ -250,7 +338,7 @@ class GuideManager {
       body: step.body,
       maxWidth: tooltipEstimatedWidth,
     );
-    final safeLeft = horizontalPadding;
+    const safeLeft = horizontalPadding;
     final safeRight = screen.width - horizontalPadding;
     final safeTop = media.padding.top + verticalPadding;
     final safeBottom = screen.height - media.padding.bottom - verticalPadding;

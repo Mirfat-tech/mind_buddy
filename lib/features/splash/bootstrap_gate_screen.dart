@@ -40,7 +40,9 @@ class _BootstrapGateScreenState extends ConsumerState<BootstrapGateScreen>
   Future<void> _runBootstrap() async {
     try {
       await ref.read(settingsControllerProvider).init();
-      await StartupUserDataService.instance.fetchCombinedForCurrentUser();
+      await StartupUserDataService.instance
+          .fetchCombinedForCurrentUser()
+          .timeout(const Duration(seconds: 6));
     } catch (_) {
       // Startup errors should not block entry.
     }
