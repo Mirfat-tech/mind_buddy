@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
-import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_widgets.dart';
 import 'package:mind_buddy/services/oauth_sign_in_coordinator.dart';
 
-class OnboardingAuthScreen extends ConsumerWidget {
+class OnboardingAuthScreen extends StatelessWidget {
   const OnboardingAuthScreen({super.key});
 
   Future<void> _signInWithOAuth(
@@ -27,9 +25,9 @@ class OnboardingAuthScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final controller = ref.read(onboardingControllerProvider.notifier);
-
+  Widget build(BuildContext context) {
+    final shortest = MediaQuery.of(context).size.shortestSide;
+    final logoSize = (shortest * 0.32).clamp(110.0, 180.0);
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
@@ -55,7 +53,7 @@ class OnboardingAuthScreen extends ConsumerWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Want us to save your space?',
+                  'Start your MyBrainBubble journey',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     color: Theme.of(context).colorScheme.primary,
                     shadows: [
@@ -69,11 +67,16 @@ class OnboardingAuthScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 12),
-                Text(
-                  'Creating an account lets us remember your pages, logs, and settings — so you can come back whenever you need.',
-                  style: Theme.of(context).textTheme.bodyLarge,
+                Center(
+                  child: Image.asset(
+                    'assets/images/MYBB_Trans_logo_2.png',
+                    width: logoSize,
+                    height: logoSize,
+                    fit: BoxFit.contain,
+                  ),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
+
                 ValueListenableBuilder<bool>(
                   valueListenable:
                       OAuthSignInCoordinator.instance.isSigningInListenable,
@@ -124,29 +127,6 @@ class OnboardingAuthScreen extends ConsumerWidget {
                   child: const Text('Create an account'),
                 ),
                 const SizedBox(height: 8),
-                TextButton(
-                  onPressed: () async {
-                    controller.setSkippedSignUp(true);
-                    await OnboardingController.markCompleted();
-                    await OnboardingController.setAuthSkipped(true);
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          "That's okay. We'll keep things simple for now.",
-                        ),
-                      ),
-                    );
-                    context.go('/home');
-                  },
-                  child: const Text("I'll decide later"),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'You can use MyBrainBubble without signing up.',
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
               ],
             ),
           ),

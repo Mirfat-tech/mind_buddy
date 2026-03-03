@@ -36,6 +36,9 @@
                 <data android:scheme="brainbubble" android:host="auth" android:path="/callback" />
                 <!-- Handles com.brainbubble.app://auth/callback -->
                 <data android:scheme="com.brainbubble.app" android:host="auth" android:path="/callback" />
+                <!-- Widget deep links -->
+                <data android:scheme="brainbubble" android:host="widget" />
+                <data android:scheme="com.brainbubble.app" android:host="widget" />
                 <!-- Legacy callbacks -->
                 <data android:scheme="mindbuddy" android:host="reset" />
                 <data android:scheme="mindbuddy" android:host="login-callback" />
@@ -47,6 +50,25 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <receiver
+            android:name=".HabitTodayWidgetProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/habit_today_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name="es.antonborri.home_widget.HomeWidgetBackgroundReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="es.antonborri.home_widget.action.BACKGROUND" />
+            </intent-filter>
+        </receiver>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

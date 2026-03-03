@@ -4,9 +4,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'settings_model.dart';
 import 'settings_repository.dart';
+import '../../paper/paper_styles.dart';
 import '../../services/notification_service.dart';
 import '../../services/notification_catalog.dart';
 import '../../guides/guide_manager.dart';
+import '../habits/habit_home_widget_service.dart';
 
 final initialSettingsProvider = Provider<SettingsModel?>((ref) => null);
 
@@ -60,6 +62,14 @@ class SettingsController extends ChangeNotifier {
       await _repo.upsertRemote(local);
     }
 
+    // Ensure splash/bootstrap always has a concrete, valid theme.
+    final themeId = (_settings.themeId ?? '').trim();
+    if (!isValidPaperStyleId(themeId)) {
+      _settings = _settings.copyWith(themeId: kDefaultThemeId);
+      await _repo.saveLocal(_settings);
+      await _repo.upsertRemote(_settings);
+    }
+
     try {
       await NotificationService.instance.rescheduleAll(_settings);
     } catch (_) {}
@@ -76,6 +86,7 @@ class SettingsController extends ChangeNotifier {
 
   Future<void> setTheme(String id) async {
     await update(settings.copyWith(themeId: id));
+    await HabitHomeWidgetService.syncTodaySnapshot();
   }
 
   Future<void> setQuietHours({

@@ -28,8 +28,6 @@ String _ymd(DateTime d) {
   return '$y-$m-$day';
 }
 
-String _habitKey(String name) => name.trim().toLowerCase();
-
 DateTime? _parseLocalDay(dynamic raw) {
   if (raw == null) return null;
   final parsed = raw is DateTime
@@ -72,54 +70,72 @@ Future<HabitMonthlyCompletionStats> fetchHabitMonthlyCompletionStats({
 
   final activeRows = await supabase
       .from('user_habits')
-      .select('name')
+      .select('id, name')
       .eq('user_id', user.id)
       .eq('is_active', true);
-  final activeHabitKeys = (activeRows as List)
-      .map((r) => (r as Map)['name']?.toString() ?? '')
-      .where((name) => name.trim().isNotEmpty)
-      .map(_habitKey)
-      .toSet();
+  final activeHabitIds = <String>{};
+  for (final raw in (activeRows as List)) {
+    final row = Map<String, dynamic>.from(raw as Map);
+    final id = (row['id'] ?? '').toString().trim();
+    if (id.isEmpty) continue;
+    activeHabitIds.add(id);
+  }
 
   final completionRows = await supabase
       .from('habit_logs')
-      .select('habit_name, day, is_completed')
+      .select('habit_id, habit_name, day, is_completed')
       .eq('user_id', user.id)
-      .eq('is_completed', true)
       .gte('day', startDay)
       .lt('day', endExclusiveDay);
 
   final todayKey = _ymd(DateTime.now().toLocal());
-  final Map<int, int> countsByDay = {};
-  final Set<int> activeDays = {};
-  final Set<String> doneTodayHabitKeys = {};
-  int total = 0;
+  final entryByHabitDay = <String, bool>{};
+  final idSourceByHabitDay = <String, bool>{};
 
   for (final r in (completionRows as List)) {
     final row = Map<String, dynamic>.from(r as Map);
-    final habit = (row['habit_name'] ?? '').toString();
-    final hk = _habitKey(habit);
-    if (!activeHabitKeys.contains(hk)) continue;
+    final hid = (row['habit_id'] ?? '').toString().trim();
+    if (hid.isEmpty || !activeHabitIds.contains(hid)) continue;
 
     final day = _parseLocalDay(row['day']);
     if (day == null) continue;
     if (day.year != selectedMonth.year || day.month != selectedMonth.month) {
       continue;
     }
+    final isIdSource = hid.isNotEmpty;
+    final key = '$hid|${_ymd(day)}';
+    if (isIdSource) {
+      entryByHabitDay[key] = row['is_completed'] == true;
+      idSourceByHabitDay[key] = true;
+      continue;
+    }
+    if (idSourceByHabitDay[key] == true) continue;
+    entryByHabitDay[key] = row['is_completed'] == true;
+  }
 
+  final Map<int, int> countsByDay = {};
+  final Set<int> activeDays = {};
+  final Set<String> doneTodayHabitIds = {};
+  int total = 0;
+  for (final entry in entryByHabitDay.entries) {
+    if (entry.value != true) continue;
+    final parts = entry.key.split('|');
+    if (parts.length != 2) continue;
+    final hid = parts[0];
+    final day = _parseLocalDay(parts[1]);
+    if (day == null) continue;
     countsByDay[day.day] = (countsByDay[day.day] ?? 0) + 1;
     activeDays.add(day.day);
     total += 1;
-
     if (_ymd(day) == todayKey) {
-      doneTodayHabitKeys.add(hk);
+      doneTodayHabitIds.add(hid);
     }
   }
 
   if (kDebugMode) {
     debugPrint(
       '📅 [HabitStats] start=$startDay end(exclusive)=$endExclusiveDay rows=${(completionRows).length} '
-      'uniqueDays=${activeDays.length} total=$total doneToday=${doneTodayHabitKeys.length}',
+      'uniqueDays=${activeDays.length} total=$total doneToday=${doneTodayHabitIds.length}',
     );
   }
 
@@ -128,8 +144,8 @@ Future<HabitMonthlyCompletionStats> fetchHabitMonthlyCompletionStats({
     monthEndExclusive: monthEndExclusive,
     totalCompletedInstances: total,
     uniqueDaysWithCompletion: activeDays.length,
-    activeHabitsCount: activeHabitKeys.length,
-    doneTodayCount: doneTodayHabitKeys.length,
+    activeHabitsCount: activeHabitIds.length,
+    doneTodayCount: doneTodayHabitIds.length,
     completionsByDay: countsByDay,
   );
 }

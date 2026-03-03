@@ -21,7 +21,7 @@ class _OnboardingExpressionScreenState
   static const _options = <(String, String)>[
     ('colors', 'By journaling'),
     ('photos', 'By talking about it'),
-    ('videos', 'With videos - some moments need sound and motion'),
+    ('videos', 'Through photos & videos'),
     ('all', 'All of the above'),
     ('none', 'None of the above'),
   ];
@@ -46,14 +46,14 @@ class _OnboardingExpressionScreenState
     final controller = ref.read(onboardingControllerProvider.notifier);
     controller.setExpressionStyle(_selected);
     controller.setSkippedPersonalization(false);
-    context.push('/onboarding/lookback');
+    context.go('/onboarding/lookback');
   }
 
-  void _skip() {
+  void _skipQuestion() {
     final controller = ref.read(onboardingControllerProvider.notifier);
     controller.clearExpressionStyle();
     controller.setSkippedPersonalization(true);
-    context.push('/onboarding/lookback');
+    context.go('/onboarding/lookback');
   }
 
   @override
@@ -91,7 +91,10 @@ class _OnboardingExpressionScreenState
               ),
             ),
             const SizedBox(height: 6),
-            TextButton(onPressed: _skip, child: const Text('Skip')),
+            TextButton(
+              onPressed: _skipQuestion,
+              child: const Text('Skip for now'),
+            ),
             const SizedBox(height: 8),
             const OnboardingDots(current: 1, total: 3),
           ],

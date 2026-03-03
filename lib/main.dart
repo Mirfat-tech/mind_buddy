@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:home_widget/home_widget.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
@@ -12,11 +13,21 @@ import 'features/auth/device_session_service.dart';
 import 'features/settings/settings_provider.dart';
 import 'features/settings/settings_model.dart';
 import 'features/settings/settings_repository.dart';
+import 'features/onboarding/onboarding_state.dart';
 import 'services/notification_service.dart';
 import 'services/memory_service.dart';
 import 'services/startup_user_data_service.dart';
 import 'services/auth_deep_link_handler.dart';
 import 'services/oauth_sign_in_coordinator.dart';
+import 'features/habits/habit_home_widget_service.dart';
+
+@pragma('vm:entry-point')
+Future<void> _widgetInteractivityCallback(Uri? uri) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await HomeWidget.setAppGroupId(HabitHomeWidgetService.iOSAppGroupId);
+  await HabitHomeWidgetService.ensureBackgroundInitialized();
+  await HabitHomeWidgetService.handleInteractivityAction(uri);
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,6 +50,9 @@ Future<void> main() async {
 
   // ✅ MUST happen before any Supabase.instance usage (router + auth listener)
   await Supabase.initialize(url: supabaseUrl, anonKey: supabaseAnonKey);
+  await HomeWidget.setAppGroupId(HabitHomeWidgetService.iOSAppGroupId);
+  await HomeWidget.registerInteractivityCallback(_widgetInteractivityCallback);
+  await HabitHomeWidgetService.flushPendingWidgetToggles();
   final settingsRepo = SettingsRepository(Supabase.instance.client);
   final SettingsModel? cachedSettings = await settingsRepo.loadLocal();
 
@@ -67,6 +81,7 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
   StreamSubscription<AuthState>? _authSub;
   bool _startupErrorShown = false;
   bool _deviceLimitSignOutInFlight = false;
+  bool _suppressAutoHomeNavigation = false;
   VoidCallback? _oauthTimeoutListener;
 
   @override
@@ -82,13 +97,20 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
           debugPrint(
             'AuthDeepLinkHandler onSessionEstablished hasSession=${session != null} user=${session?.user.id}',
           );
-          widget.router.go('/home');
+          globalMessengerKey.currentState?.hideCurrentSnackBar();
+          if (!_suppressAutoHomeNavigation) {
+            widget.router.go('/onboarding/doorway');
+          }
         },
         onAuthError: (message) {
           if (!mounted) return;
           globalMessengerKey.currentState?.showSnackBar(
             SnackBar(content: Text(message)),
           );
+        },
+        onWidgetLink: (uri) {
+          _suppressAutoHomeNavigation = true;
+          unawaited(_handleWidgetLink(uri));
         },
       ),
     );
@@ -98,15 +120,17 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
     NotificationService.instance.init();
     _oauthTimeoutListener = () {
       if (!mounted) return;
+      if (Supabase.instance.client.auth.currentSession != null) {
+        return;
+      }
       globalMessengerKey.currentState?.showSnackBar(
         SnackBar(
           content: const Text(OAuthSignInCoordinator.timeoutMessage),
           action: SnackBarAction(
             label: 'Retry',
             onPressed: () async {
-              final res = await OAuthSignInCoordinator.instance.retryLastAttempt(
-                forceFreshSession: true,
-              );
+              final res = await OAuthSignInCoordinator.instance
+                  .retryLastAttempt(forceFreshSession: true);
               if (!mounted || res.started) return;
               globalMessengerKey.currentState?.showSnackBar(
                 SnackBar(
@@ -139,8 +163,10 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
         OAuthSignInCoordinator.instance.markCompleted(
           reason: 'auth_state_signed_in',
         );
-        if (mounted) {
-          widget.router.go('/home');
+        globalMessengerKey.currentState?.hideCurrentSnackBar();
+        unawaited(OnboardingController.setAuthStageCompleted(true));
+        if (mounted && !_suppressAutoHomeNavigation) {
+          widget.router.go('/onboarding/doorway');
         }
         unawaited(_enforceDeviceLimitOnSignIn());
       }
@@ -148,9 +174,12 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
         OAuthSignInCoordinator.instance.markFailed(
           reason: 'auth_state_signed_out',
         );
+        unawaited(OnboardingController.setAuthStageCompleted(false));
       }
       if (data.event == AuthChangeEvent.signedIn ||
+          data.event == AuthChangeEvent.initialSession ||
           data.event == AuthChangeEvent.tokenRefreshed) {
+        unawaited(HabitHomeWidgetService.flushPendingWidgetToggles());
         _maybeReactivateAccount();
         _syncStartupUserData();
       }
@@ -173,6 +202,9 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
           ),
         );
       }
+      return;
+    }
+    if (!registration.shouldBlockForDeviceLimit) {
       return;
     }
     _deviceLimitSignOutInFlight = true;
@@ -216,6 +248,21 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
       return;
     }
     _startupErrorShown = false;
+    unawaited(HabitHomeWidgetService.syncTodaySnapshot());
+  }
+
+  Future<void> _handleWidgetLink(Uri uri) async {
+    if (!mounted) return;
+
+    final path = uri.path.toLowerCase();
+    if (path == '/habits' || path == '/view-all') {
+      await HabitHomeWidgetService.flushPendingWidgetToggles();
+      if (!mounted) return;
+      widget.router.go('/habits');
+      return;
+    }
+    // Ignore toggle deeplinks in foreground app; habit taps should be handled
+    // through background interactivity without navigation.
   }
 
   Future<void> _maybeReactivateAccount() async {

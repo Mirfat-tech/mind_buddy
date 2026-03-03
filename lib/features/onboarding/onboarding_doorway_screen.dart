@@ -43,12 +43,12 @@ class _OnboardingDoorwayScreenState
 
   void _continue() {
     ref.read(onboardingControllerProvider.notifier).setSlipFirst(_selected);
-    context.push('/onboarding/expression');
+    context.go('/onboarding/expression');
   }
 
-  void _skip() {
+  void _skipQuestion() {
     ref.read(onboardingControllerProvider.notifier).clearSlipFirst();
-    context.push('/onboarding/expression');
+    context.go('/onboarding/expression');
   }
 
   @override
@@ -83,7 +83,10 @@ class _OnboardingDoorwayScreenState
               ),
             ),
             const SizedBox(height: 6),
-            TextButton(onPressed: _skip, child: const Text('Skip')),
+            TextButton(
+              onPressed: _skipQuestion,
+              child: const Text('Skip for now'),
+            ),
             const SizedBox(height: 8),
             const OnboardingDots(current: 0, total: 3),
           ],

@@ -29,7 +29,7 @@ class OnboardingPromiseScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               GlowFilledButton(
-                onPressed: () => context.push('/onboarding/auth'),
+                onPressed: () => context.push('/auth'),
                 child: const Text('Continue'),
               ),
             ],

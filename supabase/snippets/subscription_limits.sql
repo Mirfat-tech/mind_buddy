@@ -62,7 +62,7 @@ as $$
       5
     )
     when public.is_light_support(uid) then 3
-    else 1
+    else null
   end;
 $$;
 
@@ -133,7 +133,11 @@ create policy "Users can upsert their device"
   with check (
     auth.uid() = user_id
     and (
-      select count(*) from public.user_sessions
-      where user_id = auth.uid()
-    ) < public.device_limit(auth.uid())
+      public.device_limit(auth.uid()) is null
+      or public.device_limit(auth.uid()) < 0
+      or (
+        select count(*) from public.user_sessions
+        where user_id = auth.uid()
+      ) < public.device_limit(auth.uid())
+    )
   );

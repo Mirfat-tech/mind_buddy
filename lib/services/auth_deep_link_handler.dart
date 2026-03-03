@@ -14,6 +14,7 @@ class AuthDeepLinkHandler {
   StreamSubscription<Uri>? _linkSub;
   VoidCallback? _onSessionEstablished;
   void Function(String message)? _onAuthError;
+  void Function(Uri uri)? _onWidgetLink;
   String? _lastAuthError;
   String? _lastHandledCallbackKey;
   DateTime? _lastHandledCallbackAt;
@@ -24,9 +25,11 @@ class AuthDeepLinkHandler {
   Future<void> init({
     VoidCallback? onSessionEstablished,
     void Function(String message)? onAuthError,
+    void Function(Uri uri)? onWidgetLink,
   }) async {
     _onSessionEstablished = onSessionEstablished;
     _onAuthError = onAuthError;
+    _onWidgetLink = onWidgetLink;
 
     await _handleInitialUri();
 
@@ -70,9 +73,21 @@ class AuthDeepLinkHandler {
     return isBrainbubbleScheme && isExpectedRoute;
   }
 
+  bool _isWidgetLink(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    final host = uri.host.toLowerCase();
+    return (scheme == 'brainbubble' || scheme == 'com.brainbubble.app') &&
+        host == 'widget';
+  }
+
   Future<void> handleUri(Uri uri) async {
     debugPrint('AuthDeepLinkHandler callback URI: $uri');
     _lastAuthError = null;
+
+    if (_isWidgetLink(uri)) {
+      _onWidgetLink?.call(uri);
+      return;
+    }
 
     if (!_isAuthCallback(uri)) {
       return;

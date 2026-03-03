@@ -258,6 +258,7 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                               padding: const EdgeInsets.only(bottom: 10),
                               child: HabitMonthGrid(
                                 month: DateTime.now(),
+                                refreshTick: 0,
                                 onManageTap: () {
                                   // If you want to go to your manage screen from here,
                                   // add your navigation here (GoRouter example):

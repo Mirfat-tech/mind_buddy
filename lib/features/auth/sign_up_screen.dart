@@ -1,13 +1,14 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:async';
 
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/services/oauth_sign_in_coordinator.dart';
+import 'package:mind_buddy/services/startup_user_data_service.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -19,38 +20,75 @@ class SignUpScreen extends StatefulWidget {
 class _SignUpScreenState extends State<SignUpScreen> {
   static const String _underAgeMessage =
       'You must be at least 13 years old to use this app.';
+  static const Duration _emailRateLimitCooldown = Duration(minutes: 1);
 
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _fullName = TextEditingController();
-  final TextEditingController _username = TextEditingController();
   final TextEditingController _email = TextEditingController();
   final TextEditingController _password = TextEditingController();
   final TextEditingController _confirm = TextEditingController();
   final TextEditingController _dateOfBirth = TextEditingController();
 
   bool _loading = false;
-  bool _checkingUsername = false;
   bool _confirmAge13Plus = false;
   bool _ageConfirmationError = false;
-  String? _usernameHint;
-  String? _usernameError;
   String? _dobError;
-  Timer? _debounce;
   DateTime? _selectedDateOfBirth;
+
+  Future<void> _upsertAndRefreshProfile({
+    required String userId,
+    required String email,
+    required String fullName,
+    required String dobIso,
+  }) async {
+    final payload = <String, dynamic>{
+      'id': userId,
+      'email': email,
+      'full_name': fullName,
+      'date_of_birth': dobIso,
+      'subscription_tier': 'pending',
+    };
+
+    debugPrint('SignupProfileWrite attempt user_id=$userId payload=$payload');
+    await Supabase.instance.client.from('profiles').upsert(payload);
+
+    StartupUserDataService.instance.invalidateUser(userId);
+    await StartupUserDataService.instance.fetchCombinedForUser(userId);
+  }
+
+  DateTime? _nextAllowedSignUpAt;
+  Timer? _rateLimitTimer;
+  int _cooldownSecondsRemaining = 0;
+
+  bool get _isRateLimited => _cooldownSecondsRemaining > 0;
 
   @override
   void dispose() {
+    _rateLimitTimer?.cancel();
     _fullName.dispose();
-    _username.dispose();
     _email.dispose();
     _password.dispose();
     _confirm.dispose();
     _dateOfBirth.dispose();
-    _debounce?.cancel();
     super.dispose();
   }
 
   Future<void> _signUp() async {
+    final now = DateTime.now();
+    final blockedUntil = _nextAllowedSignUpAt;
+    if (blockedUntil != null && now.isBefore(blockedUntil)) {
+      final remaining = blockedUntil.difference(now).inSeconds;
+      final wait = remaining > 0 ? remaining : 1;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Too many email attempts. Please wait $wait seconds, or use Google/Apple sign-in.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final isValid = _formKey.currentState!.validate();
     final dobError = _validateDateOfBirth(_selectedDateOfBirth);
     final ageConfirmationError = !_confirmAge13Plus;
@@ -67,17 +105,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
       final email = _email.text.trim();
       final password = _password.text;
       final fullName = _fullName.text.trim();
-      final username = _username.text.trim().toLowerCase();
       final dateOfBirth = _selectedDateOfBirth!;
       final dobIso = _formatDate(dateOfBirth);
-
-      final availability = await _checkUsername(username);
-      if (!availability) {
-        setState(() {
-          _usernameError = 'Username is taken';
-        });
-        return;
-      }
 
       final res = await Supabase.instance.client.auth.signUp(
         email: email,
@@ -86,7 +115,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
           'full_name': fullName,
           'date_of_birth': dobIso,
           'is_13_or_over': _confirmAge13Plus,
-          'username': username,
           'subscription_tier': 'pending',
         },
       );
@@ -94,17 +122,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
       final user = res.user;
       final hasSession = res.session != null;
       if (user != null && hasSession) {
-        await Supabase.instance.client.from('profiles').upsert({
-          'id': user.id,
-          'email': email,
-          'full_name': fullName,
-          'username': username,
-          'date_of_birth': dobIso,
-          'subscription_tier': 'pending',
-        });
+        await _upsertAndRefreshProfile(
+          userId: user.id,
+          email: email,
+          fullName: fullName,
+          dobIso: dobIso,
+        );
 
         final registration = await DeviceSessionService.registerDevice();
-        if (!registration.allowed) {
+        if (registration.shouldBlockForDeviceLimit) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -131,7 +157,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
       if (!mounted) return;
       if (hasSession) {
-        context.go('/onboarding/plan');
+        await OnboardingController.setAuthStageCompleted(true);
+        if (!mounted) return;
+        context.go('/onboarding/doorway');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -144,6 +172,22 @@ class _SignUpScreenState extends State<SignUpScreen> {
       }
     } on AuthException catch (e) {
       if (!mounted) return;
+      final lowered = e.message.toLowerCase();
+      final isEmailRateLimited =
+          lowered.contains('email rate limit exceeded') ||
+          lowered.contains('rate limit') && lowered.contains('email');
+      if (isEmailRateLimited) {
+        final cooldown = _parseRateLimitCooldown(e.message);
+        _startRateLimitCooldown(cooldown);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Too many email attempts. Please wait ${cooldown.inSeconds} seconds, or use Google/Apple sign-in.',
+            ),
+          ),
+        );
+        return;
+      }
       final message = e.message.contains(_underAgeMessage)
           ? _underAgeMessage
           : e.message;
@@ -160,6 +204,49 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
   }
 
+  Duration _parseRateLimitCooldown(String message) {
+    final lowered = message.toLowerCase();
+    final minuteMatch = RegExp(r'(\d+)\s*(minute|minutes|min)\b').firstMatch(
+      lowered,
+    );
+    if (minuteMatch != null) {
+      final minutes = int.tryParse(minuteMatch.group(1) ?? '');
+      if (minutes != null && minutes > 0) return Duration(minutes: minutes);
+    }
+
+    final secondMatch = RegExp(r'(\d+)\s*(second|seconds|sec|s)\b').firstMatch(
+      lowered,
+    );
+    if (secondMatch != null) {
+      final seconds = int.tryParse(secondMatch.group(1) ?? '');
+      if (seconds != null && seconds > 0) return Duration(seconds: seconds);
+    }
+
+    return _emailRateLimitCooldown;
+  }
+
+  void _startRateLimitCooldown(Duration duration) {
+    _rateLimitTimer?.cancel();
+    final end = DateTime.now().add(duration);
+    setState(() {
+      _nextAllowedSignUpAt = end;
+      _cooldownSecondsRemaining = duration.inSeconds;
+    });
+    _rateLimitTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      final remaining = end.difference(DateTime.now()).inSeconds;
+      if (!mounted || remaining <= 0) {
+        timer.cancel();
+        if (!mounted) return;
+        setState(() {
+          _cooldownSecondsRemaining = 0;
+          _nextAllowedSignUpAt = null;
+        });
+        return;
+      }
+      setState(() => _cooldownSecondsRemaining = remaining);
+    });
+  }
+
   Future<void> _signInWithOAuth(OAuthProvider provider) async {
     final res = await OAuthSignInCoordinator.instance.start(provider);
     if (!mounted || res.started) return;
@@ -170,95 +257,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
-  }
-
-  Future<void> _checkUsernameNow() async {
-    final v = _username.text.trim().toLowerCase();
-    if (v.isEmpty) return;
-    if (_checkingUsername) return;
-    setState(() => _checkingUsername = true);
-    final ok = await _checkUsername(v);
-    if (!mounted) return;
-    if (ok) {
-      setState(() {
-        _usernameError = null;
-        _usernameHint = 'Username available';
-        _checkingUsername = false;
-      });
-    } else {
-      final suggestion = await _suggestUsername(v);
-      if (!mounted) return;
-      setState(() {
-        _usernameError = 'Username taken';
-        _usernameHint = suggestion == null ? null : 'Try "$suggestion" instead';
-        _checkingUsername = false;
-      });
-    }
-  }
-
-  void _onUsernameChanged(String value) {
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), () async {
-      final v = value.trim().toLowerCase();
-      if (v.isEmpty) {
-        setState(() {
-          _usernameHint = null;
-          _usernameError = null;
-          _checkingUsername = false;
-        });
-        return;
-      }
-      if (mounted) {
-        setState(() => _checkingUsername = true);
-      }
-      final ok = await _checkUsername(v);
-      if (!mounted) return;
-      if (ok) {
-        setState(() {
-          _usernameError = null;
-          _usernameHint = 'Username available';
-          _checkingUsername = false;
-        });
-      } else {
-        final suggestion = await _suggestUsername(v);
-        if (!mounted) return;
-        setState(() {
-          _usernameError = 'Username taken';
-          _usernameHint = suggestion == null
-              ? null
-              : 'Try "$suggestion" instead';
-          _checkingUsername = false;
-        });
-      }
-    });
-  }
-
-  Future<bool> _checkUsername(String username) async {
-    final res = await Supabase.instance.client
-        .from('profiles')
-        .select('id')
-        .eq('username', username)
-        .maybeSingle();
-    return res == null;
-  }
-
-  Future<String?> _suggestUsername(String base) async {
-    final safe = base.replaceAll(RegExp(r'[^a-z0-9_]'), '');
-    if (safe.isEmpty) return null;
-
-    final rows = await Supabase.instance.client
-        .from('profiles')
-        .select('username')
-        .ilike('username', '$safe%');
-    final taken = (rows as List)
-        .map((r) => (r['username'] ?? '').toString())
-        .toSet();
-
-    for (var i = 1; i < 1000; i++) {
-      final candidate = '$safe$i';
-      if (!taken.contains(candidate)) return candidate;
-    }
-    return null;
   }
 
   String? _validateEmail(String? v) {
@@ -279,16 +277,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
     if ((v ?? '').trim() != _password.text.trim()) {
       return 'Passwords do not match';
     }
-    return null;
-  }
-
-  String? _validateUsername(String? v) {
-    final value = (v ?? '').trim();
-    if (value.isEmpty) return 'Username is required';
-    if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value)) {
-      return 'Only letters, numbers, underscore';
-    }
-    if (value.length < 3) return 'Minimum 3 characters';
     return null;
   }
 
@@ -385,36 +373,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     onTap: _pickDateOfBirth,
                   ),
                   const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _username,
-                          decoration: InputDecoration(
-                            labelText: 'Username',
-                            helperText: _usernameHint,
-                            errorText: _usernameError,
-                          ),
-                          onChanged: _onUsernameChanged,
-                          validator: _validateUsername,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      OutlinedButton(
-                        onPressed: _checkingUsername ? null : _checkUsernameNow,
-                        child: _checkingUsername
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('Check'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
                   TextFormField(
                     controller: _email,
                     keyboardType: TextInputType.emailAddress,
@@ -467,16 +425,29 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
-                      onPressed: _loading ? null : _signUp,
+                      onPressed: (_loading || _isRateLimited) ? null : _signUp,
                       child: _loading
                           ? const SizedBox(
                               width: 16,
                               height: 16,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Text('Create account'),
+                          : Text(
+                              _isRateLimited
+                                  ? 'Try again in ${_cooldownSecondsRemaining}s'
+                                  : 'Create account',
+                            ),
                     ),
                   ),
+                  if (_isRateLimited)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Email sign-up is temporarily limited. You can continue with Google/Apple meanwhile.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                   const SizedBox(height: 16),
                   const Row(
                     children: [

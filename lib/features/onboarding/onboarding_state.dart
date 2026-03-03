@@ -44,6 +44,10 @@ class OnboardingController extends StateNotifier<OnboardingAnswers> {
 
   static const _completedKey = 'onboarding_completed';
   static const _authSkippedKey = 'onboarding_auth_skipped';
+  static const _authStageCompletedKey = 'onboarding_auth_stage_completed';
+  static const _featuresSeenKey = 'features_seen';
+  static const _planCompletedKey = 'plan_completed';
+  static const _setupCompletedKey = 'setup_completed';
 
   void setSlipFirst(Set<String> values) {
     state = state.copyWith(slipFirst: Set<String>.from(values));
@@ -95,5 +99,50 @@ class OnboardingController extends StateNotifier<OnboardingAnswers> {
   static Future<void> setAuthSkipped(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_authSkippedKey, value);
+  }
+
+  static Future<bool> isAuthStageCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    final explicit = prefs.getBool(_authStageCompletedKey);
+    if (explicit != null) return explicit;
+    return (prefs.getBool(_authSkippedKey) ?? false) ||
+        (prefs.getBool(_completedKey) ?? false);
+  }
+
+  static Future<void> setAuthStageCompleted(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_authStageCompletedKey, value);
+  }
+
+  static Future<bool> isFeaturesSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    final explicit = prefs.getBool(_featuresSeenKey);
+    if (explicit != null) return explicit;
+    return prefs.getBool(_completedKey) ?? false;
+  }
+
+  static Future<void> markFeaturesSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_featuresSeenKey, true);
+  }
+
+  static Future<bool> isPlanCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_planCompletedKey) ?? false;
+  }
+
+  static Future<void> setPlanCompleted(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_planCompletedKey, value);
+  }
+
+  static Future<bool> isSetupCompleted() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_setupCompletedKey) ?? false;
+  }
+
+  static Future<void> setSetupCompleted(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_setupCompletedKey, value);
   }
 }

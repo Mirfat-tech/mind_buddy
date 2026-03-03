@@ -1,11 +1,8 @@
-# Uncomment this line to define a global platform for your project
 platform :ios, '13.0'
 
-# Ensure CocoaPods runs with UTF-8 when invoked by Flutter tooling.
+# Environment
 ENV['LANG'] = 'en_US.UTF-8'
 ENV['LC_ALL'] = 'en_US.UTF-8'
-
-# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
 project 'Runner', {
@@ -28,9 +25,9 @@ def flutter_root
 end
 
 require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
-
 flutter_ios_podfile_setup
 
+# App target
 target 'Runner' do
   use_frameworks!
 
@@ -40,6 +37,14 @@ target 'Runner' do
   end
 end
 
+# Widget extension target
+target 'HabitTodayWidgetExtensionExtension' do
+  use_frameworks!
+  inherit! :search_paths
+  pod 'home_widget', :path => '.symlinks/plugins/home_widget/ios'
+end
+
+# Shared build settings
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)

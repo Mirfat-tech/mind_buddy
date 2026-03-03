@@ -29,6 +29,7 @@ import 'package:mind_buddy/features/onboarding/plan_selection_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_doorway_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_promise_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_auth_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_features_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_expression_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_lookback_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_confirm_screen.dart';
@@ -137,6 +138,8 @@ Page<void> cupertinoPlainPage(Widget child, GoRouterState state) {
   return CupertinoPage<void>(key: state.pageKey, child: child);
 }
 
+enum _OnboardingStep { questions, plan, username, done }
+
 GoRouter createRouter() {
   final supabase = Supabase.instance.client;
 
@@ -148,36 +151,73 @@ GoRouter createRouter() {
     refreshListenable: GoRouterRefreshStream(supabase.auth.onAuthStateChange),
 
     redirect: (context, state) async {
+      final incomingPath = state.uri.path.toLowerCase();
+      if (incomingPath == '/toggle' || incomingPath == '/widget/toggle') {
+        return '/home';
+      }
       final session = supabase.auth.currentSession;
 
+      final onAuth = state.matchedLocation == '/auth';
       final loggingIn = state.matchedLocation == '/signin';
       final onSignup = state.matchedLocation == '/signup';
       final onSplash = state.matchedLocation == '/splash';
       final onBootstrap = state.matchedLocation == '/bootstrap';
       final onReset = state.matchedLocation == '/reset';
       final onOnboarding = state.matchedLocation.startsWith('/onboarding');
-      final onOnboardingAuth = state.matchedLocation == '/onboarding/auth';
       final onOnboardingPlan = state.matchedLocation == '/onboarding/plan';
       final onOnboardingUsername =
           state.matchedLocation == '/onboarding/username';
+      final onOnboardingDoorway =
+          state.matchedLocation == '/onboarding/doorway';
+      final onOnboardingExpression =
+          state.matchedLocation == '/onboarding/expression';
+      final onOnboardingLookback =
+          state.matchedLocation == '/onboarding/lookback';
+      final onSetup = state.matchedLocation.startsWith('/setup/');
+      final onSetupDoorway = state.matchedLocation == '/setup/doorway';
       final onSubscription = state.matchedLocation == '/subscription';
       final onShare = state.matchedLocation.startsWith('/share/');
 
       // let splash/reset handle themselves
       if (onSplash || onBootstrap || onReset || onShare) return null;
 
-      // not logged in -> onboarding or signin
-      if (session == null) {
-        final completed = await OnboardingController.isCompleted();
-        final authSkipped = await OnboardingController.isAuthSkipped();
-        final onboardingDone = completed || authSkipped;
+      final authStageCompleted = session != null
+          ? true
+          : await OnboardingController.isAuthStageCompleted();
+      final setupCompleted = await OnboardingController.isSetupCompleted();
+      final planCompletedFlag = await OnboardingController.isPlanCompleted();
 
-        if (onboardingDone && onOnboarding && !onOnboardingAuth) {
-          return '/home';
+      if (session == null) {
+        if (!authStageCompleted &&
+            !onAuth &&
+            !loggingIn &&
+            !onSignup &&
+            !onReset) {
+          return '/auth';
         }
-        if (loggingIn || onSignup || onOnboardingAuth) return null;
-        if (!onboardingDone && !onOnboarding) return '/onboarding/doorway';
-        return null;
+        if (!setupCompleted &&
+            authStageCompleted &&
+            !onOnboardingDoorway &&
+            !onOnboardingExpression &&
+            !onOnboardingLookback &&
+            !onAuth &&
+            !loggingIn &&
+            !onSignup) {
+          return '/onboarding/doorway';
+        }
+        if (!planCompletedFlag &&
+            authStageCompleted &&
+            setupCompleted &&
+            !onOnboardingPlan &&
+            !onAuth &&
+            !loggingIn &&
+            !onSignup) {
+          return '/onboarding/plan';
+        }
+        if (onAuth || loggingIn || onSignup || onOnboarding || onSetup) {
+          return null;
+        }
+        return '/home';
       }
 
       final bundle = await StartupUserDataService.instance.fetchCombinedForUser(
@@ -185,33 +225,104 @@ GoRouter createRouter() {
       );
       final profile = bundle.profileRow;
       final hasProfileRow = profile != null;
-      final username = (profile?['username'] ?? '')
+      final cachedUsername = (profile?['username'] ?? '')
           .toString()
           .trim()
           .toLowerCase();
-      final missingUsername = hasProfileRow && username.isEmpty;
-
-      if (missingUsername && !onOnboardingUsername) {
-        return '/onboarding/username';
+      var username = cachedUsername;
+      if (username.isEmpty) {
+        try {
+          final freshProfile = await supabase
+              .from('profiles')
+              .select('username')
+              .eq('id', session.user.id)
+              .maybeSingle();
+          username = (freshProfile?['username'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+        } catch (_) {
+          // Keep cached value when fresh fetch fails.
+        }
+      }
+      // Single source-of-truth onboarding step order:
+      // questions -> plan -> username -> done
+      var tier = (profile?['subscription_tier'] ?? '')
+          .toString()
+          .trim()
+          .toLowerCase();
+      const resolvedTiers = <String>{'free', 'light', 'plus', 'full'};
+      var hasResolvedTier = hasProfileRow && resolvedTiers.contains(tier);
+      // If cached startup data is stale, refresh tier directly before routing.
+      if (!hasResolvedTier) {
+        try {
+          final fresh = await supabase
+              .from('profiles')
+              .select('subscription_tier')
+              .eq('id', session.user.id)
+              .maybeSingle();
+          tier = (fresh?['subscription_tier'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          hasResolvedTier = resolvedTiers.contains(tier);
+        } catch (_) {
+          // Keep previous value.
+        }
       }
 
-      // pending plan -> force onboarding choice
-      final tier = (profile?['subscription_tier'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase();
-      final pending = hasProfileRow && (tier.isEmpty || tier == 'pending');
+      final missingUsername = profile == null || username.isEmpty;
+      final requiredStep = !setupCompleted
+          ? _OnboardingStep.questions
+          : !hasResolvedTier
+          ? _OnboardingStep.plan
+          : missingUsername
+          ? _OnboardingStep.username
+          : _OnboardingStep.done;
 
-      if (pending &&
+      final onQuestionsRoute =
+          onOnboardingDoorway || onOnboardingExpression || onOnboardingLookback;
+
+      if (requiredStep == _OnboardingStep.questions &&
+          !onQuestionsRoute &&
+          !onAuth &&
+          !loggingIn &&
+          !onSignup) {
+        return '/onboarding/doorway';
+      }
+
+      if (requiredStep == _OnboardingStep.plan &&
           !onOnboardingPlan &&
-          !onOnboarding &&
           !onSubscription &&
-          !loggingIn) {
+          !onAuth &&
+          !loggingIn &&
+          !onSignup) {
         return '/onboarding/plan';
       }
 
+      if (requiredStep == _OnboardingStep.username &&
+          !onOnboardingUsername &&
+          !onOnboardingPlan &&
+          !loggingIn &&
+          !onAuth &&
+          !onSignup) {
+        return '/onboarding/username';
+      }
+
       // logged in but on signin -> go home
-      if (loggingIn) return '/home';
+      if (loggingIn || onSignup || onAuth) return '/home';
+
+      if (requiredStep == _OnboardingStep.done &&
+          onOnboarding &&
+          !onOnboardingDoorway &&
+          !onOnboardingExpression &&
+          !onOnboardingLookback &&
+          !onOnboardingPlan &&
+          !onOnboardingUsername) {
+        return '/home';
+      }
+
+      if (onSetupDoorway || onSetup) return null;
 
       return null;
     },
@@ -242,6 +353,11 @@ GoRouter createRouter() {
             cupertinoPage(const ResetPasswordScreen(), state),
       ),
       GoRoute(
+        path: '/auth',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingAuthScreen(), state),
+      ),
+      GoRoute(
         path: '/onboarding/doorway',
         pageBuilder: (context, state) =>
             cupertinoPage(const OnboardingDoorwayScreen(), state),
@@ -251,10 +367,11 @@ GoRouter createRouter() {
         pageBuilder: (context, state) =>
             cupertinoPage(const OnboardingPromiseScreen(), state),
       ),
+      GoRoute(path: '/onboarding/auth', redirect: (_, __) => '/auth'),
       GoRoute(
-        path: '/onboarding/auth',
+        path: '/onboarding/features',
         pageBuilder: (context, state) =>
-            cupertinoPage(const OnboardingAuthScreen(), state),
+            cupertinoPage(const OnboardingFeaturesScreen(), state),
       ),
       GoRoute(
         path: '/onboarding/expression',
@@ -265,6 +382,18 @@ GoRouter createRouter() {
         path: '/onboarding/lookback',
         pageBuilder: (context, state) =>
             cupertinoPage(const OnboardingLookbackScreen(), state),
+      ),
+      GoRoute(
+        path: '/setup/doorway',
+        redirect: (_, __) => '/onboarding/doorway',
+      ),
+      GoRoute(
+        path: '/setup/expression',
+        redirect: (_, __) => '/onboarding/expression',
+      ),
+      GoRoute(
+        path: '/setup/lookback',
+        redirect: (_, __) => '/onboarding/lookback',
       ),
       GoRoute(
         path: '/onboarding/confirm',

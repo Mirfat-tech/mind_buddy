@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'package:mind_buddy/features/insights/habit_streaks_summary.dart';
+import 'package:mind_buddy/features/habits/habit_home_widget_service.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
@@ -17,10 +20,20 @@ class HabitsScreen extends StatefulWidget {
   State<HabitsScreen> createState() => _HabitsScreenState();
 }
 
-class _HabitsScreenState extends State<HabitsScreen> {
+class _HabitsScreenState extends State<HabitsScreen>
+    with WidgetsBindingObserver {
+  static const String _widgetTipDismissedKey = 'habits_widget_tip_dismissed';
+  static const String _widgetTipSeenKey = 'habits_widget_tip_seen_once';
+  static const String _widgetTipLastShownAtKey = 'habits_widget_tip_last_shown_at';
+  static const String _widgetTipStateVersionKey = 'habits_widget_tip_state_v';
+  static const int _widgetTipStateVersion = 1;
+  static const Duration _widgetTipCooldown = Duration(days: 7);
+
   DateTime month = DateTime(DateTime.now().year, DateTime.now().month, 1);
   bool _hideStreaks = false;
   bool _needsHideStreaksRefresh = false;
+  bool _showWidgetTip = false;
+  Timer? _widgetTipAutoHideTimer;
   final GlobalKey _monthChevronLeftKey = GlobalKey();
   final GlobalKey _monthChevronRightKey = GlobalKey();
   final GlobalKey _habitDotsGridKey = GlobalKey();
@@ -33,7 +46,32 @@ class _HabitsScreenState extends State<HabitsScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadHideStreaks();
+    _prepareWidgetTip();
+    Future<void>.microtask(() async {
+      await HabitHomeWidgetService.flushPendingWidgetToggles();
+      if (!mounted) return;
+      _refreshSummary();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _widgetTipAutoHideTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      Future<void>.microtask(() async {
+        await HabitHomeWidgetService.flushPendingWidgetToggles();
+        if (!mounted) return;
+        _refreshSummary();
+      });
+    }
   }
 
   Future<void> _loadHideStreaks() async {
@@ -42,6 +80,7 @@ class _HabitsScreenState extends State<HabitsScreen> {
     setState(() {
       _hideStreaks = prefs.getBool('habits_hide_streaks') ?? false;
     });
+    await HabitHomeWidgetService.syncTodaySnapshot();
   }
 
   void _prevMonth() {
@@ -61,6 +100,112 @@ class _HabitsScreenState extends State<HabitsScreen> {
   void _refreshSummary() {
     _loadHideStreaks();
     setState(() => refreshTick++);
+    HabitHomeWidgetService.syncTodaySnapshot();
+  }
+
+  Future<void> _showWidgetHowTo() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => const SafeArea(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Add Home Screen Widget',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              ),
+              SizedBox(height: 10),
+              Text(
+                'iPhone (WidgetKit)\n'
+                '1. Long-press your Home Screen.\n'
+                '2. Tap + (top-left).\n'
+                '3. Search for MyBrainBubble.\n'
+                '4. Choose the Habits widget and tap Add Widget.',
+              ),
+              SizedBox(height: 12),
+              Text(
+                'Android (App Widget)\n'
+                '1. Long-press your Home Screen.\n'
+                '2. Tap Widgets.\n'
+                '3. Find MyBrainBubble.\n'
+                '4. Drag the Habits widget onto the Home Screen.',
+              ),
+              SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _prepareWidgetTip() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storedVersion = prefs.getInt(_widgetTipStateVersionKey) ?? 0;
+    if (storedVersion < _widgetTipStateVersion) {
+      await prefs.remove(_widgetTipDismissedKey);
+      await prefs.remove(_widgetTipSeenKey);
+      await prefs.remove(_widgetTipLastShownAtKey);
+      await prefs.setInt(_widgetTipStateVersionKey, _widgetTipStateVersion);
+    }
+
+    final dismissed = prefs.getBool(_widgetTipDismissedKey) ?? false;
+    if (!mounted || dismissed) return;
+
+    final seen = prefs.getBool(_widgetTipSeenKey) ?? false;
+    final lastShownMillis = prefs.getInt(_widgetTipLastShownAtKey);
+    final lastShownAt = lastShownMillis == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(lastShownMillis);
+    final shouldShowAgain =
+        lastShownAt == null ||
+        DateTime.now().difference(lastShownAt) >= _widgetTipCooldown;
+    if (seen && !shouldShowAgain) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(milliseconds: 650), () {
+        if (!mounted) return;
+        if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
+        setState(() => _showWidgetTip = true);
+        _widgetTipAutoHideTimer?.cancel();
+        _widgetTipAutoHideTimer = Timer(
+          const Duration(seconds: 4),
+          () => _hideWidgetTip(markSeen: true),
+        );
+      });
+    });
+  }
+
+  Future<void> _hideWidgetTip({
+    bool markDismissed = false,
+    bool markSeen = false,
+  }) async {
+    _widgetTipAutoHideTimer?.cancel();
+    if (mounted) {
+      setState(() => _showWidgetTip = false);
+    }
+    if (markDismissed || markSeen) {
+      final prefs = await SharedPreferences.getInstance();
+      if (markDismissed) {
+        await prefs.setBool(_widgetTipDismissedKey, true);
+      }
+      if (markSeen) {
+        await prefs.setBool(_widgetTipSeenKey, true);
+        await prefs.setInt(
+          _widgetTipLastShownAtKey,
+          DateTime.now().millisecondsSinceEpoch,
+        );
+      }
+    }
+  }
+
+  Future<void> _onWidgetTipTap() async {
+    await _hideWidgetTip(markSeen: true);
+    if (!mounted) return;
+    await _showWidgetHowTo();
   }
 
   Future<void> _showGuideIfNeeded({bool force = false}) async {
@@ -150,39 +295,116 @@ class _HabitsScreenState extends State<HabitsScreen> {
         hintKey: 'hint_habits',
         text: 'Tap a habit to mark it done.',
         iconText: '✨',
-        child: ListView(
-          padding: const EdgeInsets.all(16),
+        child: Stack(
           children: [
-            const Text(
-              'Habit tracker',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 10),
-            if (!_hideStreaks)
-              _GlowPanel(
-                child: HabitStreaksSummary(
-                  month: month,
-                  refreshTick: refreshTick,
-                  onManageTap: () async {
-                    await context.push('/habits/manage');
-                    _loadHideStreaks();
-                  },
+            ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                const SizedBox(height: 8),
+                const Text(
+                  'Habit tracker',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                 ),
-              ),
-            const SizedBox(height: 12),
-            _GlowPanel(
-              child: HabitMonthGrid(
-                month: month,
-                prevMonthKey: _monthChevronLeftKey,
-                nextMonthKey: _monthChevronRightKey,
-                gridKey: _habitDotsGridKey,
-                onPrevMonth: _prevMonth,
-                onNextMonth: _nextMonth,
-                onManageTap: () async {
-                  await context.push('/habits/manage');
-                  _loadHideStreaks();
-                },
-                onChanged: _refreshSummary,
+                const SizedBox(height: 10),
+                if (!_hideStreaks)
+                  _GlowPanel(
+                    child: HabitStreaksSummary(
+                      month: month,
+                      refreshTick: refreshTick,
+                      onManageTap: () async {
+                        await context.push('/habits/manage');
+                        _loadHideStreaks();
+                      },
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                _GlowPanel(
+                  child: HabitMonthGrid(
+                    month: month,
+                    refreshTick: refreshTick,
+                    prevMonthKey: _monthChevronLeftKey,
+                    nextMonthKey: _monthChevronRightKey,
+                    gridKey: _habitDotsGridKey,
+                    onPrevMonth: _prevMonth,
+                    onNextMonth: _nextMonth,
+                    onManageTap: () async {
+                      await context.push('/habits/manage');
+                      _loadHideStreaks();
+                    },
+                    onChanged: _refreshSummary,
+                  ),
+                ),
+              ],
+            ),
+            Positioned(
+              top: 12,
+              left: 16,
+              right: 16,
+              child: IgnorePointer(
+                ignoring: !_showWidgetTip,
+                child: AnimatedSlide(
+                  duration: const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  offset: _showWidgetTip ? Offset.zero : const Offset(0, -0.08),
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    opacity: _showWidgetTip ? 1 : 0,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: _onWidgetTipTap,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEFEAFF),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.primary.withValues(alpha: 0.2),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.primary.withValues(alpha: 0.12),
+                                blurRadius: 14,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              const Expanded(
+                                child: Text(
+                                  '✨ Also available as a little home screen widget.',
+                                  style: TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              InkWell(
+                                borderRadius: BorderRadius.circular(999),
+                                onTap: () => _hideWidgetTip(
+                                  markDismissed: true,
+                                  markSeen: true,
+                                ),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(4),
+                                  child: Icon(Icons.close, size: 16),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
           ],
@@ -205,10 +427,10 @@ class _GlowPanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        border: Border.all(color: scheme.outline.withValues(alpha: 0.25)),
         boxShadow: [
           BoxShadow(
-            color: scheme.primary.withOpacity(0.15),
+            color: scheme.primary.withValues(alpha: 0.15),
             blurRadius: 24,
             spreadRadius: 2,
             offset: const Offset(0, 6),

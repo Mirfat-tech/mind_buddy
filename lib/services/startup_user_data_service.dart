@@ -28,6 +28,17 @@ class StartupUserDataService {
   final Map<String, _CachedBundle> _cache = {};
   int _requestCount = 0;
 
+  void invalidateUser(String userId) {
+    _cache.remove(userId);
+    _inFlight.remove(userId);
+  }
+
+  void invalidateCurrentUser() {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+    invalidateUser(userId);
+  }
+
   Future<StartupUserDataBundle> fetchCombinedForCurrentUser() async {
     final user = _supabase.auth.currentUser;
     final session = _supabase.auth.currentSession;
@@ -145,7 +156,7 @@ class StartupUserDataService {
         await _supabase.from('profiles').insert({
           'id': userId,
           'email': user.email,
-          'subscription_tier': 'free',
+          'subscription_tier': 'pending',
           'subscription_status': 'inactive',
         });
       } on PostgrestException catch (_) {
@@ -153,7 +164,7 @@ class StartupUserDataService {
         await _supabase.from('profiles').upsert({
           'id': userId,
           'email': user.email,
-          'subscription_tier': 'free',
+          'subscription_tier': 'pending',
           'subscription_status': 'inactive',
         }, onConflict: 'id');
       }

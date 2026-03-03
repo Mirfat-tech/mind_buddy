@@ -2281,6 +2281,15 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       }
     }
 
+    // Ensure Tasks always has a notes field available, even if template fields
+    // are missing it in backend config.
+    if (widget.templateKey.toLowerCase() == 'tasks' &&
+        !controllers.containsKey('notes')) {
+      controllers['notes'] = TextEditingController(
+        text: widget.initialData?['notes']?.toString() ?? '',
+      );
+    }
+
     if (widget.templateKey.toLowerCase() == 'sleep') {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _updateSleepDuration();
@@ -2372,6 +2381,29 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     sortedFields.sort(
       (a, b) => (a['sort_order'] ?? 99).compareTo(b['sort_order'] ?? 99),
     );
+
+    if (widget.templateKey.toLowerCase() == 'tasks') {
+      // Force Notes placement under Completed toggle.
+      final filtered = sortedFields.where((f) {
+        final key = (f['field_key'] ?? '').toString().toLowerCase();
+        return key != 'notes' && key != 'note';
+      }).toList();
+      final notesField = <String, dynamic>{
+        'field_key': 'notes',
+        'field_type': 'text',
+        'label': 'Notes',
+        'sort_order': 999,
+      };
+      final completedIndex = filtered.indexWhere(
+        (f) => (f['field_key'] ?? '').toString().toLowerCase() == 'is_done',
+      );
+      if (completedIndex >= 0) {
+        filtered.insert(completedIndex + 1, notesField);
+      } else {
+        filtered.add(notesField);
+      }
+      sortedFields = filtered;
+    }
 
     return AlertDialog(
       title: Text(widget.title ?? 'New Entry'),
@@ -2482,6 +2514,10 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                     if (data.containsKey('target_date') &&
                         data['target_date'].toString().isEmpty) {
                       data.remove('target_date');
+                    }
+                    if (data.containsKey('notes')) {
+                      final notes = data['notes']?.toString().trim() ?? '';
+                      data['notes'] = notes.isEmpty ? null : notes;
                     }
 
                     if (data.containsKey('hours_slept')) {
@@ -3014,14 +3050,14 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                   key == 'wake_up_time')
               ? () => _selectTime(key)
               : null,
-          maxLines:
-              (key == 'notes' ||
-                  key == 'note' ||
-                  key == 'action_plan' ||
-                  key == 'feeling' ||
-                  key == 'products')
-              ? 4
-              : 1,
+          minLines: (key == 'notes' || key == 'note') ? 3 : null,
+          maxLines: (key == 'notes' || key == 'note')
+              ? 5
+              : ((key == 'action_plan' ||
+                        key == 'feeling' ||
+                        key == 'products')
+                    ? 4
+                    : 1),
           decoration: InputDecoration(
             hintText: hint,
             // Added suffixText for units

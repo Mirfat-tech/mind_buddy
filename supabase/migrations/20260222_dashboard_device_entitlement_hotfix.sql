@@ -281,7 +281,7 @@ begin
       5
     )
     when v_tier = 'light' then 3
-    else 1
+    else null
   end;
   return next;
 end;
@@ -310,7 +310,10 @@ begin
   return jsonb_build_object(
     'subscription_tier', coalesce(v_ent.subscription_tier, 'free'),
     'subscription_status', coalesce(v_ent.subscription_status, 'inactive'),
-    'device_limit', coalesce(v_ent.device_limit, 1)
+    'device_limit', case
+      when coalesce(v_ent.subscription_tier, 'free') in ('light', 'full') then v_ent.device_limit
+      else null
+    end
   );
 end;
 $$;
@@ -331,7 +334,10 @@ returns int
 language sql
 stable
 as $$
-  select coalesce((select device_limit from public.get_user_entitlement(uid)), 1);
+  select case
+    when public.user_tier(uid) in ('light', 'full') then (select device_limit from public.get_user_entitlement(uid))
+    else null
+  end;
 $$;
 
 -- ---------------------------------------------------------------------------
@@ -352,8 +358,9 @@ declare
   v_user_id uuid := auth.uid();
   v_tier text := 'free';
   v_status text := 'inactive';
-  v_device_limit int := 1;
+  v_device_limit int := null;
   v_device_count int := 0;
+  v_unlimited boolean := false;
 begin
   if v_user_id is null then
     raise exception 'Not authenticated' using errcode = '28000';
@@ -362,6 +369,8 @@ begin
   select subscription_tier, subscription_status, device_limit
   into v_tier, v_status, v_device_limit
   from public.get_user_entitlement(v_user_id);
+
+  v_unlimited := v_tier not in ('light', 'full') or v_device_limit is null or v_device_limit < 0;
 
   -- Existing device: always update and allow.
   update public.user_devices
@@ -385,7 +394,7 @@ begin
   end if;
 
   select count(*) into v_device_count from public.user_devices where user_id = v_user_id;
-  if v_device_count < v_device_limit then
+  if v_unlimited or v_device_count < v_device_limit then
     insert into public.user_devices (user_id, device_id, platform, device_name, created_at, last_seen)
     values (v_user_id, p_device_id, p_platform, p_device_name, now(), now())
     on conflict (user_id, device_id) do update
@@ -451,4 +460,3 @@ on conflict (user_id, device_id) do update
       platform = excluded.platform,
       last_seen = greatest(public.user_sessions.last_seen, excluded.last_seen),
       last_seen_at = greatest(public.user_sessions.last_seen_at, excluded.last_seen_at);
-

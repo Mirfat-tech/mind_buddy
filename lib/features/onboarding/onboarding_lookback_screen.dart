@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_apply.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_widgets.dart';
 
@@ -42,18 +43,23 @@ class _OnboardingLookbackScreenState
     });
   }
 
-  void _continue() {
+  Future<void> _continue() async {
     final controller = ref.read(onboardingControllerProvider.notifier);
     controller.setLookingBack(_selected);
     controller.setSkippedPersonalization(false);
-    context.push('/onboarding/auth');
+    await applyOnboardingAnswers(ref, ref.read(onboardingControllerProvider));
+    await OnboardingController.setSetupCompleted(true);
+    if (!mounted) return;
+    context.go('/onboarding/plan');
   }
 
-  void _skip() {
+  Future<void> _skipQuestion() async {
     final controller = ref.read(onboardingControllerProvider.notifier);
     controller.clearLookingBack();
     controller.setSkippedPersonalization(true);
-    context.push('/onboarding/auth');
+    await OnboardingController.setSetupCompleted(true);
+    if (!mounted) return;
+    context.go('/onboarding/plan');
   }
 
   @override
@@ -92,7 +98,10 @@ class _OnboardingLookbackScreenState
               ),
             ),
             const SizedBox(height: 6),
-            TextButton(onPressed: _skip, child: const Text('Skip')),
+            TextButton(
+              onPressed: _skipQuestion,
+              child: const Text('Skip for now'),
+            ),
             const SizedBox(height: 8),
             const OnboardingDots(current: 2, total: 3),
           ],

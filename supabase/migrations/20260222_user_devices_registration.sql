@@ -112,7 +112,7 @@ as $$
       5
     )
     when 'light' then 3
-    else 1
+    else null
   end;
 $$;
 
@@ -129,9 +129,10 @@ as $$
 declare
   v_user_id uuid := auth.uid();
   v_tier text := 'free';
-  v_device_limit int := 1;
+  v_device_limit int := null;
   v_device_count int := 0;
   v_reclaimed boolean := false;
+  v_unlimited boolean := false;
 begin
   if v_user_id is null then
     raise exception 'Not authenticated' using errcode = '28000';
@@ -139,6 +140,8 @@ begin
 
   select public.user_tier(v_user_id), public.device_limit(v_user_id)
   into v_tier, v_device_limit;
+
+  v_unlimited := v_tier not in ('light', 'full') or v_device_limit is null or v_device_limit < 0;
 
   update public.user_devices
   set
@@ -167,7 +170,7 @@ begin
   from public.user_devices
   where user_id = v_user_id;
 
-  if v_device_count >= v_device_limit and v_device_limit = 1 then
+  if not v_unlimited and v_device_count >= v_device_limit and v_device_limit = 1 then
     delete from public.user_devices
     where id in (
       select id
@@ -186,7 +189,7 @@ begin
     end if;
   end if;
 
-  if v_device_count < v_device_limit then
+  if v_unlimited or v_device_count < v_device_limit then
     insert into public.user_devices (
       user_id,
       device_id,

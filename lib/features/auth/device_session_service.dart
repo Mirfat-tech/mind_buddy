@@ -34,6 +34,8 @@ class DeviceRegistrationResult {
   final List<Map<String, dynamic>>? devices;
 
   bool get isDeviceLimit => !allowed && errorCode == _kDeviceLimitErrorCode;
+  bool get isLimitEnforcedTier => tier == 'light' || tier == 'full';
+  bool get shouldBlockForDeviceLimit => isDeviceLimit && isLimitEnforcedTier;
 
   String blockedMessage() {
     final limit = deviceLimit;
@@ -115,8 +117,9 @@ class DeviceSessionService {
         debugPrint('DeviceRegistration rpc_response=$res');
       }
       final parsed = _parseRpcResult(deviceId, res);
-      _debugLog(user.id, deviceId, parsed);
-      return parsed;
+      final normalized = await _normalizeForEntitlement(user.id, parsed);
+      _debugLog(user.id, deviceId, normalized);
+      return normalized;
     } on PostgrestException catch (e) {
       if (e.code == '42883' || e.code == '42P01') {
         // Backward-compatible fallback when RPC or new table is not deployed yet.
@@ -126,6 +129,16 @@ class DeviceSessionService {
       }
       final message = e.message.toLowerCase();
       if (e.code == _deviceLimitErrorCode || message.contains('device limit')) {
+        if (!await _isEnforcedDeviceLimitTier(user.id)) {
+          final result = DeviceRegistrationResult(
+            allowed: true,
+            deviceId: deviceId,
+            tier: await _fetchEntitlementTier(user.id),
+            deviceLimit: null,
+          );
+          _debugLog(user.id, deviceId, result);
+          return result;
+        }
         final result = DeviceRegistrationResult(
           allowed: false,
           deviceId: deviceId,
@@ -175,14 +188,21 @@ class DeviceSessionService {
       return DeviceRegistrationResult(allowed: true, deviceId: deviceId);
     }
     final map = Map<String, dynamic>.from(res);
+    final tier = map['tier']?.toString().toLowerCase();
+    final isEnforcedTier = tier == 'light' || tier == 'full';
+    final isDeviceLimitError =
+        map['error_code']?.toString() == _kDeviceLimitErrorCode;
+    final allowedRaw = map['allowed'] != false;
+    final allowed = allowedRaw || (isDeviceLimitError && !isEnforcedTier);
+    final limit = _asInt(map['device_limit']);
     return DeviceRegistrationResult(
-      allowed: map['allowed'] != false,
+      allowed: allowed,
       deviceId: deviceId,
-      tier: map['tier']?.toString().toLowerCase(),
+      tier: tier,
       subscriptionStatus: map['subscription_status']?.toString().toLowerCase(),
-      deviceLimit: _asInt(map['device_limit']),
+      deviceLimit: isEnforcedTier ? limit : null,
       deviceCount: _asInt(map['device_count']),
-      errorCode: map['error_code']?.toString(),
+      errorCode: allowed ? null : map['error_code']?.toString(),
       devices: (map['devices'] is List)
           ? (map['devices'] as List)
                 .map((e) => Map<String, dynamic>.from(e as Map))
@@ -196,6 +216,71 @@ class DeviceSessionService {
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value);
     return null;
+  }
+
+  static Future<DeviceRegistrationResult> _normalizeForEntitlement(
+    String userId,
+    DeviceRegistrationResult result,
+  ) async {
+    if (!result.isDeviceLimit || result.allowed || result.isLimitEnforcedTier) {
+      return result;
+    }
+
+    final tier = await _fetchEntitlementTier(userId);
+    if (tier == 'light' || tier == 'full') {
+      return DeviceRegistrationResult(
+        allowed: false,
+        deviceId: result.deviceId,
+        tier: tier,
+        subscriptionStatus: result.subscriptionStatus,
+        deviceLimit: result.deviceLimit,
+        deviceCount: result.deviceCount,
+        errorCode: result.errorCode,
+        entitlementCheckFailed: result.entitlementCheckFailed,
+        devices: result.devices,
+      );
+    }
+
+    return DeviceRegistrationResult(
+      allowed: true,
+      deviceId: result.deviceId,
+      tier: tier ?? result.tier,
+      subscriptionStatus: result.subscriptionStatus,
+      deviceLimit: null,
+      deviceCount: result.deviceCount,
+      errorCode: null,
+      entitlementCheckFailed: result.entitlementCheckFailed,
+      devices: result.devices,
+    );
+  }
+
+  static Future<bool> _isEnforcedDeviceLimitTier(String userId) async {
+    final tier = await _fetchEntitlementTier(userId);
+    return tier == 'light' || tier == 'full';
+  }
+
+  static Future<String?> _fetchEntitlementTier(String userId) async {
+    try {
+      final res = await Supabase.instance.client.rpc('get_my_entitlement');
+      if (res is Map) {
+        final tier = (res['subscription_tier'] ?? '').toString().toLowerCase();
+        return tier.isEmpty ? null : tier;
+      }
+    } catch (_) {}
+
+    try {
+      final profile = await Supabase.instance.client
+          .from('profiles')
+          .select('subscription_tier')
+          .eq('id', userId)
+          .maybeSingle();
+      final tier = (profile?['subscription_tier'] ?? '')
+          .toString()
+          .toLowerCase();
+      return tier.isEmpty ? null : tier;
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<DeviceRegistrationResult> _legacyUpsertFallback(

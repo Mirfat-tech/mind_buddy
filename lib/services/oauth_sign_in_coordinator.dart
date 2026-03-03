@@ -43,6 +43,14 @@ class OAuthSignInCoordinator {
     OAuthProvider provider, {
     bool forceFreshSession = false,
   }) async {
+    final existingSession = Supabase.instance.client.auth.currentSession;
+    if (existingSession != null && !forceFreshSession) {
+      return const OAuthLaunchResult(
+        OAuthLaunchStatus.failed,
+        message: 'You are already signed in.',
+      );
+    }
+
     final now = DateTime.now();
     final last = _lastAttemptAt;
     if (_isSigningIn.value) {
@@ -78,9 +86,9 @@ class OAuthSignInCoordinator {
           // Ignore sign-out failures and still attempt OAuth start.
         }
       }
-      final launchMode = provider == OAuthProvider.google
-          ? LaunchMode.inAppWebView
-          : LaunchMode.externalApplication;
+      // Use external auth session on iOS to avoid stuck in-app webview
+      // requiring manual "Done" after callback.
+      const launchMode = LaunchMode.externalApplication;
       final queryParams = provider == OAuthProvider.google
           ? const {'prompt': 'select_account'}
           : null;
@@ -141,6 +149,10 @@ class OAuthSignInCoordinator {
     _cancelTimeout();
     _timeoutTimer = Timer(_oauthTimeout, () {
       if (!_isSigningIn.value) return;
+      if (Supabase.instance.client.auth.currentSession != null) {
+        markCompleted(reason: 'timeout_guard_session_already_established');
+        return;
+      }
       markFailed(reason: 'timeout');
       _timeoutSignal.value++;
     });

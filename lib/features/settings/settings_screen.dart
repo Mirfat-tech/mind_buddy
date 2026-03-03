@@ -247,13 +247,13 @@ class _AccountActions extends StatelessWidget {
                 icon: Icons.login,
                 title: 'Sign in',
                 subtitle: 'Continue onboarding and choose a plan',
-                onTap: () => context.push('/onboarding/auth'),
+                onTap: () => context.push('/auth'),
               ),
               _SettingsTile(
                 icon: Icons.person_add_alt_1,
                 title: 'Create account',
                 subtitle: 'Start with email or social sign-in',
-                onTap: () => context.push('/onboarding/auth'),
+                onTap: () => context.push('/auth'),
               ),
             ],
           );

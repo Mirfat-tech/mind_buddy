@@ -159,15 +159,17 @@ final paperStyles = <PaperStyle>[
   ),
 ];
 
+const String kDefaultThemeId = 'baby_blue';
+
+bool isValidPaperStyleId(String? id) {
+  if (id == null || id.trim().isEmpty) return false;
+  return paperStyles.any((s) => s.id == id);
+}
+
 PaperStyle styleById(String? id) {
-  if (id == null) {
-    return paperStyles.firstWhere(
-      (s) => s.id == 'baby_blue',
-      orElse: () => paperStyles.first,
-    );
-  }
+  final resolvedId = isValidPaperStyleId(id) ? id : kDefaultThemeId;
   return paperStyles.firstWhere(
-    (s) => s.id == id,
+    (s) => s.id == resolvedId,
     orElse: () => paperStyles.first,
   );
 }

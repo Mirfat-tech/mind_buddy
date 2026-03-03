@@ -5,6 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/services/oauth_sign_in_coordinator.dart';
 
 class SignInScreen extends StatefulWidget {
@@ -43,7 +44,7 @@ class _SignInScreenState extends State<SignInScreen> {
       }
 
       final registration = await DeviceSessionService.registerDevice();
-      if (!registration.allowed) {
+      if (registration.shouldBlockForDeviceLimit) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -68,10 +69,10 @@ class _SignInScreenState extends State<SignInScreen> {
       }
 
       if (!mounted) return;
+      await OnboardingController.setAuthStageCompleted(true);
+      if (!mounted) return;
 
-      // Preserve the intended route if present
-      final from = GoRouterState.of(context).uri.queryParameters['from'];
-      context.go(from ?? '/home');
+      context.go('/onboarding/doorway');
     } on AuthException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -171,6 +172,16 @@ class _SignInScreenState extends State<SignInScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      Center(
+                        child: Image.asset(
+                          'assets/images/MYBB_Trans_logo_2.png',
+                          width: 140,
+                          height: 140,
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+
                       // Email
                       TextField(
                         controller: _email,

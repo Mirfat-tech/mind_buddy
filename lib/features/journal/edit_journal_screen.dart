@@ -11,10 +11,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:mind_buddy/common/mb_app_bar_circle_button.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
-import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
-import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/features/journal/quill_embeds.dart';
 import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
@@ -32,6 +31,7 @@ class EditJournalScreen extends StatefulWidget {
 }
 
 class _EditJournalScreenState extends State<EditJournalScreen> {
+  static const double _appBarEdgePadding = 16;
   final quill.QuillController _qc = quill.QuillController.basic();
   final TextEditingController _titleController = TextEditingController();
   bool _loading = true;
@@ -58,6 +58,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
   final GlobalKey _imageUploadButtonKey = GlobalKey();
   final GlobalKey _videoUploadButtonKey = GlobalKey();
   final GlobalKey _saveTickButtonKey = GlobalKey();
+  final GlobalKey _overflowButtonKey = GlobalKey();
   final GlobalKey _formattingDropdownKey = GlobalKey();
 
   static const List<String> _fonts = ['sans-serif', 'serif', 'monospace'];
@@ -877,6 +878,126 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
     ).showSnackBar(const SnackBar(content: Text('Updated')));
   }
 
+  List<Widget> _buildActionButtons({required bool compact}) {
+    if (compact) {
+      return <Widget>[
+        MbAppBarCircleButton(
+          icon: Icons.help_outline,
+          onPressed: () => _showGuideIfNeeded(force: true),
+        ),
+        MbAppBarCircleButton(
+          key: _overflowButtonKey,
+          icon: Icons.more_horiz,
+          tooltip: 'More',
+          onPressed: _openCompactActionsMenu,
+        ),
+        MbAppBarCircleButton(
+          key: _saveTickButtonKey,
+          tooltip: 'Save',
+          icon: Icons.check,
+          onPressed: _save,
+        ),
+      ];
+    }
+    return <Widget>[
+      MbAppBarCircleButton(
+        icon: Icons.help_outline,
+        onPressed: () => _showGuideIfNeeded(force: true),
+      ),
+      MbAppBarCircleButton(
+        tooltip: _savedShareId == null ? 'Share' : 'Share (updated)',
+        icon: Icons.share_outlined,
+        onPressed: _openShareForSavedEntry,
+      ),
+      MbAppBarCircleButton(
+        key: _deletePageButtonKey,
+        tooltip: _removeMediaMode ? 'Stop removing' : 'Remove media',
+        icon: _removeMediaMode ? Icons.check_circle : Icons.delete_outline,
+        onPressed: _toggleRemoveMediaMode,
+      ),
+      MbAppBarCircleButton(
+        key: _undoButtonKey,
+        tooltip: 'Undo remove',
+        icon: Icons.undo,
+        onPressed: _lastRemoved == null ? null : _undoLastRemove,
+      ),
+      MbAppBarCircleButton(
+        key: _imageUploadButtonKey,
+        tooltip: 'Add photo',
+        icon: Icons.photo,
+        onPressed: (_activeUploads > 0 || _isPickingMedia) ? null : _insertImage,
+      ),
+      MbAppBarCircleButton(
+        key: _videoUploadButtonKey,
+        tooltip: 'Add video',
+        icon: Icons.videocam,
+        onPressed: (_activeUploads > 0 || _isPickingMedia) ? null : _insertVideo,
+      ),
+      MbAppBarCircleButton(
+        key: _saveTickButtonKey,
+        tooltip: 'Save',
+        icon: Icons.check,
+        onPressed: _save,
+      ),
+    ];
+  }
+
+  Future<void> _openCompactActionsMenu() async {
+    final buttonContext = _overflowButtonKey.currentContext;
+    if (buttonContext == null) return;
+    final renderBox = buttonContext.findRenderObject() as RenderBox?;
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (renderBox == null || overlay == null) return;
+    final topLeft = renderBox.localToGlobal(Offset.zero, ancestor: overlay);
+    final bottomRight = renderBox.localToGlobal(
+      renderBox.size.bottomRight(Offset.zero),
+      ancestor: overlay,
+    );
+
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        topLeft.dx,
+        bottomRight.dy,
+        overlay.size.width - bottomRight.dx,
+        0,
+      ),
+      items: [
+        const PopupMenuItem<String>(value: 'share', child: Text('Share')),
+        PopupMenuItem<String>(
+          value: 'remove_mode',
+          child: Text(_removeMediaMode ? 'Stop removing' : 'Remove media'),
+        ),
+        const PopupMenuItem<String>(value: 'undo', child: Text('Undo remove')),
+        const PopupMenuItem<String>(value: 'photo', child: Text('Add photo')),
+        const PopupMenuItem<String>(value: 'video', child: Text('Add video')),
+      ],
+    );
+    if (!mounted || action == null) return;
+
+    switch (action) {
+      case 'share':
+        await _openShareForSavedEntry();
+        break;
+      case 'remove_mode':
+        _toggleRemoveMediaMode();
+        break;
+      case 'undo':
+        if (_lastRemoved != null) _undoLastRemove();
+        break;
+      case 'photo':
+        if (_activeUploads == 0 && !_isPickingMedia) {
+          await _insertImage();
+        }
+        break;
+      case 'video':
+        if (_activeUploads == 0 && !_isPickingMedia) {
+          await _insertVideo();
+        }
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -884,58 +1005,35 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
-        title: const Text('Edit Journal'),
-        leading: MbGlowBackButton(
-          key: _backButtonKey,
-          onPressed: () => context.canPop()
-              ? context.pop(_hasSavedChanges)
-              : context.go('/journals'),
+        automaticallyImplyLeading: false,
+        titleSpacing: 0,
+        title: LayoutBuilder(
+          builder: (context, constraints) {
+            final compactActions = constraints.maxWidth < 430;
+            final actionButtons = _buildActionButtons(compact: compactActions);
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: _appBarEdgePadding),
+              child: Row(
+                children: [
+                  MbAppBarCircleButton(
+                    key: _backButtonKey,
+                    icon: Icons.arrow_back,
+                    onPressed: () => context.canPop()
+                        ? context.pop(_hasSavedChanges)
+                        : context.go('/journals'),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: actionButtons,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         ),
-        actions: [
-          MbGlowIconButton(
-            icon: Icons.help_outline,
-            onPressed: () => _showGuideIfNeeded(force: true),
-          ),
-          MbGlowIconButton(
-            tooltip: _savedShareId == null ? 'Share' : 'Share (updated)',
-            icon: Icons.share_outlined,
-            onPressed: _openShareForSavedEntry,
-          ),
-          MbGlowIconButton(
-            key: _deletePageButtonKey,
-            tooltip: _removeMediaMode ? 'Stop removing' : 'Remove media',
-            icon: _removeMediaMode ? Icons.check_circle : Icons.delete_outline,
-            onPressed: _toggleRemoveMediaMode,
-          ),
-          MbGlowIconButton(
-            key: _undoButtonKey,
-            tooltip: 'Undo remove',
-            icon: Icons.undo,
-            onPressed: _lastRemoved == null ? null : _undoLastRemove,
-          ),
-          MbGlowIconButton(
-            key: _imageUploadButtonKey,
-            tooltip: 'Add photo',
-            icon: Icons.photo,
-            onPressed: (_activeUploads > 0 || _isPickingMedia)
-                ? null
-                : _insertImage,
-          ),
-          MbGlowIconButton(
-            key: _videoUploadButtonKey,
-            tooltip: 'Add video',
-            icon: Icons.videocam,
-            onPressed: (_activeUploads > 0 || _isPickingMedia)
-                ? null
-                : _insertVideo,
-          ),
-          MbGlowIconButton(
-            key: _saveTickButtonKey,
-            tooltip: 'Save',
-            icon: Icons.check,
-            onPressed: _save,
-          ),
-        ],
       ),
       body: MbFloatingHintOverlay(
         hintKey: 'hint_journal_edit',

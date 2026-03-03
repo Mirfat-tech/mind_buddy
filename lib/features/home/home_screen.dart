@@ -68,6 +68,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     if (!mounted || registration.allowed) {
       return;
     }
+    if (!registration.shouldBlockForDeviceLimit) {
+      return;
+    }
     if (registration.entitlementCheckFailed) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

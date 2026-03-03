@@ -60,25 +60,16 @@ class _BootstrapGateScreenState extends ConsumerState<BootstrapGateScreen>
   @override
   Widget build(BuildContext context) {
     final themeId = ref.watch(settingsControllerProvider).settings.themeId;
-    final hasResolvedTheme = themeId != null;
-    final style = hasResolvedTheme ? styleById(themeId) : null;
-    final bg = style?.paper;
-    final logoTint = style?.accent ?? Colors.white;
+    final style = styleById(themeId);
+    final bg = style.paper;
+    final logoTint = style.accent;
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
         curve: Curves.easeOut,
-        decoration: bg == null
-            ? const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [Color(0xFF090E1A), Color(0xFF111A2A)],
-                ),
-              )
-            : BoxDecoration(color: bg),
+        decoration: BoxDecoration(color: bg),
         child: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -97,9 +88,7 @@ class _BootstrapGateScreenState extends ConsumerState<BootstrapGateScreen>
                       height: logoSize,
                       child: ColorFiltered(
                         colorFilter: ColorFilter.mode(
-                          hasResolvedTheme
-                              ? logoTint.withValues(alpha: 0.2)
-                              : Colors.transparent,
+                          logoTint.withValues(alpha: 0.2),
                           BlendMode.srcATop,
                         ),
                         child: Image.asset(
