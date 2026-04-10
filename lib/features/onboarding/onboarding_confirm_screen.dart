@@ -15,6 +15,7 @@ class OnboardingConfirmScreen extends ConsumerWidget {
     final answers = ref.read(onboardingControllerProvider);
     await applyOnboardingAnswers(ref, answers);
     await OnboardingController.markCompleted();
+    await CompletionGateRepository.markOnboardingCompleted();
 
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
@@ -88,6 +89,7 @@ class OnboardingConfirmScreen extends ConsumerWidget {
                 final answers = ref.read(onboardingControllerProvider);
                 await applyOnboardingAnswers(ref, answers);
                 await OnboardingController.markCompleted();
+                await CompletionGateRepository.markOnboardingCompleted();
                 if (context.mounted) {
                   context.go('/settings');
                 }

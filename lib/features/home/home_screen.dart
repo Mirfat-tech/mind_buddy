@@ -12,7 +12,6 @@ import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; // Fixes 'Supabase' error
-import 'package:intl/intl.dart'; // Fixes 'DateFormat' error
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -352,6 +351,14 @@ class _HomeBody extends ConsumerWidget {
               child: const Text('Brain fog bubble 😶‍🌫️'),
             ),
           ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 52,
+            child: OutlinedButton(
+              onPressed: () => context.go('/gratitude-bubble'),
+              child: const Text('Gratitude bubble ✨'),
+            ),
+          ),
 
           IconButton(
             key: insightsButtonKey,
@@ -371,71 +378,6 @@ class _HomeBody extends ConsumerWidget {
             physics: const NeverScrollableScrollPhysics(),
             children: [
               _HomeBubble(
-                title: 'Vent bubble',
-                icon: Icons.chat_bubble_outline,
-                onTap: () async {
-                  final supabase = Supabase.instance.client;
-                  final user = supabase.auth.currentUser;
-
-                  if (user == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('You are not logged in.')),
-                    );
-                    return;
-                  }
-
-                  try {
-                    final info = await SubscriptionLimits.fetchForCurrentUser();
-                    if (info.isPending) {
-                      if (!context.mounted) return;
-                      await SubscriptionLimits.showTrialUpgradeDialog(
-                        context,
-                        onUpgrade: () => context.go('/subscription'),
-                      );
-                      return;
-                    }
-                    final dayId = DateFormat(
-                      'yyyy-MM-dd',
-                    ).format(DateTime.now());
-
-                    // 1️⃣ Try to get today's existing chat
-                    final existing = await supabase
-                        .from('chats')
-                        .select('id, day_id')
-                        .eq('user_id', user.id)
-                        .eq('day_id', dayId)
-                        .eq('is_archived', false)
-                        .order('created_at', ascending: false)
-                        .limit(1)
-                        .maybeSingle();
-
-                    // 2️⃣ If none exists, create one
-                    final chat =
-                        existing ??
-                        await supabase
-                            .from('chats')
-                            .insert({
-                              'user_id': user.id,
-                              'day_id': dayId,
-                              'is_archived': false,
-                              'title': null,
-                            })
-                            .select('id, day_id')
-                            .single();
-
-                    if (!context.mounted) return;
-
-                    // 3️⃣ Navigate
-                    context.push('/chat/${chat['day_id']}/${chat['id']}');
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Could not open Vent bubble: $e')),
-                    );
-                  }
-                },
-              ),
-              _HomeBubble(
                 title: 'Habit bubble',
                 icon: Icons.checklist_rtl,
                 onTap: () => context.go('/habits'),
@@ -450,6 +392,11 @@ class _HomeBody extends ConsumerWidget {
                 title: 'Pomodoro bubble',
                 icon: Icons.timer_outlined,
                 onTap: () => context.go('/pomodoro'),
+              ),
+              _HomeBubble(
+                title: 'Quote bubble',
+                icon: Icons.format_quote_outlined,
+                onTap: () => context.go('/quotes'),
               ),
             ],
           ),

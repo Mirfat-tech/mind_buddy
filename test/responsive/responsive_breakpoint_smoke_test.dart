@@ -9,6 +9,7 @@ import 'package:mind_buddy/features/onboarding/onboarding_auth_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_expression_screen.dart';
 import 'package:mind_buddy/features/auth/sign_in_screen.dart';
 import 'package:mind_buddy/features/brain_fog/brain_fog_screen.dart';
+import 'package:mind_buddy/features/gratitude/gratitude_bubble_screen.dart';
 import 'package:mind_buddy/features/templates/templates_screen.dart';
 import 'package:mind_buddy/features/templates/log_table_screen.dart';
 import 'package:mind_buddy/features/chat/chat_screen.dart';
@@ -16,6 +17,7 @@ import 'package:mind_buddy/features/insights/insights_screen.dart';
 import 'package:mind_buddy/features/settings/settings_screen.dart';
 import 'package:mind_buddy/features/journal/journals_list_screen.dart';
 import 'package:mind_buddy/features/journal/new_journal_screen.dart';
+import 'package:mind_buddy/features/pomodoro/pomodoro_screen.dart';
 
 class _DeviceConfig {
   const _DeviceConfig(this.name, this.size);
@@ -118,6 +120,7 @@ void main() {
     'OnboardingExpression': () => const OnboardingExpressionScreen(),
     'SignIn': () => const SignInScreen(),
     'BrainFog': () => const BrainFogScreen(),
+    'GratitudeBubble': () => const GratitudeBubbleScreen(),
     'Templates': () => const TemplatesScreen(),
     'LogTable': () => const LogTableScreen(
       templateId: 'test-template',
@@ -127,6 +130,7 @@ void main() {
     'JournalsList': () => JournalsListScreen(),
     'NewJournal': () => const NewJournalScreen(),
     'Chat': () => const ChatScreen(dayId: '2026-02-18', chatId: 1),
+    'Pomodoro': () => const PomodoroScreen(),
     'Insights': () => const InsightsScreen(),
     'Settings': () => const SettingsScreen(),
   };

@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
+
+import 'package:mind_buddy/services/startup_user_data_service.dart';
 
 enum GuideAlign { top, bottom, left, right }
 
@@ -26,6 +31,10 @@ class GuideManager {
   GuideManager._();
 
   static const String _keepInstructionsVisibleKey = 'keepInstructionsVisible';
+  static const String _guideStateField = 'guideState';
+  static const String _shownPagesField = 'shownPages';
+  static const String _dismissedStepsField = 'dismissedSteps';
+  static const String _localGuideStatePrefix = 'localGuideState';
   static final Set<String> _activePages = <String>{};
   static TutorialCoachMark? _activeGuide;
   static String? _activeGuidePageId;
@@ -56,8 +65,8 @@ class GuideManager {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    final seenKey = 'pageGuideShown_$pageId';
-    final shown = prefs.getBool(seenKey) ?? false;
+    final guideState = await _loadGuideState(prefs);
+    final shown = guideState.shownPages.contains(pageId);
     final keepVisible = prefs.getBool(_keepInstructionsVisibleKey) ?? false;
 
     // keepInstructionsVisible overrides prior "seen" state on every open.
@@ -78,10 +87,10 @@ class GuideManager {
           final validSteps = <({int index, GuideStep step})>[];
           for (final entry in visibleSteps) {
             if (!keepVisible) {
-              final dismissed = prefs.getBool(
-                _dismissedStepKey(pageId, _stepId(entry.index, entry.step)),
+              final dismissed = guideState.dismissedSteps.contains(
+                _dismissedStepId(pageId, _stepId(entry.index, entry.step)),
               );
-              if (dismissed == true) {
+              if (dismissed) {
                 continue;
               }
             }
@@ -109,7 +118,7 @@ class GuideManager {
             }
             // Keep-visible mode must continue to auto-show on later visits.
             if (!keepVisible) {
-              await prefs.setBool(seenKey, true);
+              await _persistShown(pageId, prefs: prefs);
             }
           }
 
@@ -259,16 +268,174 @@ class GuideManager {
         currentStepIndex >= 0 &&
         currentStepIndex < validSteps.length) {
       final current = validSteps[currentStepIndex];
-      await prefs.setBool(
-        _dismissedStepKey(pageId, _stepId(current.index, current.step)),
-        true,
+      await _persistDismissedStep(
+        pageId,
+        _stepId(current.index, current.step),
+        prefs: prefs,
       );
     }
     await markClosedAndSeen();
   }
 
-  static String _dismissedStepKey(String pageId, String stepId) =>
-      'guideDismissed_${pageId}_$stepId';
+  static String _dismissedStepId(String pageId, String stepId) =>
+      '$pageId::$stepId';
+
+  static String? _currentUserId() =>
+      Supabase.instance.client.auth.currentUser?.id;
+
+  static String _localGuideStateKey(String? userId) {
+    if (userId == null || userId.isEmpty) return _localGuideStatePrefix;
+    return '$_localGuideStatePrefix'
+        '_$userId';
+  }
+
+  static Future<_GuideState> _loadGuideState(SharedPreferences prefs) async {
+    final userId = _currentUserId();
+    final cachedRemote = StartupUserDataService.instance
+        .peekCachedForCurrentUser();
+    final remoteState = _parseRemoteGuideState(cachedRemote?.settingsRow);
+    final localState = _loadLocalGuideState(prefs, userId);
+    final merged = _GuideState(
+      shownPages: {...remoteState.shownPages, ...localState.shownPages},
+      dismissedSteps: {
+        ...remoteState.dismissedSteps,
+        ...localState.dismissedSteps,
+      },
+    );
+
+    if (merged != localState) {
+      await _saveLocalGuideState(prefs, userId, merged);
+    }
+
+    return merged;
+  }
+
+  static _GuideState _parseRemoteGuideState(Map<String, dynamic>? settingsRow) {
+    final rawSettings = settingsRow?['settings'];
+    if (rawSettings is! Map) return const _GuideState.empty();
+    final settings = Map<String, dynamic>.from(rawSettings);
+    final rawGuideState = settings[_guideStateField];
+    if (rawGuideState is! Map) return const _GuideState.empty();
+    final guideState = Map<String, dynamic>.from(rawGuideState);
+    final shownPagesRaw = guideState[_shownPagesField];
+    final dismissedStepsRaw = guideState[_dismissedStepsField];
+    return _GuideState(
+      shownPages: shownPagesRaw is List
+          ? shownPagesRaw.map((e) => e.toString()).toSet()
+          : const <String>{},
+      dismissedSteps: dismissedStepsRaw is List
+          ? dismissedStepsRaw.map((e) => e.toString()).toSet()
+          : const <String>{},
+    );
+  }
+
+  static Future<void> _persistShown(
+    String pageId, {
+    required SharedPreferences prefs,
+  }) async {
+    final userId = _currentUserId();
+    final current = _loadLocalGuideState(prefs, userId);
+    await _saveLocalGuideState(
+      prefs,
+      userId,
+      current.copyWith(shownPages: {...current.shownPages, pageId}),
+    );
+    await _persistRemote(
+      update: (state) =>
+          state.copyWith(shownPages: {...state.shownPages, pageId}),
+    );
+  }
+
+  static Future<void> _persistDismissedStep(
+    String pageId,
+    String stepId, {
+    required SharedPreferences prefs,
+  }) async {
+    final userId = _currentUserId();
+    final dismissedStep = _dismissedStepId(pageId, stepId);
+    final current = _loadLocalGuideState(prefs, userId);
+    await _saveLocalGuideState(
+      prefs,
+      userId,
+      current.copyWith(
+        dismissedSteps: {...current.dismissedSteps, dismissedStep},
+      ),
+    );
+    await _persistRemote(
+      update: (state) => state.copyWith(
+        dismissedSteps: {...state.dismissedSteps, dismissedStep},
+      ),
+    );
+  }
+
+  static _GuideState _loadLocalGuideState(
+    SharedPreferences prefs,
+    String? userId,
+  ) {
+    final raw = prefs.getString(_localGuideStateKey(userId));
+    if (raw == null || raw.isEmpty) return const _GuideState.empty();
+    try {
+      final decoded = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+      final shownRaw = decoded[_shownPagesField];
+      final dismissedRaw = decoded[_dismissedStepsField];
+      return _GuideState(
+        shownPages: shownRaw is List
+            ? shownRaw.map((e) => e.toString()).toSet()
+            : const <String>{},
+        dismissedSteps: dismissedRaw is List
+            ? dismissedRaw.map((e) => e.toString()).toSet()
+            : const <String>{},
+      );
+    } catch (_) {
+      return const _GuideState.empty();
+    }
+  }
+
+  static Future<void> _saveLocalGuideState(
+    SharedPreferences prefs,
+    String? userId,
+    _GuideState state,
+  ) async {
+    await prefs.setString(
+      _localGuideStateKey(userId),
+      jsonEncode(<String, dynamic>{
+        _shownPagesField: state.shownPages.toList()..sort(),
+        _dismissedStepsField: state.dismissedSteps.toList()..sort(),
+      }),
+    );
+  }
+
+  static Future<void> _persistRemote({
+    required _GuideState Function(_GuideState state) update,
+  }) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final bundle =
+          StartupUserDataService.instance.peekCachedForCurrentUser() ??
+          await StartupUserDataService.instance.fetchCombinedForCurrentUser();
+      final row = bundle.settingsRow;
+      final rawSettings = row?['settings'];
+      final settings = rawSettings is Map
+          ? Map<String, dynamic>.from(rawSettings)
+          : <String, dynamic>{};
+      final currentState = _parseRemoteGuideState(row);
+      final nextState = update(currentState);
+      settings[_guideStateField] = <String, dynamic>{
+        _shownPagesField: nextState.shownPages.toList()..sort(),
+        _dismissedStepsField: nextState.dismissedSteps.toList()..sort(),
+      };
+      await Supabase.instance.client.from('user_settings').upsert({
+        'user_id': user.id,
+        'settings': settings,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      });
+      StartupUserDataService.instance.invalidateUser(user.id);
+    } catch (_) {
+      // Guidance persistence should never block navigation.
+    }
+  }
 
   static String _stepId(int index, GuideStep step) {
     final normalized = step.title
@@ -465,4 +632,35 @@ class _GuideTooltip extends StatelessWidget {
       ),
     );
   }
+}
+
+class _GuideState {
+  const _GuideState({required this.shownPages, required this.dismissedSteps});
+
+  const _GuideState.empty()
+    : shownPages = const <String>{},
+      dismissedSteps = const <String>{};
+
+  final Set<String> shownPages;
+  final Set<String> dismissedSteps;
+
+  _GuideState copyWith({Set<String>? shownPages, Set<String>? dismissedSteps}) {
+    return _GuideState(
+      shownPages: shownPages ?? this.shownPages,
+      dismissedSteps: dismissedSteps ?? this.dismissedSteps,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is _GuideState &&
+        setEquals(other.shownPages, shownPages) &&
+        setEquals(other.dismissedSteps, dismissedSteps);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    Object.hashAll(shownPages.toList()..sort()),
+    Object.hashAll(dismissedSteps.toList()..sort()),
+  );
 }

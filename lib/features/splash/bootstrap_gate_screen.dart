@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:math' as math;
 import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/services/startup_user_data_service.dart';
 
 class BootstrapGateScreen extends ConsumerStatefulWidget {
@@ -39,12 +42,26 @@ class _BootstrapGateScreenState extends ConsumerState<BootstrapGateScreen>
 
   Future<void> _runBootstrap() async {
     try {
+      if (kDebugMode) {
+        debugPrint(
+          '[BootstrapGate] start auth_user_present=${Supabase.instance.client.auth.currentUser != null}',
+        );
+      }
       await ref.read(settingsControllerProvider).init();
       await StartupUserDataService.instance
           .fetchCombinedForCurrentUser()
           .timeout(const Duration(seconds: 6));
+      await CompletionGateRepository.fetchForCurrentUser(
+        preferCache: false,
+      ).timeout(const Duration(seconds: 6));
+      if (kDebugMode) {
+        debugPrint('[BootstrapGate] preload complete, routing to /home');
+      }
     } catch (_) {
       // Startup errors should not block entry.
+      if (kDebugMode) {
+        debugPrint('[BootstrapGate] preload failed, routing to /home anyway');
+      }
     }
     if (!mounted || _navigated) return;
     _navigated = true;

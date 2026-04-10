@@ -1,6 +1,7 @@
 // lib/router.dart
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:go_router/go_router.dart';
@@ -12,6 +13,7 @@ import 'package:mind_buddy/features/templates/template_screen.dart';
 import 'features/splash/bootstrap_gate_screen.dart';
 import 'features/auth/sign_in_screen.dart';
 import 'features/auth/sign_up_screen.dart';
+import 'features/auth/auth_callback_screen.dart';
 import 'features/auth/reset_password_screen.dart';
 import 'package:mind_buddy/features/home/home_screen.dart';
 import 'calendar/calendar_screen.dart';
@@ -21,8 +23,6 @@ import 'features/journal/journal_view_screen.dart';
 import 'features/journal/journal_share_view_screen.dart';
 import 'features/journal/edit_journal_screen.dart';
 import 'features/day/daily_page_screen.dart';
-import 'features/chat/chat_screen.dart';
-import 'package:mind_buddy/features/chat/chat_launch_screen.dart';
 import 'package:mind_buddy/features/templates/log_table_screen.dart';
 import 'package:mind_buddy/features/insights/insights_gate_screen.dart';
 import 'package:mind_buddy/features/onboarding/plan_selection_screen.dart';
@@ -38,6 +38,7 @@ import 'package:mind_buddy/features/onboarding/onboarding_username_screen.dart';
 //import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'package:mind_buddy/features/insights/manage_habits_screen.dart'
     show ManageHabitsScreen;
+import 'package:mind_buddy/features/habits/habit_bubble_entry_screen.dart';
 import 'package:mind_buddy/features/habits/habits_screen.dart';
 import 'package:mind_buddy/features/insights/manage_habits_screen.dart';
 
@@ -47,7 +48,9 @@ import 'package:mind_buddy/features/templates/create_templates_screen.dart';
 import 'features/pomodoro/pomodoro_screen.dart';
 
 import 'package:mind_buddy/features/brain_fog/brain_fog_screen.dart';
-import 'package:mind_buddy/features/chat/chat_archive_screen.dart';
+import 'package:mind_buddy/features/gratitude/gratitude_bubble_screen.dart';
+import 'package:mind_buddy/features/gratitude/gratitude_carousel_editor_screen.dart';
+import 'package:mind_buddy/features/quotes/quote_bubble_screen.dart';
 import 'package:mind_buddy/features/subscription/subscription_screen.dart';
 import 'package:mind_buddy/features/settings/settings_screen.dart';
 import 'package:mind_buddy/features/settings/appearance_settings_screen.dart';
@@ -55,6 +58,7 @@ import 'package:mind_buddy/features/settings/notifications_settings_screen.dart'
 import 'package:mind_buddy/features/settings/usage_settings_screen.dart';
 import 'package:mind_buddy/features/settings/quiet_guide_screen.dart';
 import 'package:mind_buddy/features/settings/blocked_users_screen.dart';
+import 'package:mind_buddy/features/test_page/test_page.dart';
 import 'package:mind_buddy/services/startup_user_data_service.dart';
 
 //
@@ -138,10 +142,9 @@ Page<void> cupertinoPlainPage(Widget child, GoRouterState state) {
   return CupertinoPage<void>(key: state.pageKey, child: child);
 }
 
-enum _OnboardingStep { questions, plan, username, done }
-
 GoRouter createRouter() {
   final supabase = Supabase.instance.client;
+  String? lastLoggedCompletionRouteUserId;
 
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
@@ -163,6 +166,7 @@ GoRouter createRouter() {
       final onSplash = state.matchedLocation == '/splash';
       final onBootstrap = state.matchedLocation == '/bootstrap';
       final onReset = state.matchedLocation == '/reset';
+      final onAuthCallback = state.matchedLocation == '/auth/callback';
       final onOnboarding = state.matchedLocation.startsWith('/onboarding');
       final onOnboardingPlan = state.matchedLocation == '/onboarding/plan';
       final onOnboardingUsername =
@@ -175,115 +179,63 @@ GoRouter createRouter() {
           state.matchedLocation == '/onboarding/lookback';
       final onSetup = state.matchedLocation.startsWith('/setup/');
       final onSetupDoorway = state.matchedLocation == '/setup/doorway';
-      final onSubscription = state.matchedLocation == '/subscription';
       final onShare = state.matchedLocation.startsWith('/share/');
 
       // let splash/reset handle themselves
-      if (onSplash || onBootstrap || onReset || onShare) return null;
-
-      final authStageCompleted = session != null
-          ? true
-          : await OnboardingController.isAuthStageCompleted();
-      final setupCompleted = await OnboardingController.isSetupCompleted();
-      final planCompletedFlag = await OnboardingController.isPlanCompleted();
+      if (onSplash || onBootstrap || onReset || onAuthCallback || onShare) {
+        return null;
+      }
 
       if (session == null) {
-        if (!authStageCompleted &&
-            !onAuth &&
-            !loggingIn &&
-            !onSignup &&
-            !onReset) {
-          return '/auth';
+        if (kDebugMode) {
+          debugPrint(
+            '[StartupGate] auth_user_present=false location=${state.matchedLocation} final_route=${onAuth || loggingIn || onSignup || onReset ? 'stay' : '/auth'}',
+          );
         }
-        if (!setupCompleted &&
-            authStageCompleted &&
-            !onOnboardingDoorway &&
-            !onOnboardingExpression &&
-            !onOnboardingLookback &&
-            !onAuth &&
-            !loggingIn &&
-            !onSignup) {
-          return '/onboarding/doorway';
-        }
-        if (!planCompletedFlag &&
-            authStageCompleted &&
-            setupCompleted &&
-            !onOnboardingPlan &&
-            !onAuth &&
-            !loggingIn &&
-            !onSignup) {
-          return '/onboarding/plan';
-        }
-        if (onAuth || loggingIn || onSignup || onOnboarding || onSetup) {
+        if (onAuth || loggingIn || onSignup || onReset) {
           return null;
         }
-        return '/home';
+        return '/auth';
       }
 
-      final bundle = await StartupUserDataService.instance.fetchCombinedForUser(
-        session.user.id,
+      final completion = await CompletionGateRepository.fetchForCurrentUser(
+        preferCache: false,
       );
-      final profile = bundle.profileRow;
-      final hasProfileRow = profile != null;
-      final cachedUsername = (profile?['username'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase();
-      var username = cachedUsername;
-      if (username.isEmpty) {
-        try {
-          final freshProfile = await supabase
-              .from('profiles')
-              .select('username')
-              .eq('id', session.user.id)
-              .maybeSingle();
-          username = (freshProfile?['username'] ?? '')
-              .toString()
-              .trim()
-              .toLowerCase();
-        } catch (_) {
-          // Keep cached value when fresh fetch fails.
-        }
-      }
-      // Single source-of-truth onboarding step order:
-      // questions -> plan -> username -> done
-      var tier = (profile?['subscription_tier'] ?? '')
-          .toString()
-          .trim()
-          .toLowerCase();
-      const resolvedTiers = <String>{'free', 'light', 'plus', 'full'};
-      var hasResolvedTier = hasProfileRow && resolvedTiers.contains(tier);
-      // If cached startup data is stale, refresh tier directly before routing.
-      if (!hasResolvedTier) {
-        try {
-          final fresh = await supabase
-              .from('profiles')
-              .select('subscription_tier')
-              .eq('id', session.user.id)
-              .maybeSingle();
-          tier = (fresh?['subscription_tier'] ?? '')
-              .toString()
-              .trim()
-              .toLowerCase();
-          hasResolvedTier = resolvedTiers.contains(tier);
-        } catch (_) {
-          // Keep previous value.
-        }
-      }
-
-      final missingUsername = profile == null || username.isEmpty;
-      final requiredStep = !setupCompleted
-          ? _OnboardingStep.questions
-          : !hasResolvedTier
-          ? _OnboardingStep.plan
-          : missingUsername
-          ? _OnboardingStep.username
-          : _OnboardingStep.done;
-
+      final profileRow = StartupUserDataService.instance
+          .peekCachedForCurrentUser()
+          ?.profileRow;
+      final subscriptionTier = (profileRow?['subscription_tier'] ?? '')
+          .toString();
       final onQuestionsRoute =
           onOnboardingDoorway || onOnboardingExpression || onOnboardingLookback;
+      final chosenInitialRoute = !completion.onboardingCompleted
+          ? '/onboarding/doorway'
+          : !completion.subscriptionCompleted
+          ? '/onboarding/plan'
+          : !completion.usernameCompleted
+          ? '/onboarding/username'
+          : '/home';
+      final routeReason = !completion.onboardingCompleted
+          ? 'onboarding_incomplete'
+          : !completion.subscriptionCompleted
+          ? 'subscription_incomplete'
+          : !completion.usernameCompleted
+          ? 'username_incomplete'
+          : 'all_setup_complete';
 
-      if (requiredStep == _OnboardingStep.questions &&
+      if (kDebugMode) {
+        debugPrint(
+          '[StartupGate] auth_user_present=true userId=${session.user.id} location=${state.matchedLocation} profile_loaded=${profileRow != null} onboarding_completed=${completion.onboardingCompleted} username_completed=${completion.usernameCompleted} subscription_completed=${completion.subscriptionCompleted} subscription_tier=$subscriptionTier final_route=$chosenInitialRoute reason=$routeReason',
+        );
+      }
+      if (kDebugMode && lastLoggedCompletionRouteUserId != session.user.id) {
+        lastLoggedCompletionRouteUserId = session.user.id;
+        debugPrint(
+          '[CompletionGate] userId=${session.user.id} onboarding_completed=${completion.onboardingCompleted} username_completed=${completion.usernameCompleted} subscription_completed=${completion.subscriptionCompleted} route=$chosenInitialRoute reason=$routeReason',
+        );
+      }
+
+      if (chosenInitialRoute == '/onboarding/doorway' &&
           !onQuestionsRoute &&
           !onAuth &&
           !loggingIn &&
@@ -291,34 +243,24 @@ GoRouter createRouter() {
         return '/onboarding/doorway';
       }
 
-      if (requiredStep == _OnboardingStep.plan &&
+      if (chosenInitialRoute == '/onboarding/username' &&
+          !onOnboardingUsername &&
+          !onAuth &&
+          !loggingIn &&
+          !onSignup) {
+        return '/onboarding/username';
+      }
+
+      if (chosenInitialRoute == '/onboarding/plan' &&
           !onOnboardingPlan &&
-          !onSubscription &&
           !onAuth &&
           !loggingIn &&
           !onSignup) {
         return '/onboarding/plan';
       }
 
-      if (requiredStep == _OnboardingStep.username &&
-          !onOnboardingUsername &&
-          !onOnboardingPlan &&
-          !loggingIn &&
-          !onAuth &&
-          !onSignup) {
-        return '/onboarding/username';
-      }
-
-      // logged in but on signin -> go home
-      if (loggingIn || onSignup || onAuth) return '/home';
-
-      if (requiredStep == _OnboardingStep.done &&
-          onOnboarding &&
-          !onOnboardingDoorway &&
-          !onOnboardingExpression &&
-          !onOnboardingLookback &&
-          !onOnboardingPlan &&
-          !onOnboardingUsername) {
+      if (chosenInitialRoute == '/home' &&
+          (loggingIn || onSignup || onAuth || onOnboarding)) {
         return '/home';
       }
 
@@ -351,6 +293,11 @@ GoRouter createRouter() {
         path: '/reset',
         pageBuilder: (context, state) =>
             cupertinoPage(const ResetPasswordScreen(), state),
+      ),
+      GoRoute(
+        path: '/auth/callback',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const AuthCallbackScreen(), state),
       ),
       GoRoute(
         path: '/auth',
@@ -418,6 +365,12 @@ GoRouter createRouter() {
             cupertinoPage(const HomeScreen(), state),
       ),
 
+      GoRoute(
+        path: '/test-page',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const TestPage(), state),
+      ),
+
       // CALENDAR
       GoRoute(
         path: '/calendar',
@@ -445,7 +398,18 @@ GoRouter createRouter() {
         path: '/journals/view/:id',
         pageBuilder: (context, state) {
           final id = state.pathParameters['id']!;
-          return cupertinoPage(JournalViewScreen(journalId: id), state);
+          Map<String, dynamic>? initialEntry;
+          if (state.extra is Map) {
+            final extra = Map<String, dynamic>.from(state.extra as Map);
+            final rawEntry = extra['entry'];
+            if (rawEntry is Map) {
+              initialEntry = Map<String, dynamic>.from(rawEntry);
+            }
+          }
+          return cupertinoPage(
+            JournalViewScreen(journalId: id, initialEntry: initialEntry),
+            state,
+          );
         },
       ),
       GoRoute(
@@ -469,38 +433,6 @@ GoRouter createRouter() {
         pageBuilder: (context, state) {
           final dayId = state.pathParameters['dayId']!;
           return cupertinoPage(DailyPageScreen(dayId: dayId), state);
-        },
-      ),
-
-      // CHAT (attached to a day)
-      GoRoute(
-        path: '/chat',
-        pageBuilder: (context, state) =>
-            cupertinoPage(const ChatLaunchScreen(), state),
-      ),
-      GoRoute(
-        path: '/chat/:dayId/:chatId',
-        pageBuilder: (context, state) {
-          final dayId = state.pathParameters['dayId']!;
-          final chatId = int.parse(state.pathParameters['chatId']!);
-          return cupertinoPage(ChatScreen(dayId: dayId, chatId: chatId), state);
-        },
-      ),
-      GoRoute(
-        path: '/day/:dayId/chat/:chatId',
-        pageBuilder: (context, state) {
-          final dayId = state.pathParameters['dayId']!;
-          final chatId = int.parse(state.pathParameters['chatId']!);
-          return cupertinoPage(ChatScreen(dayId: dayId, chatId: chatId), state);
-        },
-      ),
-
-      GoRoute(
-        path: '/chat-archive/:dayId',
-        pageBuilder: (context, state) {
-          final dayId = state.pathParameters['dayId']!;
-          // Add themed() here to match your other screens
-          return cupertinoPage(ChatArchiveScreen(dayId: dayId), state);
         },
       ),
 
@@ -612,6 +544,12 @@ GoRouter createRouter() {
       GoRoute(
         path: '/habits',
         pageBuilder: (context, state) =>
+            cupertinoPage(const HabitBubbleEntryScreen(), state),
+      ),
+
+      GoRoute(
+        path: '/habits/tracker',
+        pageBuilder: (context, state) =>
             cupertinoPage(const HabitsScreen(), state),
       ),
 
@@ -631,6 +569,50 @@ GoRouter createRouter() {
         path: '/brain-fog',
         pageBuilder: (context, state) =>
             cupertinoPage(const BrainFogScreen(), state),
+      ),
+
+      GoRoute(
+        path: '/gratitude-bubble',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const GratitudeBubbleScreen(), state),
+      ),
+
+      GoRoute(
+        path: '/gratitude-carousel',
+        pageBuilder: (context, state) {
+          String? entryId;
+          List<String> seededBubbleTexts = const <String>[];
+          if (state.extra is Map) {
+            final extra = Map<String, dynamic>.from(state.extra as Map);
+            entryId = extra['entryId']?.toString();
+            final rawSeeded = extra['seededBubbleTexts'];
+            if (rawSeeded is List) {
+              seededBubbleTexts = rawSeeded
+                  .map((item) => item.toString())
+                  .where((item) => item.trim().isNotEmpty)
+                  .toList();
+            }
+          }
+          return cupertinoPage(
+            GratitudeCarouselEditorScreen(
+              entryId: entryId,
+              seededBubbleTexts: seededBubbleTexts,
+            ),
+            state,
+          );
+        },
+      ),
+
+      GoRoute(
+        path: '/gratitude-carousel/history',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const GratitudeCarouselHistoryScreen(), state),
+      ),
+
+      GoRoute(
+        path: '/quotes',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const QuoteBubbleScreen(), state),
       ),
 
       GoRoute(

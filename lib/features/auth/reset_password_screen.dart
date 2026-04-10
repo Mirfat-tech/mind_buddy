@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/features/auth/auth_layout.dart';
 
 /// 💖 ResetPasswordScreen
 /// Shown after the user clicks the reset link in their email.
@@ -87,48 +89,51 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
           onPressed: () => Navigator.of(context).maybePop(),
         ),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // 🔑 New password
-              TextFormField(
-                controller: _password,
-                decoration: const InputDecoration(labelText: 'New password'),
-                obscureText: true,
-                validator: _validatePassword,
+      body: SafeArea(
+        child: AuthLayout(
+          title: 'Choose a new password',
+          subtitle:
+              'Keep this step focused and constrained so it feels deliberate on phone, tablet, and desktop widths.',
+          child: AuthSectionCard(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextFormField(
+                    controller: _password,
+                    decoration: const InputDecoration(
+                      labelText: 'New password',
+                    ),
+                    obscureText: true,
+                    validator: _validatePassword,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _confirm,
+                    decoration: const InputDecoration(
+                      labelText: 'Confirm password',
+                    ),
+                    obscureText: true,
+                    validator: _validateConfirm,
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton(
+                      onPressed: _loading ? null : _setNewPassword,
+                      child: _loading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Save new password'),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-
-              // ✅ Confirm password
-              TextFormField(
-                controller: _confirm,
-                decoration: const InputDecoration(
-                  labelText: 'Confirm password',
-                ),
-                obscureText: true,
-                validator: _validateConfirm,
-              ),
-              const SizedBox(height: 24),
-
-              // 💕 Save button
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: _loading ? null : _setNewPassword,
-                  child: _loading
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Save new password'),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),

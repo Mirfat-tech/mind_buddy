@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
-import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 class TemplateScreen extends StatelessWidget {
   final String templateId;
@@ -21,14 +20,6 @@ class TemplateScreen extends StatelessWidget {
           onPressed: () =>
               context.canPop() ? context.pop() : context.go('/templates'),
         ),
-        actions: [
-          MbGlowIconButton(
-            icon: Icons.notifications_outlined,
-            tooltip: 'Notifications',
-            onPressed: () =>
-                context.push('/settings/notifications?from=templates'),
-          ),
-        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

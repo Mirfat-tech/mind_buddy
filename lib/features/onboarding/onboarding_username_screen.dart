@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_widgets.dart';
 import 'package:mind_buddy/services/startup_user_data_service.dart';
 
@@ -526,6 +527,7 @@ class _OnboardingUsernameScreenState extends State<OnboardingUsernameScreen> {
         return;
       }
 
+      await CompletionGateRepository.markUsernameCompleted();
       if (!mounted) return;
       context.go('/home');
     } on PostgrestException catch (e) {

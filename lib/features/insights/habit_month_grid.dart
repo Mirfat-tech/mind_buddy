@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:mind_buddy/services/subscription_limits.dart';
 
 class HabitMonthGrid extends StatefulWidget {
   const HabitMonthGrid({
@@ -43,6 +42,7 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
   double _labelWidth = 110;
   String? _lastTappedCellKey;
   DateTime? _lastTapAt;
+  int _loadRequestId = 0;
 
   // Constants for UI alignment
   static const double _dayCellWidth = 26;
@@ -85,6 +85,27 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
     return DateTime(parsed.year, parsed.month, parsed.day);
   }
 
+  DateTime? _habitActiveFrom(
+    Map<String, dynamic> habit, {
+    DateTime? earliestLoggedDay,
+  }) {
+    return _parseLocalDay(
+          habit['start_date'] ?? habit['active_from'] ?? habit['created_at'],
+        ) ??
+        earliestLoggedDay;
+  }
+
+  DateTime? _habitActiveUntil(Map<String, dynamic> habit) {
+    return _parseLocalDay(
+      habit['end_date'] ??
+          habit['ended_at'] ??
+          habit['deleted_at'] ??
+          habit['archived_at'] ??
+          habit['inactive_at'] ??
+          ((habit['is_active'] == false) ? habit['updated_at'] : null),
+    );
+  }
+
   int _daysInMonth(DateTime m) => DateTime(
     m.year,
     m.month + 1,
@@ -125,36 +146,91 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
   // ----------------------------
 
   Future<void> _load() async {
+    final requestId = ++_loadRequestId;
     if (!mounted) return;
     setState(() {
       _loading = true;
       _error = null;
-      _habitsWithMetadata.clear();
-      _doneByHabitId.clear();
     });
 
     try {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
-      // FIX: Changed 'categories' to 'habit_categories' to match your SQL
       final habitsResponse = await supabase
           .from('user_habits')
           .select('*, habit_categories(name)')
           .eq('user_id', user.id)
-          .eq('is_active', true)
           .order('sort_order');
 
-      final List habits = habitsResponse as List;
-      _habitsWithMetadata.addAll(habits.cast<Map<String, dynamic>>());
+      if (!mounted || requestId != _loadRequestId) return;
 
-      final habitNames = _habitsWithMetadata
-          .map((h) => h['name'].toString())
-          .toList();
-      _labelWidth = _computeLabelWidth(habitNames);
+      final monthEndExclusive = DateTime(
+        widget.month.year,
+        widget.month.month + 1,
+        1,
+      );
+      final historyRows = await supabase
+          .from('habit_logs')
+          .select('habit_id, day')
+          .eq('user_id', user.id)
+          .lt('day', _ymd(monthEndExclusive));
 
-      if (_habitsWithMetadata.isEmpty) {
-        setState(() => _loading = false);
+      if (!mounted || requestId != _loadRequestId) return;
+
+      final earliestLoggedDayByHabit = <String, DateTime>{};
+      for (final raw in historyRows as List) {
+        final row = Map<String, dynamic>.from(raw as Map);
+        final hid = (row['habit_id'] ?? '').toString().trim();
+        if (hid.isEmpty) continue;
+        final loggedDay = _parseLocalDay(row['day']);
+        if (loggedDay == null) continue;
+        final existing = earliestLoggedDayByHabit[hid];
+        if (existing == null || loggedDay.isBefore(existing)) {
+          earliestLoggedDayByHabit[hid] = loggedDay;
+        }
+      }
+
+      final localHabits = <Map<String, dynamic>>[];
+      final seenHabitIds = <String>{};
+      for (final raw in habitsResponse as List) {
+        final habit = Map<String, dynamic>.from(raw as Map);
+        final id = (habit['id'] ?? '').toString().trim();
+        if (id.isNotEmpty) {
+          if (!seenHabitIds.add(id)) continue;
+        }
+        final activeFrom = _habitActiveFrom(
+          habit,
+          earliestLoggedDay: id.isEmpty ? null : earliestLoggedDayByHabit[id],
+        );
+        final activeUntil = _habitActiveUntil(habit);
+        if (activeFrom != null && !activeFrom.isBefore(monthEndExclusive)) {
+          continue;
+        }
+        if (activeUntil != null && activeUntil.isBefore(DateTime(widget.month.year, widget.month.month, 1))) {
+          continue;
+        }
+        if (activeFrom != null) {
+          habit['_active_from'] = _ymd(activeFrom);
+        }
+        if (activeUntil != null) {
+          habit['_active_until'] = _ymd(activeUntil);
+        }
+        localHabits.add(habit);
+      }
+
+      final habitNames = localHabits.map((h) => h['name'].toString()).toList();
+      final labelWidth = _computeLabelWidth(habitNames);
+
+      if (localHabits.isEmpty) {
+        setState(() {
+          _habitsWithMetadata
+            ..clear()
+            ..addAll(localHabits);
+          _doneByHabitId.clear();
+          _labelWidth = labelWidth;
+          _loading = false;
+        });
         return;
       }
 
@@ -169,11 +245,14 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
           .gte('day', _ymd(start))
           .lt('day', _ymd(end));
 
-      final activeIds = _habitsWithMetadata
+      if (!mounted || requestId != _loadRequestId) return;
+
+      final activeIds = localHabits
           .map((h) => (h['id'] ?? '').toString().trim())
           .where((id) => id.isNotEmpty)
           .toSet();
       final stateByHabitDay = <String, bool>{};
+      final localDoneByHabitId = <String, Set<String>>{};
       for (final r in rows as List) {
         final hid = (r['habit_id'] ?? '').toString().trim();
         if (hid.isEmpty || !activeIds.contains(hid)) continue;
@@ -193,11 +272,13 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
         if (parts.length != 2) continue;
         final resolvedId = parts[0];
         final dayKey = parts[1];
-        _doneByHabitId.putIfAbsent(resolvedId, () => <String>{}).add(dayKey);
+        localDoneByHabitId
+            .putIfAbsent(resolvedId, () => <String>{})
+            .add(dayKey);
       }
       if (kDebugMode) {
-        final grouped = _doneByHabitId.values.expand((v) => v).toSet().toList()
-          ..sort();
+        final grouped =
+            localDoneByHabitId.values.expand((v) => v).toSet().toList()..sort();
         debugPrint(
           '📅 [HabitMonthGrid] month=${widget.month.year}-${widget.month.month.toString().padLeft(2, '0')} '
           'start=${_ymd(start)} end(exclusive)=${_ymd(end)} tzOffset=${DateTime.now().timeZoneOffset}',
@@ -207,9 +288,20 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
       }
 
       if (!mounted) return;
-      setState(() => _loading = false);
+      if (requestId != _loadRequestId) return;
+      setState(() {
+        _habitsWithMetadata
+          ..clear()
+          ..addAll(localHabits);
+        _doneByHabitId
+          ..clear()
+          ..addAll(localDoneByHabitId);
+        _labelWidth = labelWidth;
+        _loading = false;
+      });
     } catch (e) {
       if (!mounted) return;
+      if (requestId != _loadRequestId) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -239,17 +331,6 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
     final nowDone = _doneByHabitId[hid]!.contains(dayKey);
 
     try {
-      final info = await SubscriptionLimits.fetchForCurrentUser();
-      if (info.isPending && mounted) {
-        await SubscriptionLimits.showTrialUpgradeDialog(
-          context,
-          onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
-        );
-        // Revert optimistic toggle if trial blocks saving.
-        _load();
-        return;
-      }
-
       final payload = <String, dynamic>{
         'user_id': user.id,
         'habit_id': hid,
@@ -360,7 +441,7 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
     final Map<String, List<Map<String, dynamic>>> grouped = {};
     for (var habit in _habitsWithMetadata) {
       // Matches the 'habit_categories' join name
-      final catName = habit['habit_categories']?['name'] ?? 'Uncategorized';
+      final catName = habit['habit_categories']?['name'] ?? 'Uncategorised';
       grouped.putIfAbsent(catName, () => []).add(habit);
     }
 
@@ -377,7 +458,7 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
               children: [
                 const SizedBox(height: _numbersRowHeight),
                 for (var entry in grouped.entries) ...[
-                  _buildCategoryLabel(entry.key),
+                  _buildCategoryLabel(context, entry.key),
                   for (var habit in entry.value)
                     _buildHabitLabel(habit['name']),
                 ],
@@ -398,13 +479,7 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
                       height: _categoryHeaderHeight,
                     ), // Spacer for category header
                     for (var habit in entry.value)
-                      _buildDotsRow(
-                        (habit['id'] ?? '').toString(),
-                        (habit['name'] ?? '').toString(),
-                        days,
-                        base,
-                        cs,
-                      ),
+                      _buildDotsRow(habit, days, base, cs),
                   ],
                 ],
               ),
@@ -415,7 +490,8 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
     );
   }
 
-  Widget _buildCategoryLabel(String name) {
+  Widget _buildCategoryLabel(BuildContext context, String name) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       height: _categoryHeaderHeight,
       alignment: Alignment.bottomLeft,
@@ -425,7 +501,7 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.bold,
-          color: Colors.grey[600],
+          color: scheme.primary.withValues(alpha: 0.88),
           letterSpacing: 1.1,
         ),
       ),
@@ -471,12 +547,13 @@ class _HabitMonthGridState extends State<HabitMonthGrid> {
   }
 
   Widget _buildDotsRow(
-    String habitId,
-    String habitName,
+    Map<String, dynamic> habit,
     int days,
     DateTime base,
     ColorScheme cs,
   ) {
+    final habitId = (habit['id'] ?? '').toString();
+    final habitName = (habit['name'] ?? '').toString();
     return SizedBox(
       height: _habitRowHeight,
       child: Row(

@@ -90,17 +90,16 @@ You agree not to:
 
 Violation of these Terms may result in suspension or termination.
 
-## 7. AI, Automation & Reflections
+## 7. Insights & Reflections
 
-Some features may provide automated responses, reflections, or insights based on your input.
+Some features may provide generated reflections or insights based on the information you log in the App.
 
 These features:
 
-- Are automated
 - Are informational and reflective only
 - Should not be relied upon as professional, legal, financial, or medical advice
 
-No automated feature makes decisions that have legal or significant personal effects.
+No feature in the App makes decisions that have legal or significant personal effects.
 
 You remain responsible for how you interpret and act upon any output.
 
@@ -110,8 +109,7 @@ Subscription Plans
 
 MyBrainBubble offers optional paid subscriptions, which may include:
 
-- Light Support Mode (monthly or yearly)
-- Full Support Mode (monthly or yearly)
+- Plus Support Mode (monthly or yearly)
 
 Subscription features and pricing are displayed within the App before purchase. Prices may vary by region and platform.
 

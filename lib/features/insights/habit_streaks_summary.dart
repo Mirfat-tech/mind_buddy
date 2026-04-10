@@ -25,6 +25,7 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
   final SupabaseClient supabase = Supabase.instance.client;
 
   bool _loading = true;
+  bool _refreshing = false;
   String? _error;
 
   int _activeHabitsCount = 0;
@@ -38,22 +39,33 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
     return '$y-$m-$day';
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool preserveVisibleState = false}) async {
     if (!mounted) return;
 
-    setState(() {
-      _loading = true;
-      _error = null;
-      _activeHabitsCount = 0;
-      _doneTodayCount = 0;
-      _monthTicks = 0;
-    });
+    if (preserveVisibleState && !_loading) {
+      setState(() {
+        _refreshing = true;
+        _error = null;
+      });
+    } else {
+      setState(() {
+        _loading = true;
+        _refreshing = false;
+        _error = null;
+        _activeHabitsCount = 0;
+        _doneTodayCount = 0;
+        _monthTicks = 0;
+      });
+    }
 
     try {
       final user = supabase.auth.currentUser;
       if (user == null) {
         if (!mounted) return;
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _refreshing = false;
+        });
         return;
       }
 
@@ -69,6 +81,7 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
           _doneTodayCount = 0;
           _monthTicks = 0;
           _loading = false;
+          _refreshing = false;
         });
         return;
       }
@@ -90,12 +103,14 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
         _doneTodayCount = stats.doneTodayCount;
         _monthTicks = stats.totalCompletedInstances;
         _loading = false;
+        _refreshing = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
+        _refreshing = false;
       });
     }
   }
@@ -112,7 +127,7 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
     if (oldWidget.month.year != widget.month.year ||
         oldWidget.month.month != widget.month.month ||
         oldWidget.refreshTick != widget.refreshTick) {
-      _load();
+      _load(preserveVisibleState: true);
     }
   }
 
@@ -176,23 +191,46 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '$_doneTodayCount / $_activeHabitsCount habits done today',
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 180),
+        switchInCurve: Curves.easeOut,
+        switchOutCurve: Curves.easeIn,
+        child: Column(
+          key: ValueKey(
+            '$_doneTodayCount-$_activeHabitsCount-$_monthTicks-${widget.month.year}-${widget.month.month}',
           ),
-          const SizedBox(height: 4),
-          Text(
-            'Month ticks: $_monthTicks',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: cs.onSurface.withOpacity(0.75),
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '$_doneTodayCount / $_activeHabitsCount habits done today',
+                    style: Theme.of(
+                      context,
+                    ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                  ),
+                ),
+                AnimatedOpacity(
+                  duration: const Duration(milliseconds: 160),
+                  opacity: _refreshing ? 1 : 0,
+                  child: const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
+            const SizedBox(height: 4),
+            Text(
+              'Month ticks: $_monthTicks',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: cs.onSurface.withOpacity(0.75),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

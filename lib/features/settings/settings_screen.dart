@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
@@ -8,6 +9,7 @@ import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:mind_buddy/services/username_resolver_service.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -19,26 +21,6 @@ class SettingsScreen extends ConsumerWidget {
     final themeStyle = styleById(settings.themeId);
     final user = Supabase.instance.client.auth.currentUser;
     final userEmail = user?.email ?? 'Signed out';
-
-    final quietLabel = settings.quietHoursEnabled
-        ? '${settings.quietStart}–${settings.quietEnd}'
-        : 'Off';
-
-    final checkInLabel = settings.dailyCheckInEnabled
-        ? settings.dailyCheckInTime
-        : 'Off';
-    const dayLabels = {
-      'mon': 'Mon',
-      'tue': 'Tue',
-      'wed': 'Wed',
-      'thu': 'Thu',
-      'fri': 'Fri',
-      'sat': 'Sat',
-      'sun': 'Sun',
-    };
-    final scheduleLabel = settings.notificationDays.isEmpty
-        ? 'Off'
-        : '${settings.notificationDays.map((d) => dayLabels[d] ?? d).join(', ')} • ${settings.notificationTime}';
 
     return MbScaffold(
       applyBackground: true,
@@ -99,7 +81,7 @@ class SettingsScreen extends ConsumerWidget {
               _SettingsTile(
                 icon: Icons.bolt_outlined,
                 title: 'Usage & Plan',
-                subtitle: 'Messages and chats today',
+                subtitle: 'Usage and plan details',
                 onTap: () => context.go('/settings/usage'),
               ),
             ],
@@ -221,10 +203,40 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
           _SettingsSection(title: 'Devices', children: [_DevicesList()]),
+          if (kDebugMode) ...[
+            const SizedBox(height: 16),
+            _SettingsSection(
+              title: 'Debug',
+              children: [
+                _SettingsTile(
+                  icon: Icons.science_outlined,
+                  title: 'Open TestPage',
+                  subtitle: 'Mood-guided bubble flow experiment',
+                  onTap: () => context.go('/test-page'),
+                ),
+                _SettingsTile(
+                  icon: Icons.health_and_safety_outlined,
+                  title: 'Run RPC health check',
+                  subtitle: 'Checks username RPC visibility in PostgREST',
+                  onTap: () => _runRpcHealthCheck(context),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
   }
+}
+
+Future<void> _runRpcHealthCheck(BuildContext context) async {
+  final result = await UsernameResolverService.instance.runRpcHealthCheck();
+  if (!context.mounted) return;
+  final search = result['search_usernames'] ?? 'error';
+  final batch = result['get_usernames_by_ids'] ?? 'error';
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(content: Text('RPC health: search=$search, batch=$batch')),
+  );
 }
 
 class _AccountActions extends StatelessWidget {
@@ -518,6 +530,21 @@ class _DevicesList extends StatefulWidget {
 }
 
 class _DevicesListState extends State<_DevicesList> {
+  late Future<_DeviceListData> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = _loadDeviceListData();
+  }
+
+  void _refresh() {
+    if (!mounted) return;
+    setState(() {
+      _future = _loadDeviceListData();
+    });
+  }
+
   Future<void> _removeDevice(String deviceId) async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
@@ -530,13 +557,13 @@ class _DevicesListState extends State<_DevicesList> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Device removed.')));
-    setState(() {});
+    _refresh();
   }
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<_DeviceListData>(
-      future: _loadDeviceListData(),
+      future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Padding(
@@ -544,14 +571,23 @@ class _DevicesListState extends State<_DevicesList> {
             child: Center(child: CircularProgressIndicator()),
           );
         }
-        if (!snapshot.hasData) {
-          return const Padding(
-            padding: EdgeInsets.all(12),
-            child: Text('No devices found.'),
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('We could not load your devices just yet.'),
+                const SizedBox(height: 8),
+                TextButton(onPressed: _refresh, child: const Text('Try again')),
+              ],
+            ),
           );
         }
 
-        final data = snapshot.data!;
+        final data =
+            snapshot.data ??
+            const _DeviceListData(localDeviceId: '', sessions: []);
         if (data.sessions.isEmpty) {
           return const Padding(
             padding: EdgeInsets.all(12),
@@ -588,7 +624,9 @@ Future<_DeviceListData> _loadDeviceListData() async {
     return const _DeviceListData(localDeviceId: '', sessions: []);
   }
 
-  final localDeviceId = await DeviceSessionService.getOrCreateDeviceId();
+  final localSnapshot = await DeviceSessionService.currentDeviceSnapshot();
+  final localDeviceId = localSnapshot.deviceId;
+  final registration = await DeviceSessionService.registerDevice();
   List rows;
   try {
     rows = await Supabase.instance.client
@@ -611,9 +649,52 @@ Future<_DeviceListData> _loadDeviceListData() async {
           deviceName: (row['device_name'] ?? 'Unknown').toString(),
           platform: (row['platform'] ?? 'Unknown').toString(),
           lastSeen: _formatLastSeen(row['last_seen'] ?? row['last_seen_at']),
+          sortKey: (row['last_seen'] ?? row['last_seen_at'] ?? '').toString(),
         ),
       )
+      .where((session) => session.deviceId.isNotEmpty)
+      .fold<Map<String, _DeviceSession>>({}, (acc, session) {
+        acc.putIfAbsent(session.deviceId, () => session);
+        return acc;
+      })
+      .values
       .toList();
+
+  if (registration.devices != null && registration.devices!.isNotEmpty) {
+    for (final row in registration.devices!) {
+      final session = _DeviceSession(
+        deviceId: (row['device_id'] ?? '').toString(),
+        deviceName: (row['device_name'] ?? 'Unknown').toString(),
+        platform: (row['platform'] ?? 'Unknown').toString(),
+        lastSeen: _formatLastSeen(row['last_seen']),
+        sortKey: (row['last_seen'] ?? '').toString(),
+      );
+      if (session.deviceId.isEmpty) continue;
+      final exists = sessions.any((item) => item.deviceId == session.deviceId);
+      if (!exists) {
+        sessions.add(session);
+      }
+    }
+  }
+
+  final hasCurrentDevice = sessions.any(
+    (session) => session.deviceId == localSnapshot.deviceId,
+  );
+  if (!hasCurrentDevice &&
+      (registration.allowed || registration.entitlementCheckFailed)) {
+    sessions.insert(
+      0,
+      _DeviceSession(
+        deviceId: localSnapshot.deviceId,
+        deviceName: localSnapshot.deviceName,
+        platform: localSnapshot.platform,
+        lastSeen: _formatLastSeen(localSnapshot.lastSeen.toIso8601String()),
+        sortKey: localSnapshot.lastSeen.toIso8601String(),
+      ),
+    );
+  }
+
+  sessions.sort((a, b) => b.sortKey.compareTo(a.sortKey));
 
   return _DeviceListData(localDeviceId: localDeviceId, sessions: sessions);
 }
@@ -643,10 +724,12 @@ class _DeviceSession {
     required this.deviceName,
     required this.platform,
     required this.lastSeen,
+    this.sortKey = '',
   });
 
   final String deviceId;
   final String deviceName;
   final String platform;
   final String lastSeen;
+  final String sortKey;
 }

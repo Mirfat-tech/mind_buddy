@@ -21,10 +21,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   BillingPeriod _billingPeriod = BillingPeriod.monthly;
   String? _friendlyStoreError;
 
-  static const Map<MbPlanTier, double> _fallbackMonthlyGbp = {
-    MbPlanTier.lightSupport: 4.99,
-    MbPlanTier.plusSupport: 9.99,
-    MbPlanTier.fullSupport: 19.99,
+  static const Map<MbPlanTier, double> _fallbackMonthlyPrice = {
+    MbPlanTier.plusSupport: 2.99,
   };
 
   @override
@@ -78,19 +76,13 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
   }
 
-  SubscriptionOffer? _offerForPlan(
-    PlanBenefits plan,
-    BillingPeriod period,
-  ) {
+  SubscriptionOffer? _offerForPlan(PlanBenefits plan, BillingPeriod period) {
     if (plan.tier == MbPlanTier.free) return null;
     final tierSlug = switch (plan.tier) {
-      MbPlanTier.lightSupport => 'light',
       MbPlanTier.plusSupport => 'plus',
-      MbPlanTier.fullSupport => 'full',
       MbPlanTier.free || MbPlanTier.pending => '',
     };
-    final periodSlug =
-        period == BillingPeriod.monthly ? 'monthly' : 'yearly';
+    final periodSlug = period == BillingPeriod.monthly ? 'monthly' : 'yearly';
     for (final offer in SubscriptionPurchaseController.catalog) {
       if (offer.tier == tierSlug && offer.period == periodSlug) {
         return offer;
@@ -99,7 +91,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return null;
   }
 
-  String _formatGbp(double amount) {
+  String _formatPrice(double amount) {
     return '£${amount.toStringAsFixed(2)}';
   }
 
@@ -112,10 +104,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       if (product != null) return product.price;
     }
 
-    final monthly = _fallbackMonthlyGbp[plan.tier];
+    final monthly = _fallbackMonthlyPrice[plan.tier];
     if (monthly == null) return plan.price;
-    if (period == BillingPeriod.monthly) return _formatGbp(monthly);
-    return _formatGbp(monthly * 10);
+    if (period == BillingPeriod.monthly) return _formatPrice(monthly);
+    return _formatPrice(monthly * 10);
   }
 
   double _yearlySavings(PlanBenefits plan) {
@@ -132,75 +124,49 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         : _controller.productForId(yearlyOffer.productId);
 
     if (monthlyProduct != null && yearlyProduct != null) {
-      final yearlySavings = (monthlyProduct.rawPrice * 12) - yearlyProduct.rawPrice;
+      final yearlySavings =
+          (monthlyProduct.rawPrice * 12) - yearlyProduct.rawPrice;
       return yearlySavings > 0 ? yearlySavings : 0;
     }
 
-    final monthly = _fallbackMonthlyGbp[plan.tier];
+    final monthly = _fallbackMonthlyPrice[plan.tier];
     if (monthly == null) return 0;
     return monthly * 2;
   }
 
   List<String> _headlineBenefits(PlanBenefits plan) {
     return <String>[
-      plan.dailyChats == 0
-          ? 'No AI chats'
-          : '${plan.dailyChats} AI chats/day',
-      plan.voiceChatsPerDay > 0
-          ? '${plan.voiceChatsPerDay} voice chats/day'
-          : 'No voice chats',
-      plan.longTermMemory ? 'Long-term memory enabled' : 'No long-term memory',
-      plan.insights ? 'Insights for templates + habits' : 'No advanced insights',
-      '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
-      plan.canCreateCustomTemplates
-          ? 'Custom templates can be created + saved'
-          : 'Template preview mode',
+      plan.insights ? 'Insights included' : 'Core tracking tools included',
+      plan.devices < 0
+          ? 'Unlimited devices'
+          : '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
+      'Unlimited journaling',
+      'Unlimited journal sharing',
+      'Custom templates included',
     ];
   }
 
-  List<String> _aiDetails(PlanBenefits plan) {
+  List<String> _accessDetails(PlanBenefits plan) {
     return <String>[
-      plan.dailyChats == 0 ? '❌ No AI chats' : '${plan.dailyChats} chats per day',
-      plan.dailyChats == 0 ? '❌ No AI replies' : plan.replyStyle,
-      plan.voiceChatsPerDay == 0
-          ? '❌ No voice'
-          : '${plan.voiceChatsPerDay} voice chats per day',
-      plan.longTermMemory
-          ? '✅ Long-term memory enabled'
-          : '❌ No long-term memory',
+      'Brain Fog, habits, journals, templates, and pomodoro included',
       plan.insights
-          ? '✅ Insights for templates and habits'
-          : '❌ No advanced insights',
+          ? 'Insights for templates and habits are enabled'
+          : 'Insights are not included on this plan',
     ];
   }
 
   List<String> _templateDetails(PlanBenefits plan) {
-    final details = <String>[
-      plan.canCreateCustomTemplates
-          ? 'Can create and save custom templates'
-          : 'Can try + edit templates',
-      plan.coreTemplatesSaveForever
-          ? 'Core templates save forever and show in calendar'
-          : 'Core templates: preview only (data not saved permanently)',
+    return <String>[
+      'Can create and save custom templates',
+      'Built-in templates save forever and show in calendar',
     ];
-    if (plan.templatesPreviewMode) {
-      details.insert(
-        1,
-        'Data disappears after 24 hours (24-hour preview mode)',
-      );
-    }
-    return details;
   }
 
   List<String> _journalDetails(PlanBenefits plan) {
     return <String>[
-      plan.sharesPerDay < 0
-          ? 'Unlimited shares per day'
-          : plan.sharesPerDay == 0
-              ? 'Cannot share entries'
-              : 'Can share ${plan.sharesPerDay} ${plan.sharesPerDay == 1 ? 'entry' : 'entries'} per day',
+      'Unlimited journal entries',
+      'Unlimited shares per day',
       'Can receive unlimited shares',
-      'Unlimited journal entries ✅',
     ];
   }
 
@@ -230,14 +196,18 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   children: [
                     BillingToggle(
                       value: _billingPeriod,
-                      onChanged: (next) => setState(() => _billingPeriod = next),
+                      onChanged: (next) =>
+                          setState(() => _billingPeriod = next),
                     ),
                     const SizedBox(height: 12),
                     CurrentPlanCard(
                       plan: currentPlan,
                       status: _statusLabel(),
                       renewsAt: _dateLabel(ent?.renewsAt, fallback: 'Unknown'),
-                      expiresAt: _dateLabel(ent?.expiresAt, fallback: 'Unknown'),
+                      expiresAt: _dateLabel(
+                        ent?.expiresAt,
+                        fallback: 'Unknown',
+                      ),
                     ),
                     if (_friendlyStoreError != null) ...[
                       const SizedBox(height: 12),
@@ -252,7 +222,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                       final yearlySavings = _yearlySavings(plan);
                       final offer = _offerForPlan(plan, _billingPeriod);
                       final canPurchase =
-                          offer != null && _controller.productForId(offer.productId) != null;
+                          offer != null &&
+                          _controller.productForId(offer.productId) != null;
 
                       final cta = _billingPeriod == BillingPeriod.monthly
                           ? 'Upgrade monthly'
@@ -264,20 +235,26 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                           plan: plan,
                           price: selectedPrice,
                           isCurrentTier: currentPlan.tier == plan.tier,
-                          isMostPopular: plan.tier == MbPlanTier.fullSupport,
+                          isMostPopular: plan.tier == MbPlanTier.plusSupport,
                           headlineBenefits: _headlineBenefits(plan),
-                          yearlySubtitle: (_billingPeriod == BillingPeriod.yearly &&
+                          yearlySubtitle:
+                              (_billingPeriod == BillingPeriod.yearly &&
                                   plan.tier != MbPlanTier.free)
-                              ? '2 months free${yearlySavings > 0 ? ' • Save ${_formatGbp(yearlySavings)}' : ''}'
+                              ? '2 months free${yearlySavings > 0 ? ' • Save ${_formatPrice(yearlySavings)}' : ''}'
                               : null,
                           ctaLabel: plan.tier == MbPlanTier.free ? null : cta,
                           ctaEnabled: !_controller.busy && canPurchase,
-                          onCtaTap: (plan.tier == MbPlanTier.free || !canPurchase)
+                          onCtaTap:
+                              (plan.tier == MbPlanTier.free || !canPurchase)
                               ? null
-                              : () => _controller.purchaseProduct(offer.productId),
-                          aiDetails: _aiDetails(plan),
+                              : () => _controller.purchaseProduct(
+                                  offer.productId,
+                                ),
+                          aiDetails: _accessDetails(plan),
                           deviceDetails: <String>[
-                            '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
+                            plan.devices < 0
+                                ? 'Unlimited devices'
+                                : '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
                           ],
                           templateDetails: _templateDetails(plan),
                           journalDetails: _journalDetails(plan),
@@ -297,7 +274,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         child: Container(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+            color: Theme.of(
+              context,
+            ).colorScheme.surface.withValues(alpha: 0.96),
             border: Border(
               top: BorderSide(
                 color: Theme.of(context).dividerColor.withValues(alpha: 0.2),
@@ -308,7 +287,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: _controller.busy ? null : _controller.restorePurchases,
+                  onPressed: _controller.busy
+                      ? null
+                      : _controller.restorePurchases,
                   child: const Text('Restore purchases'),
                 ),
               ),
@@ -486,12 +467,8 @@ class TierPlanCard extends StatelessWidget {
     switch (tier) {
       case MbPlanTier.free:
         return const Color(0xFF34C759);
-      case MbPlanTier.lightSupport:
-        return const Color(0xFF0A84FF);
       case MbPlanTier.plusSupport:
         return const Color(0xFF8E44AD);
-      case MbPlanTier.fullSupport:
-        return const Color(0xFFFFCC00);
       case MbPlanTier.pending:
         return scheme.outline;
     }
@@ -513,8 +490,9 @@ class TierPlanCard extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: (isMostPopular ? scheme.primary : scheme.shadow)
-                .withValues(alpha: isMostPopular ? 0.14 : 0.08),
+            color: (isMostPopular ? scheme.primary : scheme.shadow).withValues(
+              alpha: isMostPopular ? 0.14 : 0.08,
+            ),
             blurRadius: isMostPopular ? 22 : 14,
             offset: const Offset(0, 8),
           ),
@@ -561,7 +539,10 @@ class TierPlanCard extends StatelessWidget {
               ),
               if (isMostPopular)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: scheme.primary.withValues(alpha: 0.14),
                     borderRadius: BorderRadius.circular(99),
@@ -571,7 +552,10 @@ class TierPlanCard extends StatelessWidget {
               if (isCurrentTier)
                 Container(
                   margin: const EdgeInsets.only(left: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: scheme.secondary.withValues(alpha: 0.16),
                     borderRadius: BorderRadius.circular(99),
@@ -590,7 +574,7 @@ class TierPlanCard extends StatelessWidget {
               childrenPadding: EdgeInsets.zero,
               title: const Text('See full breakdown'),
               children: [
-                _Section(title: 'AI', items: aiDetails),
+                _Section(title: 'Access', items: aiDetails),
                 _Section(title: 'Devices', items: deviceDetails),
                 _Section(title: 'Templates', items: templateDetails),
                 _Section(title: 'Journaling', items: journalDetails),
@@ -657,10 +641,7 @@ class _Section extends StatelessWidget {
 }
 
 class _StoreErrorCard extends StatelessWidget {
-  const _StoreErrorCard({
-    required this.message,
-    this.onRetry,
-  });
+  const _StoreErrorCard({required this.message, this.onRetry});
 
   final String message;
   final VoidCallback? onRetry;
@@ -681,10 +662,7 @@ class _StoreErrorCard extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(child: Text(message)),
           const SizedBox(width: 8),
-          OutlinedButton(
-            onPressed: onRetry,
-            child: const Text('Retry'),
-          ),
+          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
         ],
       ),
     );

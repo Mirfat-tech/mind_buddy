@@ -103,9 +103,12 @@ class SettingsModel {
     required this.maxNotificationsPerDay,
     required this.calendarRemindersEnabled,
     required this.pomodoroAlertsEnabled,
+    required this.stopwatchAlertsEnabled,
+    required this.stopwatchReminderMinutes,
     required this.hapticsEnabled,
     required this.soundsEnabled,
     required this.keepInstructionsEnabled,
+    required this.guideState,
     required this.updatedAt,
     required this.version,
   });
@@ -124,9 +127,12 @@ class SettingsModel {
   final int maxNotificationsPerDay;
   final bool calendarRemindersEnabled;
   final bool pomodoroAlertsEnabled;
+  final bool stopwatchAlertsEnabled;
+  final int stopwatchReminderMinutes;
   final bool hapticsEnabled;
   final bool soundsEnabled;
   final bool keepInstructionsEnabled;
+  final Map<String, dynamic> guideState;
   final String updatedAt; // ISO string
   final int version;
 
@@ -146,9 +152,12 @@ class SettingsModel {
       maxNotificationsPerDay: 2,
       calendarRemindersEnabled: true,
       pomodoroAlertsEnabled: true,
+      stopwatchAlertsEnabled: true,
+      stopwatchReminderMinutes: 0,
       hapticsEnabled: true,
       soundsEnabled: true,
       keepInstructionsEnabled: false,
+      guideState: const <String, dynamic>{},
       updatedAt: DateTime.fromMillisecondsSinceEpoch(0).toIso8601String(),
       version: 1,
     );
@@ -169,9 +178,12 @@ class SettingsModel {
     int? maxNotificationsPerDay,
     bool? calendarRemindersEnabled,
     bool? pomodoroAlertsEnabled,
+    bool? stopwatchAlertsEnabled,
+    int? stopwatchReminderMinutes,
     bool? hapticsEnabled,
     bool? soundsEnabled,
     bool? keepInstructionsEnabled,
+    Map<String, dynamic>? guideState,
     String? updatedAt,
     int? version,
   }) {
@@ -195,10 +207,15 @@ class SettingsModel {
           calendarRemindersEnabled ?? this.calendarRemindersEnabled,
       pomodoroAlertsEnabled:
           pomodoroAlertsEnabled ?? this.pomodoroAlertsEnabled,
+      stopwatchAlertsEnabled:
+          stopwatchAlertsEnabled ?? this.stopwatchAlertsEnabled,
+      stopwatchReminderMinutes:
+          stopwatchReminderMinutes ?? this.stopwatchReminderMinutes,
       hapticsEnabled: hapticsEnabled ?? this.hapticsEnabled,
       soundsEnabled: soundsEnabled ?? this.soundsEnabled,
       keepInstructionsEnabled:
           keepInstructionsEnabled ?? this.keepInstructionsEnabled,
+      guideState: guideState ?? this.guideState,
       updatedAt: updatedAt ?? this.updatedAt,
       version: version ?? this.version,
     );
@@ -222,9 +239,12 @@ class SettingsModel {
       'maxNotificationsPerDay': maxNotificationsPerDay,
       'calendarRemindersEnabled': calendarRemindersEnabled,
       'pomodoroAlertsEnabled': pomodoroAlertsEnabled,
+      'stopwatchAlertsEnabled': stopwatchAlertsEnabled,
+      'stopwatchReminderMinutes': stopwatchReminderMinutes,
       'hapticsEnabled': hapticsEnabled,
       'soundsEnabled': soundsEnabled,
       'keepInstructionsEnabled': keepInstructionsEnabled,
+      'guideState': guideState,
       'updatedAt': updatedAt,
       'version': version,
     };
@@ -260,6 +280,11 @@ class SettingsModel {
       });
     }
 
+    final rawGuideState = json['guideState'];
+    final parsedGuideState = rawGuideState is Map
+        ? Map<String, dynamic>.from(rawGuideState)
+        : <String, dynamic>{};
+
     return SettingsModel(
       themeId: json['themeId'] as String?,
       quietHoursEnabled: (json['quietHoursEnabled'] ?? false) as bool,
@@ -276,10 +301,13 @@ class SettingsModel {
       calendarRemindersEnabled:
           (json['calendarRemindersEnabled'] ?? true) as bool,
       pomodoroAlertsEnabled: (json['pomodoroAlertsEnabled'] ?? true) as bool,
+      stopwatchAlertsEnabled: (json['stopwatchAlertsEnabled'] ?? true) as bool,
+      stopwatchReminderMinutes: (json['stopwatchReminderMinutes'] ?? 0) as int,
       hapticsEnabled: (json['hapticsEnabled'] ?? true) as bool,
       soundsEnabled: (json['soundsEnabled'] ?? true) as bool,
       keepInstructionsEnabled:
           (json['keepInstructionsEnabled'] ?? false) as bool,
+      guideState: parsedGuideState,
       updatedAt:
           (updatedAtOverride ??
                   json['updatedAt'] ??

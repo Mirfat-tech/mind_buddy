@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:video_player/video_player.dart';
+
+import 'journal_media.dart';
 
 class LocalImageEmbedBuilder extends quill.EmbedBuilder {
   const LocalImageEmbedBuilder();
@@ -19,51 +22,60 @@ class LocalImageEmbedBuilder extends quill.EmbedBuilder {
     }
 
     final payload = _parseEmbedPayload(data);
-    final file = _resolveFile(payload.path ?? data);
-    if (file != null) {
-      return _imageContainer(
-        Image.file(
-          file,
-          fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => _errorBox('Image not found'),
-        ),
-      );
-    }
-
-    final url = payload.url ?? data;
-    return _imageContainer(
-      Image.network(
-        url,
-        fit: BoxFit.contain,
-        loadingBuilder: (context, child, loading) {
-          if (loading == null) return child;
-          return const SizedBox(
-            height: 180,
-            child: Center(child: CircularProgressIndicator()),
-          );
-        },
-        errorBuilder: (_, __, ___) => _errorBox('Image not found'),
-      ),
+    final item = JournalMediaItem(
+      type: 'image',
+      url: payload.url,
+      path: payload.path,
+      bucket: payload.bucket,
     );
-  }
-
-  File? _resolveFile(String data) {
-    if (data.startsWith('file://')) {
-      return File.fromUri(Uri.parse(data));
-    }
-    if (data.startsWith('/')) {
-      return File(data);
-    }
-    return null;
+    return FutureBuilder<ResolvedJournalMedia>(
+      future: resolveJournalMedia(item, debugContext: 'quill_image_embed'),
+      builder: (context, snap) {
+        final resolved = snap.data;
+        if (resolved?.file != null) {
+          return _imageContainer(
+            Image.file(
+              resolved!.file!,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => _errorBox('Image unavailable'),
+            ),
+          );
+        }
+        final url = resolved?.url;
+        if (url != null && url.isNotEmpty) {
+          return _imageContainer(
+            Image.network(
+              url,
+              fit: BoxFit.contain,
+              loadingBuilder: (context, child, loading) {
+                if (loading == null) return child;
+                return const SizedBox(
+                  height: 180,
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              },
+              errorBuilder: (_, error, ___) {
+                developer.log(
+                  'journal_media event=render_failed data={context: quill_image_embed, url: $url, error: $error}',
+                  name: 'journal_media',
+                );
+                return _errorBox('Image unavailable');
+              },
+            ),
+          );
+        }
+        if (snap.connectionState != ConnectionState.done) {
+          return _loadingBox();
+        }
+        return _errorBox('Image unavailable');
+      },
+    );
   }
 
   Widget _imageContainer(Widget child) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: child,
-      ),
+      child: ClipRRect(borderRadius: BorderRadius.circular(12), child: child),
     );
   }
 
@@ -72,6 +84,13 @@ class LocalImageEmbedBuilder extends quill.EmbedBuilder {
       padding: const EdgeInsets.all(12),
       color: Colors.black12,
       child: Text(message),
+    );
+  }
+
+  Widget _loadingBox() {
+    return const SizedBox(
+      height: 180,
+      child: Center(child: CircularProgressIndicator()),
     );
   }
 }
@@ -90,32 +109,47 @@ class LocalVideoEmbedBuilder extends quill.EmbedBuilder {
     }
 
     final payload = _parseEmbedPayload(data);
-    final file = _resolveFile(payload.path ?? data);
-    if (file != null) {
-      return _videoContainer(_EmbeddedVideoPlayer.file(file));
-    }
-
-    final url = payload.url ?? data;
-    return _videoContainer(_EmbeddedVideoPlayer.network(url));
-  }
-
-  File? _resolveFile(String data) {
-    if (data.startsWith('file://')) {
-      return File.fromUri(Uri.parse(data));
-    }
-    if (data.startsWith('/')) {
-      return File(data);
-    }
-    return null;
+    final item = JournalMediaItem(
+      type: 'video',
+      url: payload.url,
+      path: payload.path,
+      bucket: payload.bucket,
+    );
+    return FutureBuilder<ResolvedJournalMedia>(
+      future: resolveJournalMedia(item, debugContext: 'quill_video_embed'),
+      builder: (context, snap) {
+        final resolved = snap.data;
+        if (resolved?.file != null) {
+          return _videoContainer(_EmbeddedVideoPlayer.file(resolved!.file!));
+        }
+        final url = resolved?.url;
+        if (url != null && url.isNotEmpty) {
+          return _videoContainer(_EmbeddedVideoPlayer.network(url));
+        }
+        if (snap.connectionState != ConnectionState.done) {
+          return _videoContainer(
+            const SizedBox(
+              height: 180,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          );
+        }
+        return _videoContainer(
+          Container(
+            height: 180,
+            color: Colors.black12,
+            alignment: Alignment.center,
+            child: const Text('Video unavailable'),
+          ),
+        );
+      },
+    );
   }
 
   Widget _videoContainer(Widget child) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: child,
-      ),
+      child: ClipRRect(borderRadius: BorderRadius.circular(12), child: child),
     );
   }
 }
@@ -204,7 +238,9 @@ class _EmbeddedVideoPlayerState extends State<_EmbeddedVideoPlayer> {
           iconSize: 48,
           color: Colors.white,
           icon: Icon(
-            _controller.value.isPlaying ? Icons.pause_circle : Icons.play_circle,
+            _controller.value.isPlaying
+                ? Icons.pause_circle
+                : Icons.play_circle,
           ),
           onPressed: () {
             setState(() {

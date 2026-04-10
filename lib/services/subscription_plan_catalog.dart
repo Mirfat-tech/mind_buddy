@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 
-enum MbPlanTier { pending, free, lightSupport, plusSupport, fullSupport }
+enum MbPlanTier { pending, free, plusSupport }
 
 @immutable
 class PlanBenefits {
@@ -10,10 +10,6 @@ class PlanBenefits {
     required this.name,
     required this.price,
     required this.normalizedAliases,
-    required this.dailyChats,
-    required this.replyStyle,
-    required this.voiceChatsPerDay,
-    required this.longTermMemory,
     required this.insights,
     required this.devices,
     required this.canCreateCustomTemplates,
@@ -33,10 +29,6 @@ class PlanBenefits {
   final String price;
   final List<String> normalizedAliases;
 
-  final int dailyChats;
-  final String replyStyle;
-  final int voiceChatsPerDay;
-  final bool longTermMemory;
   final bool insights;
 
   final int devices;
@@ -51,10 +43,6 @@ class PlanBenefits {
 
   final List<String> tools;
   final List<String> notes;
-
-  bool get hasAi => dailyChats > 0;
-  bool get hasVoice => voiceChatsPerDay > 0;
-
   String get titleWithPrice => '$name ($price)';
   String get heading => '$emoji $name ($price)';
 }
@@ -63,7 +51,8 @@ class SubscriptionPlanCatalog {
   static const String title = '🟣 MB - Subscriptions';
 
   static const List<String> comparisonSectionOrder = <String>[
-    'AI',
+    'Access',
+    'Insights',
     'Devices',
     'Templates',
     'Journaling',
@@ -71,7 +60,10 @@ class SubscriptionPlanCatalog {
   ];
 
   static const String previewModeHelpText =
-      '24-hour preview mode: You can try and edit templates, but preview data disappears after 24 hours unless your plan supports permanent saves.';
+      'Free Mode includes journaling, journal sharing, and custom templates with normal saving.';
+
+  static const String freeModeJournalHelpText =
+      'Write freely, as much as you need 💭\nYour journal entries stay saved in Free mode';
 
   static String sharesPerDayHelpText(PlanBenefits plan) {
     if (!plan.canShareEntries) {
@@ -83,14 +75,10 @@ class SubscriptionPlanCatalog {
     return '${plan.name} includes ${plan.sharesPerDay} ${plan.sharesPerDay == 1 ? 'share' : 'shares'} per day.';
   }
 
-  static String voiceChatsHelpText(PlanBenefits plan) {
-    if (plan.voiceChatsPerDay <= 0) {
-      return 'Voice chats are available in FULL SUPPORT MODE (20 voice chats per day).';
-    }
-    return '${plan.name} includes ${plan.voiceChatsPerDay} voice chats per day.';
-  }
-
   static String deviceLimitHelpText(PlanBenefits plan) {
+    if (plan.devices < 0) {
+      return '${plan.name} allows unlimited devices.';
+    }
     return '${plan.name} allows ${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}.';
   }
 
@@ -103,134 +91,9 @@ class SubscriptionPlanCatalog {
     emoji: '🟢',
     name: 'FREE MODE',
     price: '£0',
-    normalizedAliases: <String>[
-      'free',
-      'free_mode',
-      'free mode',
-      'basic',
-    ],
-    dailyChats: 0,
-    replyStyle: 'No AI replies',
-    voiceChatsPerDay: 0,
-    longTermMemory: false,
+    normalizedAliases: <String>['free', 'free_mode', 'free mode', 'basic'],
     insights: false,
     devices: 1,
-    canCreateCustomTemplates: false,
-    templatesPreviewMode: true,
-    coreTemplatesSaveForever: false,
-    canJournal: true,
-    canShareEntries: false,
-    sharesPerDay: 0,
-    canReceiveUnlimitedShares: true,
-    tools: <String>[
-      'Brain Fog Bubble ✅',
-      'Pomodoro Timer ✅',
-      'Habit Tracker ✅',
-      'Manual Logging ✅',
-      'Unlimited journal entries ✅',
-    ],
-    notes: <String>[
-      'Core templates: preview only (data not saved permanently)',
-      'Data disappears after 24 hours ("24-hour preview mode")',
-    ],
-  );
-
-  static const PlanBenefits light = PlanBenefits(
-    tier: MbPlanTier.lightSupport,
-    emoji: '🔵',
-    name: 'LIGHT SUPPORT MODE',
-    price: '£4.99',
-    normalizedAliases: <String>[
-      'light',
-      'light_support',
-      'light support',
-      'light_support_mode',
-      'light support mode',
-    ],
-    dailyChats: 10,
-    replyStyle: 'Short-medium replies',
-    voiceChatsPerDay: 0,
-    longTermMemory: false,
-    insights: false,
-    devices: 1,
-    canCreateCustomTemplates: false,
-    templatesPreviewMode: true,
-    coreTemplatesSaveForever: true,
-    canJournal: true,
-    canShareEntries: true,
-    sharesPerDay: 1,
-    canReceiveUnlimitedShares: true,
-    tools: <String>[
-      'Brain Fog Bubble ✅',
-      'Pomodoro Timer ✅',
-      'Habit Tracker ✅',
-      'Manual Logging ✅',
-      'Unlimited journal entries ✅',
-    ],
-    notes: <String>[
-      'Data disappears after 24 hours ("24-hour preview mode")',
-      'Core templates save forever and show in calendar',
-    ],
-  );
-
-  static const PlanBenefits plus = PlanBenefits(
-    tier: MbPlanTier.plusSupport,
-    emoji: '🟣',
-    name: 'PLUS SUPPORT MODE',
-    price: '£9.99',
-    normalizedAliases: <String>[
-      'plus',
-      'plus_support',
-      'plus support',
-      'plus_support_mode',
-      'plus support mode',
-      'pro',
-      'premium',
-    ],
-    dailyChats: 25,
-    replyStyle: 'Slightly longer replies',
-    voiceChatsPerDay: 0,
-    longTermMemory: true,
-    insights: false,
-    devices: 3,
-    canCreateCustomTemplates: true,
-    templatesPreviewMode: false,
-    coreTemplatesSaveForever: true,
-    canJournal: true,
-    canShareEntries: true,
-    sharesPerDay: 5,
-    canReceiveUnlimitedShares: true,
-    tools: <String>[
-      'Brain Fog Bubble ✅',
-      'Pomodoro Timer ✅',
-      'Habit Tracker ✅',
-      'Manual Logging ✅',
-      'Unlimited journal entries ✅',
-    ],
-    notes: <String>[
-      'Can create and save custom templates',
-      'Core templates save forever and show in calendar',
-    ],
-  );
-
-  static const PlanBenefits full = PlanBenefits(
-    tier: MbPlanTier.fullSupport,
-    emoji: '🟡',
-    name: 'FULL SUPPORT MODE',
-    price: '£19.99',
-    normalizedAliases: <String>[
-      'full',
-      'full_support',
-      'full support',
-      'full_support_mode',
-      'full support mode',
-    ],
-    dailyChats: 50,
-    replyStyle: 'Longer, more thoughtful replies',
-    voiceChatsPerDay: 20,
-    longTermMemory: true,
-    insights: true,
-    devices: 10,
     canCreateCustomTemplates: true,
     templatesPreviewMode: false,
     coreTemplatesSaveForever: true,
@@ -244,25 +107,57 @@ class SubscriptionPlanCatalog {
       'Habit Tracker ✅',
       'Manual Logging ✅',
       'Unlimited journal entries ✅',
+      'Journal sharing ✅',
+      'Custom templates ✅',
     ],
     notes: <String>[
-      'Can create and save custom templates',
-      'Core templates save forever and show in calendar',
+      'Custom templates save normally',
+      'Unlimited journal sharing',
     ],
   );
 
-  static const List<PlanBenefits> allPaidPlans = <PlanBenefits>[
-    light,
-    plus,
-    full,
-  ];
+  static const PlanBenefits plus = PlanBenefits(
+    tier: MbPlanTier.plusSupport,
+    emoji: '🟣',
+    name: 'PLUS SUPPORT MODE',
+    price: '£2.99',
+    normalizedAliases: <String>[
+      'plus',
+      'plus_support',
+      'plus support',
+      'plus_support_mode',
+      'plus support mode',
+      'pro',
+      'premium',
+    ],
+    insights: true,
+    devices: -1,
+    canCreateCustomTemplates: true,
+    templatesPreviewMode: false,
+    coreTemplatesSaveForever: true,
+    canJournal: true,
+    canShareEntries: true,
+    sharesPerDay: -1,
+    canReceiveUnlimitedShares: true,
+    tools: <String>[
+      'Brain Fog Bubble ✅',
+      'Pomodoro Timer ✅',
+      'Habit Tracker ✅',
+      'Manual Logging ✅',
+      'Unlimited journal entries ✅',
+      'Journal sharing ✅',
+      'Custom templates ✅',
+      'Insights ✅',
+    ],
+    notes: <String>[
+      'Custom templates save normally',
+      'Unlimited journal sharing',
+    ],
+  );
 
-  static const List<PlanBenefits> allPlans = <PlanBenefits>[
-    free,
-    light,
-    plus,
-    full,
-  ];
+  static const List<PlanBenefits> allPaidPlans = <PlanBenefits>[plus];
+
+  static const List<PlanBenefits> allPlans = <PlanBenefits>[free, plus];
 
   static String normalize(dynamic tier) {
     return (tier ?? '').toString().trim().toLowerCase();
@@ -286,12 +181,8 @@ class SubscriptionPlanCatalog {
     switch (tier) {
       case MbPlanTier.free:
         return free;
-      case MbPlanTier.lightSupport:
-        return light;
       case MbPlanTier.plusSupport:
         return plus;
-      case MbPlanTier.fullSupport:
-        return full;
       case MbPlanTier.pending:
         return free;
     }
@@ -299,5 +190,16 @@ class SubscriptionPlanCatalog {
 
   static PlanBenefits fromRaw(dynamic rawTier) {
     return forTier(resolveTier(rawTier));
+  }
+
+  static String databaseTierFor(MbPlanTier tier) {
+    switch (tier) {
+      case MbPlanTier.pending:
+        return 'pending';
+      case MbPlanTier.free:
+        return 'free';
+      case MbPlanTier.plusSupport:
+        return 'plus';
+    }
   }
 }

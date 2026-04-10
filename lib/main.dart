@@ -15,10 +15,11 @@ import 'features/settings/settings_model.dart';
 import 'features/settings/settings_repository.dart';
 import 'features/onboarding/onboarding_state.dart';
 import 'services/notification_service.dart';
-import 'services/memory_service.dart';
 import 'services/startup_user_data_service.dart';
 import 'services/auth_deep_link_handler.dart';
+import 'services/journal_encryption_service.dart';
 import 'services/oauth_sign_in_coordinator.dart';
+import 'services/username_resolver_service.dart';
 import 'features/habits/habit_home_widget_service.dart';
 
 @pragma('vm:entry-point')
@@ -80,6 +81,8 @@ class _Bootstrap extends ConsumerStatefulWidget {
 class _BootstrapState extends ConsumerState<_Bootstrap> {
   StreamSubscription<AuthState>? _authSub;
   bool _startupErrorShown = false;
+  static bool _startupWarningShownOnce = false;
+  static bool _usernameProbeRan = false;
   bool _deviceLimitSignOutInFlight = false;
   bool _suppressAutoHomeNavigation = false;
   VoidCallback? _oauthTimeoutListener;
@@ -99,7 +102,7 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
           );
           globalMessengerKey.currentState?.hideCurrentSnackBar();
           if (!_suppressAutoHomeNavigation) {
-            widget.router.go('/onboarding/doorway');
+            widget.router.go('/bootstrap');
           }
         },
         onAuthError: (message) {
@@ -116,7 +119,6 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
     );
     // Load settings (includes theme)
     Future.microtask(() => ref.read(settingsControllerProvider).init());
-    Future.microtask(() => ref.read(memoryControllerProvider).init());
     NotificationService.instance.init();
     _oauthTimeoutListener = () {
       if (!mounted) return;
@@ -163,10 +165,11 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
         OAuthSignInCoordinator.instance.markCompleted(
           reason: 'auth_state_signed_in',
         );
+        StartupUserDataService.instance.invalidateCurrentUser();
         globalMessengerKey.currentState?.hideCurrentSnackBar();
         unawaited(OnboardingController.setAuthStageCompleted(true));
         if (mounted && !_suppressAutoHomeNavigation) {
-          widget.router.go('/onboarding/doorway');
+          widget.router.go('/bootstrap');
         }
         unawaited(_enforceDeviceLimitOnSignIn());
       }
@@ -176,15 +179,16 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
         );
         unawaited(OnboardingController.setAuthStageCompleted(false));
       }
+      unawaited(JournalEncryptionService.instance.handleAuthScopeChanged());
       if (data.event == AuthChangeEvent.signedIn ||
           data.event == AuthChangeEvent.initialSession ||
           data.event == AuthChangeEvent.tokenRefreshed) {
+        StartupUserDataService.instance.invalidateCurrentUser();
         unawaited(HabitHomeWidgetService.flushPendingWidgetToggles());
         _maybeReactivateAccount();
         _syncStartupUserData();
       }
       ref.read(settingsControllerProvider).handleAuthChange();
-      ref.read(memoryControllerProvider).handleAuthChange();
     });
   }
 
@@ -225,22 +229,29 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
   }
 
   Future<void> _syncStartupUserData() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
     final bundle = await StartupUserDataService.instance
         .fetchCombinedForCurrentUser();
     if (!mounted) return;
     if (bundle.failedTables.isNotEmpty) {
-      if (_startupErrorShown) return;
+      debugPrint(
+        '[StartupSync] failed userId=${userId ?? 'none'} tables=${bundle.failedTables.join(',')} details=${bundle.failedDetails}',
+      );
+      // Non-blocking warning only; do not trap users in setup flows.
+      if (_startupErrorShown || _startupWarningShownOnce) return;
       _startupErrorShown = true;
+      _startupWarningShownOnce = true;
       globalMessengerKey.currentState?.showSnackBar(
         SnackBar(
-          content: const Text('Could not sync profile/settings. Tap to retry.'),
+          content: const Text(
+            'Some profile data is temporarily unavailable. You can keep using the app.',
+          ),
           action: SnackBarAction(
             label: 'Retry',
             onPressed: () {
               _startupErrorShown = false;
               _syncStartupUserData();
               ref.read(settingsControllerProvider).retryInit();
-              ref.read(memoryControllerProvider).retry();
             },
           ),
         ),
@@ -248,6 +259,14 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
       return;
     }
     _startupErrorShown = false;
+    if (!_usernameProbeRan) {
+      _usernameProbeRan = true;
+      unawaited(
+        UsernameResolverService.instance.debugProbe(
+          knownUsername: bundle.profileRow?['username']?.toString(),
+        ),
+      );
+    }
     unawaited(HabitHomeWidgetService.syncTodaySnapshot());
   }
 

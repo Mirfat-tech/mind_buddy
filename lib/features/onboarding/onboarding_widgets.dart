@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui';
 import 'package:flutter/material.dart';
 
 class GlowFilledButton extends StatelessWidget {
@@ -97,11 +98,31 @@ class BubbleChoice {
     required this.label,
     required this.onTap,
     this.selected = false,
+    this.emphasized = false,
   });
 
   final String label;
   final VoidCallback onTap;
   final bool selected;
+  final bool emphasized;
+}
+
+class BubbleCloudStyle {
+  const BubbleCloudStyle({
+    required this.centerFill,
+    required this.bubbleFill,
+    required this.textColor,
+    required this.mutedTextColor,
+    required this.glowColor,
+    this.borderColor,
+  });
+
+  final Color centerFill;
+  final Color bubbleFill;
+  final Color textColor;
+  final Color mutedTextColor;
+  final Color glowColor;
+  final Color? borderColor;
 }
 
 class _BubblePlacement {
@@ -123,10 +144,14 @@ class OnboardingBubbleCloud extends StatelessWidget {
     super.key,
     required this.centerText,
     required this.choices,
+    this.instructionText = 'Tap bubbles to select',
+    this.style,
   });
 
   final String centerText;
   final List<BubbleChoice> choices;
+  final String? instructionText;
+  final BubbleCloudStyle? style;
 
   double _estimateOptionSize(String label, double base) {
     final words = label
@@ -339,6 +364,7 @@ class OnboardingBubbleCloud extends StatelessWidget {
                 size: centerSize,
                 isCenter: true,
                 onTap: null,
+                bubbleStyle: style,
               ),
             ),
             for (var i = 0; i < placements.length; i++)
@@ -355,23 +381,28 @@ class OnboardingBubbleCloud extends StatelessWidget {
                       label: placement.choice.label,
                       size: placement.size,
                       selected: placement.choice.selected,
+                      emphasized: placement.choice.emphasized,
                       onTap: placement.choice.onTap,
+                      bubbleStyle: style,
                     ),
                   );
                 },
               ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 4,
-              child: Text(
-                'Tap bubbles to select',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurface.withValues(alpha: 0.65),
+            if (instructionText != null)
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 4,
+                child: Text(
+                  instructionText!,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color:
+                        style?.mutedTextColor ??
+                        scheme.onSurface.withValues(alpha: 0.65),
+                  ),
                 ),
               ),
-            ),
           ],
         );
       },
@@ -385,14 +416,18 @@ class _BubbleChip extends StatelessWidget {
     required this.size,
     required this.onTap,
     this.selected = false,
+    this.emphasized = false,
     this.isCenter = false,
+    this.bubbleStyle,
   });
 
   final String label;
   final double size;
   final VoidCallback? onTap;
   final bool selected;
+  final bool emphasized;
   final bool isCenter;
+  final BubbleCloudStyle? bubbleStyle;
 
   int _longestWordLength(String text) {
     final words = text
@@ -407,17 +442,28 @@ class _BubbleChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final palette = bubbleStyle;
     final bubbleColor = isCenter
-        ? Colors.white.withValues(alpha: 0.74)
-        : (selected
-              ? Color.alphaBlend(
-                  scheme.primary.withValues(alpha: 0.22),
-                  Colors.white.withValues(alpha: 0.72),
-                )
-              : Colors.white.withValues(alpha: 0.66));
-    final glowOpacity = isCenter ? 0.42 : (selected ? 0.24 : 0.14);
-    final glowBlur = isCenter ? 32.0 : (selected ? 15.0 : 11.0);
-    final glowSpread = isCenter ? 3.6 : (selected ? 0.9 : 0.2);
+        ? (palette?.centerFill ?? Colors.white.withValues(alpha: 0.9))
+        : (palette != null
+              ? palette.bubbleFill.withValues(alpha: 0.85)
+              : (selected || emphasized
+                    ? Color.alphaBlend(
+                        (palette?.glowColor ?? scheme.primary).withValues(
+                          alpha: selected ? 0.18 : 0.1,
+                        ),
+                        Colors.white.withValues(alpha: 0.72),
+                      )
+                    : Colors.white.withValues(alpha: 0.66)));
+    final glowOpacity = isCenter
+        ? 0.6
+        : (palette != null ? 0.45 : (selected ? 0.26 : (emphasized ? 0.2 : 0.14)));
+    final glowBlur = isCenter
+        ? 40.0
+        : (palette != null ? 25.0 : (selected ? 16.0 : (emphasized ? 14.0 : 11.0)));
+    final glowSpread = isCenter
+        ? 5.0
+        : (palette != null ? 2.0 : (selected ? 1.1 : (emphasized ? 0.7 : 0.2)));
     final fontSize = isCenter
         ? (size / 12.2).clamp(14.0, 17.0)
         : (size / 11.8).clamp(11.0, 13.2);
@@ -430,50 +476,148 @@ class _BubbleChip extends StatelessWidget {
       maxFont: fontSize,
       maxLines: isCenter ? 12 : 8,
       textStyle: Theme.of(context).textTheme.bodyMedium?.copyWith(
+        color: palette?.textColor,
         height: isCenter ? 1.2 : 1.18,
         fontWeight: isCenter
             ? FontWeight.w600
-            : (selected ? FontWeight.w700 : FontWeight.w500),
+            : (palette != null
+                  ? FontWeight.w500
+                  : ((selected || emphasized)
+                        ? FontWeight.w700
+                        : FontWeight.w500)),
       ),
     );
 
-    return Semantics(
-      button: onTap != null,
-      selected: selected,
+    return _AnimatedBubbleChip(
       label: label,
-      child: Material(
-        color: Colors.transparent,
-        shape: const CircleBorder(),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: Container(
-            width: size,
-            height: size,
-            padding: EdgeInsets.all(padding),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: bubbleColor,
-              border: isCenter
-                  ? null
-                  : Border.all(
-                      color: selected
-                          ? scheme.primary
-                          : scheme.primary.withValues(alpha: 0.24),
-                      width: selected ? 2.2 : 1.2,
-                    ),
-              boxShadow: [
-                BoxShadow(
-                  color: scheme.primary.withValues(alpha: glowOpacity),
-                  blurRadius: glowBlur,
-                  spreadRadius: glowSpread,
-                  blurStyle: BlurStyle.outer,
+      selected: selected,
+      emphasized: emphasized,
+      onTap: onTap,
+      child: Semantics(
+        button: onTap != null,
+        selected: selected,
+        label: label,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: ClipOval(
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: Container(
+                  width: size,
+                  height: size,
+                  padding: EdgeInsets.all(padding),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: bubbleColor,
+                    border: isCenter
+                        ? null
+                        : Border.all(
+                            color: palette != null
+                                ? palette.borderColor?.withValues(alpha: 0.6) ??
+                                    (palette.glowColor.withValues(alpha: 0.6))
+                                : (selected || emphasized
+                                      ? scheme.primary
+                                      : scheme.primary.withValues(alpha: 0.24)),
+                            width: palette != null
+                                ? 1.5
+                                : (selected ? 2.2 : (emphasized ? 1.7 : 1.2)),
+                          ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: (palette?.glowColor ?? scheme.primary).withValues(
+                          alpha: glowOpacity,
+                        ),
+                        blurRadius: glowBlur,
+                        spreadRadius: glowSpread,
+                      ),
+                    ],
+                  ),
+                  child: Center(child: textWidget),
                 ),
-              ],
+              ),
             ),
-            child: Center(child: textWidget),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _AnimatedBubbleChip extends StatefulWidget {
+  const _AnimatedBubbleChip({
+    required this.label,
+    required this.selected,
+    required this.emphasized,
+    required this.onTap,
+    required this.child,
+  });
+
+  final String label;
+  final bool selected;
+  final bool emphasized;
+  final VoidCallback? onTap;
+  final Widget child;
+
+  @override
+  State<_AnimatedBubbleChip> createState() => _AnimatedBubbleChipState();
+}
+
+class _AnimatedBubbleChipState extends State<_AnimatedBubbleChip>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  bool _pressed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3200),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _setPressed(bool value) {
+    if (_pressed == value) return;
+    setState(() => _pressed = value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final baseScale = widget.selected ? 1.03 : (widget.emphasized ? 1.02 : 1.0);
+    final pressedScale = _pressed ? 0.97 : 1.0;
+    final animatedChild = AnimatedScale(
+      scale: baseScale * pressedScale,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      child: widget.child,
+    );
+    if (widget.onTap == null) {
+      return animatedChild;
+    }
+
+    final phase = (widget.label.hashCode % 7) / 7;
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTapDown: (_) => _setPressed(true),
+      onTapCancel: () => _setPressed(false),
+      onTapUp: (_) => _setPressed(false),
+      child: AnimatedBuilder(
+        animation: _controller,
+        child: animatedChild,
+        builder: (context, child) {
+          final wave = math.sin((_controller.value + phase) * math.pi * 2);
+          return Transform.translate(offset: Offset(0, wave * 4), child: child);
+        },
       ),
     );
   }

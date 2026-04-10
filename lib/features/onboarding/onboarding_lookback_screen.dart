@@ -18,6 +18,7 @@ class OnboardingLookbackScreen extends ConsumerStatefulWidget {
 class _OnboardingLookbackScreenState
     extends ConsumerState<OnboardingLookbackScreen> {
   late Set<String> _selected;
+  bool _submitting = false;
 
   static const _options = <(String, String)>[
     ('patterns', 'A clear picture of patterns and progress'),
@@ -34,6 +35,7 @@ class _OnboardingLookbackScreenState
   }
 
   void _toggle(String value) {
+    if (_submitting) return;
     setState(() {
       if (_selected.contains(value)) {
         _selected.remove(value);
@@ -41,25 +43,59 @@ class _OnboardingLookbackScreenState
         _selected.add(value);
       }
     });
+    debugPrint(
+      '[OnboardingLookback] option_tapped value=$value selected=${_selected.contains(value)} current_page=2',
+    );
   }
 
   Future<void> _continue() async {
+    if (_submitting || _selected.isEmpty) return;
+    debugPrint(
+      '[OnboardingLookback] continue_tapped selected=$_selected current_page=2',
+    );
+    setState(() => _submitting = true);
     final controller = ref.read(onboardingControllerProvider.notifier);
-    controller.setLookingBack(_selected);
-    controller.setSkippedPersonalization(false);
-    await applyOnboardingAnswers(ref, ref.read(onboardingControllerProvider));
-    await OnboardingController.setSetupCompleted(true);
-    if (!mounted) return;
-    context.go('/onboarding/plan');
+    try {
+      controller.setLookingBack(_selected);
+      controller.setSkippedPersonalization(false);
+      try {
+        await applyOnboardingAnswers(
+          ref,
+          ref.read(onboardingControllerProvider),
+        ).timeout(const Duration(seconds: 5));
+      } catch (_) {
+        // Personalization should not block finishing onboarding.
+      }
+      await OnboardingController.setSetupCompleted(true);
+      await CompletionGateRepository.markOnboardingCompleted();
+      debugPrint(
+        '[OnboardingLookback] completion_saved onboarding_completed=true next=/bootstrap',
+      );
+      if (!mounted) return;
+      context.go('/bootstrap');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   Future<void> _skipQuestion() async {
+    if (_submitting) return;
+    debugPrint('[OnboardingLookback] skip_tapped current_page=2');
+    setState(() => _submitting = true);
     final controller = ref.read(onboardingControllerProvider.notifier);
-    controller.clearLookingBack();
-    controller.setSkippedPersonalization(true);
-    await OnboardingController.setSetupCompleted(true);
-    if (!mounted) return;
-    context.go('/onboarding/plan');
+    try {
+      controller.clearLookingBack();
+      controller.setSkippedPersonalization(true);
+      await OnboardingController.setSetupCompleted(true);
+      await CompletionGateRepository.markOnboardingCompleted();
+      debugPrint(
+        '[OnboardingLookback] skip_saved onboarding_completed=true next=/bootstrap',
+      );
+      if (!mounted) return;
+      context.go('/bootstrap');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   @override
@@ -93,13 +129,13 @@ class _OnboardingLookbackScreenState
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: _selected.isEmpty ? null : _continue,
-                child: const Text('Continue'),
+                onPressed: _selected.isEmpty || _submitting ? null : _continue,
+                child: Text(_submitting ? 'Saving...' : 'Continue'),
               ),
             ),
             const SizedBox(height: 6),
             TextButton(
-              onPressed: _skipQuestion,
+              onPressed: _submitting ? null : _skipQuestion,
               child: const Text('Skip for now'),
             ),
             const SizedBox(height: 8),

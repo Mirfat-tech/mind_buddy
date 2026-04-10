@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 import 'package:in_app_purchase_android/billing_client_wrappers.dart';
+import 'package:mind_buddy/services/subscription_plan_catalog.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -41,17 +42,13 @@ class SubscriptionPurchaseController extends ChangeNotifier {
   SubscriptionPurchaseController();
 
   static const String verifyFunctionName = 'verify-store-purchase';
+  static const Set<String> _legacyProductIds = <String>{
+    'mindbuddy.light.monthly',
+    'mindbuddy.light.yearly',
+    'mindbuddy.full.monthly',
+    'mindbuddy.full.yearly',
+  };
   static const List<SubscriptionOffer> catalog = [
-    SubscriptionOffer(
-      productId: 'mindbuddy.light.monthly',
-      tier: 'light',
-      period: 'monthly',
-    ),
-    SubscriptionOffer(
-      productId: 'mindbuddy.light.yearly',
-      tier: 'light',
-      period: 'yearly',
-    ),
     SubscriptionOffer(
       productId: 'mindbuddy.plus.monthly',
       tier: 'plus',
@@ -60,16 +57,6 @@ class SubscriptionPurchaseController extends ChangeNotifier {
     SubscriptionOffer(
       productId: 'mindbuddy.plus.yearly',
       tier: 'plus',
-      period: 'yearly',
-    ),
-    SubscriptionOffer(
-      productId: 'mindbuddy.full.monthly',
-      tier: 'full',
-      period: 'monthly',
-    ),
-    SubscriptionOffer(
-      productId: 'mindbuddy.full.yearly',
-      tier: 'full',
       period: 'yearly',
     ),
   ];
@@ -172,9 +159,9 @@ class SubscriptionPurchaseController extends ChangeNotifier {
           : Map<String, dynamic>.from(row as Map);
     }
 
-    final tier = (data['subscription_tier'] ?? 'pending')
-        .toString()
-        .toLowerCase();
+    final tier = SubscriptionPlanCatalog.databaseTierFor(
+      SubscriptionPlanCatalog.resolveTier(data['subscription_tier']),
+    );
     final status =
         (data['subscription_status'] ??
                 (tier == 'pending' ? 'inactive' : 'active'))
@@ -322,7 +309,10 @@ class SubscriptionPurchaseController extends ChangeNotifier {
           .getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
       final response = await addition.queryPastPurchases();
       if (response.error != null) return;
-      final ids = catalog.map((e) => e.productId).toSet();
+      final ids = <String>{
+        ...catalog.map((e) => e.productId),
+        ..._legacyProductIds,
+      };
       for (final p in response.pastPurchases.reversed) {
         if (!ids.contains(p.productID)) continue;
         if (p.status == PurchaseStatus.purchased ||

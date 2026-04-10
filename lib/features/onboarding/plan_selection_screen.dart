@@ -1,4 +1,5 @@
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -134,32 +135,67 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
     try {
       await _persistLegalAcceptance();
       if (user != null) {
-        final dbTier = switch (plan.tier) {
-          MbPlanTier.free => 'free',
-          MbPlanTier.lightSupport => 'light',
-          MbPlanTier.plusSupport => 'plus',
-          MbPlanTier.fullSupport => 'full',
-          MbPlanTier.pending => 'pending',
-        };
+        await _ensureProfileRowExists();
+        final dbTier = SubscriptionPlanCatalog.databaseTierFor(plan.tier);
+        debugPrint(
+          '[PlanSelection] save start userId=${user.id} uiTier=${plan.tier.name} dbTier=$dbTier',
+        );
         try {
-          await Supabase.instance.client.from('profiles').upsert({
-            'id': user.id,
-            'subscription_tier': dbTier,
-            'terms_version': _termsVersion,
-            'terms_accepted_at': nowIso,
-            'privacy_version': _privacyVersion,
-            'privacy_accepted_at': nowIso,
-          });
+          await Supabase.instance.client.rpc(
+            'set_my_subscription_plan',
+            params: {
+              'p_tier': dbTier,
+              'p_terms_version': _termsVersion,
+              'p_terms_accepted_at': nowIso,
+              'p_privacy_version': _privacyVersion,
+              'p_privacy_accepted_at': nowIso,
+            },
+          );
         } on PostgrestException catch (e) {
-          if (!_isMissingLegalColumnsError(e)) rethrow;
-          // Backward compatibility while DB migration is being rolled out.
-          await Supabase.instance.client.from('profiles').upsert({
-            'id': user.id,
-            'subscription_tier': dbTier,
-          });
+          final lowered = '${e.message} ${e.details} ${e.hint}'.toLowerCase();
+          final rpcMissing =
+              e.code == 'PGRST202' ||
+              lowered.contains('set_my_subscription_plan');
+          if (!rpcMissing && !_isMissingLegalColumnsError(e)) rethrow;
+          await _savePlanWithLegacyFallback(
+            user.id,
+            user.email,
+            dbTier,
+            nowIso,
+          );
+        }
+        final refreshedProfile = await Supabase.instance.client
+            .from('profiles')
+            .select('subscription_tier,subscription_completed,completed_at')
+            .eq('id', user.id)
+            .maybeSingle();
+        final persistedTier = SubscriptionPlanCatalog.normalize(
+          refreshedProfile?['subscription_tier'],
+        );
+        final persistedCompleted =
+            refreshedProfile?['subscription_completed'] == true;
+        if (kDebugMode) {
+          debugPrint(
+            '[PlanSelection] post-save userId=${user.id} subscription_tier=$persistedTier subscription_completed=$persistedCompleted completed_at=${refreshedProfile?['completed_at']}',
+          );
+        }
+        if (persistedTier != dbTier) {
+          throw const FormatException('subscription_tier_not_persisted');
+        }
+        if (!persistedCompleted) {
+          if (kDebugMode) {
+            debugPrint(
+              '[PlanSelection] repairing missing subscription_completed for userId=${user.id}',
+            );
+          }
+          await Supabase.instance.client
+              .from('profiles')
+              .update({'subscription_completed': true, 'completed_at': nowIso})
+              .eq('id', user.id);
         }
       }
       await OnboardingController.setPlanCompleted(true);
+      await CompletionGateRepository.markSubscriptionCompleted();
       if (user != null) {
         StartupUserDataService.instance.invalidateUser(user.id);
         await StartupUserDataService.instance.fetchCombinedForUser(user.id);
@@ -167,12 +203,24 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('trial_banner_dismissed', true);
       if (!mounted) return;
-      context.go('/home');
-    } catch (e) {
+      context.go('/bootstrap');
+    } on PostgrestException catch (e) {
       if (!mounted) return;
+      final message = e.code == '23514'
+          ? 'That plan could not be saved right now. Please try again in a moment.'
+          : 'Could not save your plan right now. Please try again.';
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Could not save plan: $e')));
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (e) {
+      if (!mounted) return;
+      final message =
+          e is FormatException && e.message == 'subscription_tier_not_persisted'
+          ? 'That plan did not save correctly. Please try again.'
+          : 'Could not save your plan right now. Please try again.';
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -183,8 +231,92 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
     if (e.code == 'PGRST204') return true;
     return msg.contains('privacy_accepted_at') ||
         msg.contains('privacy_version') ||
+        msg.contains('subscription_completed') ||
+        msg.contains('completed_at') ||
         msg.contains('terms_accepted_at') ||
         msg.contains('terms_version');
+  }
+
+  Future<void> _ensureProfileRowExists() async {
+    final client = Supabase.instance.client;
+    final user = client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      await client.rpc('ensure_my_profile');
+      return;
+    } catch (_) {
+      // Fall through to a direct existence check for older environments.
+    }
+
+    final existing = await client
+        .from('profiles')
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle();
+    if (existing != null) return;
+
+    await client.from('profiles').upsert({
+      'id': user.id,
+      'email': user.email,
+      'subscription_tier': 'free',
+      'subscription_status': 'inactive',
+    }, onConflict: 'id');
+  }
+
+  Future<void> _savePlanWithLegacyFallback(
+    String userId,
+    String? email,
+    String dbTier,
+    String nowIso,
+  ) async {
+    final client = Supabase.instance.client;
+    final fullPayload = <String, dynamic>{
+      'id': userId,
+      'email': email,
+      'subscription_tier': dbTier,
+      'subscription_status': dbTier == 'free' ? 'inactive' : 'active',
+      'subscription_completed': true,
+      'terms_version': _termsVersion,
+      'terms_accepted_at': nowIso,
+      'privacy_version': _privacyVersion,
+      'privacy_accepted_at': nowIso,
+    };
+
+    try {
+      final updated = await client
+          .from('profiles')
+          .update(fullPayload)
+          .eq('id', userId)
+          .select('id')
+          .maybeSingle();
+      if (updated != null) {
+        return;
+      }
+    } on PostgrestException catch (e) {
+      if (!_isMissingLegalColumnsError(e)) {
+        rethrow;
+      }
+    }
+
+    try {
+      await client.from('profiles').upsert(fullPayload, onConflict: 'id');
+      return;
+    } on PostgrestException catch (e) {
+      if (!_isMissingLegalColumnsError(e)) {
+        rethrow;
+      }
+    }
+
+    final compatibilityPayload = <String, dynamic>{
+      'id': userId,
+      'email': email,
+      'subscription_tier': dbTier,
+      'subscription_status': dbTier == 'free' ? 'inactive' : 'active',
+    };
+    await client
+        .from('profiles')
+        .upsert(compatibilityPayload, onConflict: 'id');
   }
 
   Future<void> _openLegalDoc(String title, String path) async {
@@ -196,13 +328,13 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
   }
 
   String _displayPrice(PlanBenefits plan) {
-    if (plan.tier == MbPlanTier.free) return '£0';
+    if (plan.tier == MbPlanTier.free) return '\$0';
     final monthly = _parsePrice(plan.price);
     if (_billing == _BillingPeriod.monthly) {
-      return _formatGbp(monthly);
+      return _formatUsd(monthly);
     }
     final yearlyTotal = monthly * 10;
-    return '${_formatGbp(yearlyTotal)} / year';
+    return '${_formatUsd(yearlyTotal)} / year';
   }
 
   String _billingSubtext(PlanBenefits plan) {
@@ -211,9 +343,9 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
     }
     final monthly = _parsePrice(plan.price);
     if (_billing == _BillingPeriod.monthly) {
-      return '${_formatGbp(monthly)} billed every month';
+      return '${_formatUsd(monthly)} billed every month';
     }
-    return '${_formatGbp(monthly * 10)} billed yearly (2 months free)';
+    return '${_formatUsd(monthly * 10)} billed yearly (2 months free)';
   }
 
   double _parsePrice(String price) {
@@ -221,43 +353,28 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
     return double.tryParse(cleaned) ?? 0;
   }
 
-  String _formatGbp(double value) => '£${value.toStringAsFixed(2)}';
+  String _formatUsd(double value) => '\$${value.toStringAsFixed(2)}';
 
-  List<String> _aiDetails(PlanBenefits plan) {
+  List<String> _accessDetails(PlanBenefits plan) {
     return <String>[
-      plan.dailyChats == 0 ? 'No AI chats' : '${plan.dailyChats} chats per day',
-      plan.dailyChats == 0 ? 'No AI replies' : plan.replyStyle,
-      plan.voiceChatsPerDay == 0
-          ? 'No voice chats'
-          : '${plan.voiceChatsPerDay} voice chats per day',
-      plan.longTermMemory ? 'Long-term memory enabled' : 'No long-term memory',
+      'Brain Fog, habits, journals, templates, and pomodoro included',
       plan.insights
-          ? 'Insights for templates + habits'
-          : 'No advanced insights',
+          ? 'Insights for templates and habits are enabled'
+          : 'Insights are not included on this plan',
     ];
   }
 
   List<String> _templateDetails(PlanBenefits plan) {
     return <String>[
-      plan.canCreateCustomTemplates
-          ? 'Create and save custom templates'
-          : 'Template preview/edit mode only',
-      plan.coreTemplatesSaveForever
-          ? 'Core templates save forever and show in calendar'
-          : 'Core templates are preview only',
-      if (plan.templatesPreviewMode)
-        '24-hour preview mode: preview data disappears after 24h',
+      'Create and save custom templates',
+      'Built-in templates save forever and show in calendar',
     ];
   }
 
   List<String> _journalDetails(PlanBenefits plan) {
     return <String>[
       'Unlimited journal entries',
-      plan.canShareEntries
-          ? (plan.sharesPerDay < 0
-                ? 'Unlimited shares per day'
-                : 'Up to ${plan.sharesPerDay} shares per day')
-          : 'Cannot share entries',
+      'Unlimited shares per day',
       'Can receive unlimited shares',
     ];
   }
@@ -316,9 +433,11 @@ class _PlanSelectionScreenState extends State<PlanSelectionScreen> {
                 busy: _busy,
                 ctaEnabled: canChoosePlan,
                 onSelect: () => _trySelectPlan(plan),
-                aiDetails: _aiDetails(plan),
+                aiDetails: _accessDetails(plan),
                 deviceDetails: <String>[
-                  '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
+                  plan.devices < 0
+                      ? 'Unlimited devices'
+                      : '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
                 ],
                 templateDetails: _templateDetails(plan),
                 journalDetails: _journalDetails(plan),
@@ -447,7 +566,7 @@ class _DetailedPlanCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final isPopular = plan.tier == MbPlanTier.fullSupport;
+    final isPopular = plan.tier == MbPlanTier.plusSupport;
 
     return Material(
       color: Colors.transparent,
@@ -505,7 +624,7 @@ class _DetailedPlanCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(billingText, style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 10),
-                _DetailSection(title: 'AI', items: aiDetails),
+                _DetailSection(title: 'Access', items: aiDetails),
                 _DetailSection(title: 'Devices', items: deviceDetails),
                 _DetailSection(title: 'Templates', items: templateDetails),
                 _DetailSection(title: 'Journaling', items: journalDetails),

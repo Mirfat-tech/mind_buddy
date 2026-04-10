@@ -1,26 +1,41 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:flutter/rendering.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:go_router/go_router.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 import 'package:mind_buddy/common/mb_app_bar_circle_button.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
+import 'package:mind_buddy/features/journal/journal_canvas_layer.dart';
 import 'package:mind_buddy/features/journal/quill_embeds.dart';
 import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
+import 'package:mind_buddy/features/journal/journal_drawing_canvas.dart';
+import 'package:mind_buddy/features/journal/journal_folder_support.dart';
+import 'package:mind_buddy/features/journal/journal_sticker_catalog.dart';
 import 'package:mind_buddy/features/journal/journal_upload_pipeline.dart';
+import 'package:mind_buddy/services/journal_canvas_objects.dart';
+import 'package:mind_buddy/services/journal_document_codec.dart';
+import 'package:mind_buddy/services/journal_repository.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
+import 'package:mind_buddy/services/journal_doodle_service.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
+
+enum _LeaveJournalAction { cancel, leave, saveAndLeave }
 
 class NewJournalScreen extends StatefulWidget {
   const NewJournalScreen({super.key});
@@ -33,12 +48,18 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
   static const double _appBarEdgePadding = 16;
   final quill.QuillController _qc = quill.QuillController.basic();
   final FocusNode _focusNode = FocusNode();
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _editorScrollController = ScrollController();
   final TextEditingController _titleController = TextEditingController();
   final FocusNode _editorFocus = FocusNode();
+  final Uuid _uuid = const Uuid();
   static const String _mediaBucket = 'journal-media';
   String? _selectedFont;
   Color? _selectedColor;
+  Color? _selectedHighlightColor;
+  bool _editorHasFocus = false;
+  bool _boldEnabled = false;
+  JournalLineSpacing _selectedLineSpacing = JournalLineSpacing.fallback;
+  bool _lineSpacingMixed = false;
   bool _showFormatBar = false;
   List<JournalMediaItem> _media = const [];
   final Map<String, double> _uploadProgressByPath = {};
@@ -53,6 +74,8 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
   String? _savedJournalId;
   String? _savedShareId;
   bool _hasSavedChanges = false;
+  String _lastSavedDraftSignature = '';
+  bool _isExitDialogOpen = false;
   final GlobalKey _backButtonKey = GlobalKey();
   final GlobalKey _deletePageButtonKey = GlobalKey();
   final GlobalKey _undoButtonKey = GlobalKey();
@@ -61,6 +84,26 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
   final GlobalKey _saveTickButtonKey = GlobalKey();
   final GlobalKey _overflowButtonKey = GlobalKey();
   final GlobalKey _formattingDropdownKey = GlobalKey();
+  final GlobalKey _folderPickerKey = GlobalKey();
+  final GlobalKey _drawingBoundaryKey = GlobalKey();
+  List<JournalFolder> _folders = const <JournalFolder>[];
+  String? _selectedFolderId;
+  List<JournalCanvasObject> _canvasObjects = const <JournalCanvasObject>[];
+  String? _selectedCanvasObjectId;
+  bool _canvasEditMode = false;
+  bool _drawMode = false;
+  DrawingTool _activeTool = DrawingTool.pen;
+  Color _drawColor = Colors.black;
+  double _strokeWidth = 4;
+  DoodleBackgroundStyle _doodleBgStyle = DoodleBackgroundStyle.none;
+  double _doodleBgSpacing = 24;
+  final List<DrawingStroke> _strokes = [];
+  final List<DrawingStroke> _redoStrokes = [];
+  DrawingStroke? _activeStroke;
+  String? _doodleImageUrl;
+  String? _doodleStoragePath;
+  bool _hasUnsavedDoodleChanges = false;
+  final JournalRepository _journalRepository = JournalRepository();
 
   static const List<String> _fonts = ['sans-serif', 'serif', 'monospace'];
   static const List<Color> _colors = [
@@ -84,14 +127,41 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
     Colors.black,
     Color(0xFF1F2937),
   ];
+  static const List<Color> _highlightColors = [
+    Color(0xFFFFF59D),
+    Color(0xFFFFEB3B),
+    Color(0xFFFFD54F),
+    Color(0xFFFFCC80),
+    Color(0xFFFFAB91),
+    Color(0xFFFF8A80),
+    Color(0xFFEF9A9A),
+    Color(0xFFB9F6CA),
+    Color(0xFFC5E1A5),
+    Color(0xFFE6EE9C),
+    Color(0xFF80CBC4),
+    Color(0xFF80DEEA),
+    Color(0xFFB3E5FC),
+    Color(0xFF90CAF9),
+    Color(0xFFC5CAE9),
+    Color(0xFFD1C4E9),
+    Color(0xFFE1BEE7),
+    Color(0xFFF8BBD0),
+    Color(0xFFF48FB1),
+    Color(0xFFD7BDE2),
+    Color(0xFFE0E0E0),
+  ];
 
   @override
   void dispose() {
     _pickSpinnerTimer?.cancel();
     _qc.removeListener(_refreshMedia);
+    _qc.removeListener(_refreshLineSpacingState);
+    _qc.removeListener(_refreshInlineStyleState);
+    _editorFocus.removeListener(_handleEditorFocusChanged);
     _qc.dispose();
     _focusNode.dispose();
-    _scrollController.dispose();
+    _editorFocus.dispose();
+    _editorScrollController.dispose();
     _titleController.dispose();
     super.dispose();
   }
@@ -100,7 +170,414 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
   void initState() {
     super.initState();
     _qc.addListener(_refreshMedia);
+    _qc.addListener(_refreshLineSpacingState);
+    _qc.addListener(_refreshInlineStyleState);
+    _editorFocus.addListener(_handleEditorFocusChanged);
+    unawaited(_loadFolders());
+    _ensurePlainTypingDefaults();
+    _lastSavedDraftSignature = _captureDraftSignature();
     WidgetsBinding.instance.addPostFrameCallback((_) => _showGuideIfNeeded());
+  }
+
+  bool get _hasUnsavedChanges =>
+      _captureDraftSignature() != _lastSavedDraftSignature;
+
+  String _captureDraftSignature() {
+    final body = JournalDocumentCodec.encode(
+      document: _qc.document,
+      canvasObjects: _canvasObjects,
+    );
+    final doodleState = <String, dynamic>{
+      'storage_path': _doodleStoragePath,
+      'bg_style': _bgStyleToString(_doodleBgStyle),
+      'bg_spacing': _doodleBgSpacing,
+      'strokes': _strokes.map(_serializeStroke).toList(),
+      'active_stroke': _activeStroke == null
+          ? null
+          : _serializeStroke(_activeStroke!),
+    };
+    return jsonEncode(<String, dynamic>{
+      'title': _titleController.text,
+      'folder_id': _selectedFolderId,
+      'body': body,
+      'doodle': doodleState,
+    });
+  }
+
+  Map<String, dynamic> _serializeStroke(DrawingStroke stroke) {
+    return <String, dynamic>{
+      'points': stroke.points
+          .map((point) => <double>[point.dx, point.dy])
+          .toList(),
+      'color': stroke.color.toARGB32(),
+      'width': stroke.width,
+      'tool': stroke.tool.name,
+    };
+  }
+
+  Future<_LeaveJournalAction> _showLeaveDialog() async {
+    final action = await showDialog<_LeaveJournalAction>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Leave without saving?'),
+          content: const Text(
+            'You have unsaved changes. If you leave now, your changes will be lost.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_LeaveJournalAction.cancel),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(_LeaveJournalAction.leave),
+              child: const Text('Leave'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(
+                dialogContext,
+              ).pop(_LeaveJournalAction.saveAndLeave),
+              child: const Text('Save & leave'),
+            ),
+          ],
+        );
+      },
+    );
+    return action ?? _LeaveJournalAction.cancel;
+  }
+
+  void _exitScreen() {
+    if (!mounted) return;
+    if (context.canPop()) {
+      context.pop(_hasSavedChanges);
+      return;
+    }
+    context.go('/journals');
+  }
+
+  Future<void> _handleExitRequest() async {
+    if (_isExitDialogOpen) return;
+    if (!_hasUnsavedChanges) {
+      _exitScreen();
+      return;
+    }
+    _isExitDialogOpen = true;
+    final action = await _showLeaveDialog();
+    _isExitDialogOpen = false;
+    if (!mounted) return;
+    switch (action) {
+      case _LeaveJournalAction.cancel:
+        return;
+      case _LeaveJournalAction.leave:
+        _exitScreen();
+        return;
+      case _LeaveJournalAction.saveAndLeave:
+        final saved = await _save();
+        if (!mounted || !saved) return;
+        _exitScreen();
+        return;
+    }
+  }
+
+  Future<bool> _handleWillPop() async {
+    await _handleExitRequest();
+    return false;
+  }
+
+  void _handleEditorFocusChanged() {
+    if (!mounted || _editorHasFocus == _editorFocus.hasFocus) return;
+    setState(() => _editorHasFocus = _editorFocus.hasFocus);
+  }
+
+  Color _withOpacity(Color color, double opacity) {
+    return color.withAlpha((255 * opacity).round().clamp(0, 255));
+  }
+
+  BoxDecoration _journalCanvasDecoration(ColorScheme colorScheme) {
+    final accent = colorScheme.primary;
+    final isActive = _editorHasFocus || _drawMode;
+    return BoxDecoration(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      borderRadius: BorderRadius.circular(26),
+      border: Border.all(
+        color: _withOpacity(accent, isActive ? 0.34 : 0.2),
+        width: isActive ? 1.5 : 1.15,
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: _withOpacity(accent, isActive ? 0.18 : 0.1),
+          blurRadius: isActive ? 26 : 18,
+          spreadRadius: isActive ? 2.5 : 1.2,
+        ),
+        BoxShadow(
+          color: _withOpacity(accent, isActive ? 0.09 : 0.05),
+          blurRadius: isActive ? 48 : 34,
+          spreadRadius: isActive ? 4.5 : 2.2,
+        ),
+      ],
+    );
+  }
+
+  int get _nextCanvasObjectZIndex {
+    var maxZ = -1;
+    for (final object in _canvasObjects) {
+      if (object.zIndex > maxZ) {
+        maxZ = object.zIndex;
+      }
+    }
+    return maxZ + 1;
+  }
+
+  Offset _defaultCanvasPlacement({
+    required double width,
+    required double height,
+  }) {
+    final slot = _canvasObjects.length % 5;
+    final dx = 0.12 + (slot * 0.045);
+    final dy = 0.12 + (slot * 0.04);
+    return Offset(
+      dx.clamp(0.04, 1 - width - 0.04),
+      dy.clamp(0.04, 1 - height - 0.04),
+    );
+  }
+
+  void _selectCanvasObject(String? objectId) {
+    if (objectId == null) {
+      setState(() => _selectedCanvasObjectId = null);
+      return;
+    }
+    final elevated = _canvasObjects.map((object) {
+      if (object.id != objectId) return object;
+      return object.copyWith(zIndex: _nextCanvasObjectZIndex);
+    }).toList()
+      ..sort((a, b) => a.zIndex.compareTo(b.zIndex));
+    setState(() {
+      _canvasObjects = elevated;
+      _selectedCanvasObjectId = objectId;
+      _canvasEditMode = true;
+      _drawMode = false;
+    });
+  }
+
+  void _updateCanvasObject(JournalCanvasObject updated) {
+    final next = _canvasObjects.map((object) {
+      return object.id == updated.id ? updated : object;
+    }).toList()
+      ..sort((a, b) => a.zIndex.compareTo(b.zIndex));
+    setState(() => _canvasObjects = next);
+  }
+
+  void _deleteCanvasObject(String objectId) {
+    JournalCanvasObject? object;
+    for (final item in _canvasObjects) {
+      if (item.id == objectId) {
+        object = item;
+        break;
+      }
+    }
+    if (object?.path case final String path?) {
+      _uploadProgressByPath.remove(path);
+      _uploadFailedPaths.remove(path);
+    }
+    setState(() {
+      _canvasObjects = _canvasObjects
+          .where((object) => object.id != objectId)
+          .toList();
+      if (_selectedCanvasObjectId == objectId) {
+        _selectedCanvasObjectId = null;
+      }
+      if (_canvasObjects.isEmpty) {
+        _canvasEditMode = false;
+      }
+    });
+  }
+
+  void _toggleCanvasEditMode() {
+    setState(() {
+      _canvasEditMode = !_canvasEditMode;
+      if (_canvasEditMode) {
+        _drawMode = false;
+      } else {
+        _selectedCanvasObjectId = null;
+      }
+    });
+  }
+
+  JournalCanvasObject _buildCanvasMediaObject({
+    required JournalCanvasObjectType type,
+    required String localPath,
+  }) {
+    const width = 0.34;
+    const height = 0.24;
+    final placement = _defaultCanvasPlacement(width: width, height: height);
+    return JournalCanvasObject(
+      id: _uuid.v4(),
+      type: type,
+      x: placement.dx,
+      y: placement.dy,
+      width: width,
+      height: height,
+      rotation: 0,
+      zIndex: _nextCanvasObjectZIndex,
+      path: localPath,
+      bucket: _mediaBucket,
+    );
+  }
+
+  JournalCanvasObject _buildStickerObject(JournalStickerDefinition sticker) {
+    const size = 0.22;
+    final placement = _defaultCanvasPlacement(width: size, height: size);
+    return JournalCanvasObject(
+      id: _uuid.v4(),
+      type: JournalCanvasObjectType.sticker,
+      x: placement.dx,
+      y: placement.dy,
+      width: size,
+      height: size,
+      rotation: 0,
+      zIndex: _nextCanvasObjectZIndex,
+      stickerId: sticker.id,
+      stickerPackId: JournalStickerCatalog.starterPackId,
+    );
+  }
+
+  void _addCanvasObject(JournalCanvasObject object) {
+    setState(() {
+      _canvasObjects = [..._canvasObjects, object]
+        ..sort((a, b) => a.zIndex.compareTo(b.zIndex));
+      _selectedCanvasObjectId = object.id;
+      _canvasEditMode = true;
+      _drawMode = false;
+    });
+  }
+
+  void _replaceCanvasObjectSource({
+    required String objectId,
+    required String remotePath,
+  }) {
+    final match = _canvasObjects.where((object) => object.id == objectId);
+    if (match.isEmpty) return;
+    _updateCanvasObject(
+      match.first.copyWith(
+        path: remotePath,
+        bucket: _mediaBucket,
+        clearUrl: true,
+      ),
+    );
+  }
+
+  Future<void> _insertSticker() async {
+    final selected = await showModalBottomSheet<JournalStickerDefinition>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Sticker drawer',
+                  style: Theme.of(sheetContext).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Soft little extras for scrapbook-style pages. This starter pack is ready now, and the picker can grow into custom packs later.',
+                  style: Theme.of(sheetContext).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: GridView.builder(
+                    shrinkWrap: true,
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 0.92,
+                        ),
+                    itemCount: JournalStickerCatalog.starterPack.length,
+                    itemBuilder: (context, index) {
+                      final sticker = JournalStickerCatalog.starterPack[index];
+                      return InkWell(
+                        borderRadius: BorderRadius.circular(22),
+                        onTap: () => Navigator.of(sheetContext).pop(sticker),
+                        child: JournalStickerArt(
+                          definition: sticker,
+                          showLabel: true,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (selected == null) return;
+    _addCanvasObject(_buildStickerObject(selected));
+  }
+
+  Future<void> _loadFolders() async {
+    final folders = await JournalFolderSupport.fetchFolders();
+    if (!mounted) return;
+    setState(() => _folders = folders);
+  }
+
+  String get _selectedFolderLabel {
+    if (_selectedFolderId == null) return 'No folder';
+    for (final folder in _folders) {
+      if (folder.id == _selectedFolderId) {
+        return folder.name;
+      }
+    }
+    return 'No folder';
+  }
+
+  Future<void> _pickFolder() async {
+    final selected = await showModalBottomSheet<String?>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              ListTile(
+                title: const Text('No folder'),
+                trailing: _selectedFolderId == null
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () => Navigator.pop(context, null),
+              ),
+              for (final folder in _folders)
+                ListTile(
+                  leading: Icon(
+                    JournalFolderSupport.styleFor(folder.iconStyle).icon,
+                    color: JournalFolderSupport.paletteFor(
+                      folder.colorKey,
+                    ).color,
+                  ),
+                  title: Text(folder.name),
+                  trailing: _selectedFolderId == folder.id
+                      ? const Icon(Icons.check)
+                      : null,
+                  onTap: () => Navigator.pop(context, folder.id),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (!mounted) return;
+    setState(() => _selectedFolderId = selected);
   }
 
   Future<void> _showGuideIfNeeded({bool force = false}) async {
@@ -377,38 +854,33 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
       _stopPickIndicator();
     }
     if (images.isEmpty) return;
-
-    var index = _qc.selection.baseOffset;
-    if (index < 0) index = _qc.document.length - 1;
+    developer.log(
+      'journal_media event=media_picked data={context: new_entry, type: image, count: ${images.length}}',
+      name: 'journal_media',
+    );
 
     final tasks = <Future<void>>[];
     for (final image in images) {
-      final localPayload = jsonEncode({
-        'bucket': _mediaBucket,
-        'path': image.path,
-        'url': image.path,
-      });
-      _qc.document.insert(index, quill.BlockEmbed.image(localPayload));
-      index += 1;
+      final object = _buildCanvasMediaObject(
+        type: JournalCanvasObjectType.image,
+        localPath: image.path,
+      );
+      _addCanvasObject(object);
       _uploadProgressByPath[image.path] = 0.03;
       _uploadFailedPaths.remove(image.path);
-      _refreshMedia();
       if (mounted) setState(() {});
       tasks.add(
-        _uploadImageInBackground(image: image, localPayload: localPayload),
+        _uploadImageInBackground(image: image, objectId: object.id),
       );
     }
-    _qc.updateSelection(
-      TextSelection.collapsed(offset: index),
-      quill.ChangeSource.local,
-    );
     if (mounted) setState(() {});
     _trackPendingUpload(Future.wait(tasks));
   }
 
   Future<void> _uploadImageInBackground({
     required XFile image,
-    required String localPayload,
+    String? objectId,
+    String? localPayload,
   }) async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
@@ -438,6 +910,10 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
       }
 
       _uploadProgressByPath[image.path] = 0.2;
+      developer.log(
+        'journal_media event=upload_started data={context: new_entry, type: image, local_path: ${image.path}}',
+        name: 'journal_media',
+      );
       if (mounted) setState(() {});
 
       // Compression is optional: if plugin is unavailable, continue with original bytes.
@@ -473,6 +949,10 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
 
       final storagePath =
           '${user.id}/images/${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}.$extension';
+      developer.log(
+        'journal_media event=upload_target data={context: new_entry, type: image, bucket: $_mediaBucket, storage_path: $storagePath}',
+        name: 'journal_media',
+      );
       _uploadProgressByPath[image.path] = 0.75;
       if (mounted) setState(() {});
 
@@ -495,19 +975,22 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
         return;
       }
 
-      final publicUrl = Supabase.instance.client.storage
-          .from(_mediaBucket)
-          .getPublicUrl(storagePath);
-      final remotePayload = jsonEncode({
-        'bucket': _mediaBucket,
-        'path': storagePath,
-        'url': publicUrl,
-      });
-      _replaceEmbedPayload(
-        type: 'image',
-        oldPayload: localPayload,
-        newPayload: remotePayload,
+      developer.log(
+        'journal_media event=media_record_saved data={context: new_entry, type: image, storage_path: $storagePath}',
+        name: 'journal_media',
       );
+      if (objectId != null) {
+        _replaceCanvasObjectSource(objectId: objectId, remotePath: storagePath);
+      } else if (localPayload != null) {
+        _replaceEmbedPayload(
+          type: 'image',
+          oldPayload: localPayload,
+          newPayload: jsonEncode({
+            'bucket': _mediaBucket,
+            'path': storagePath,
+          }),
+        );
+      }
 
       _uploadProgressByPath[image.path] = 1.0;
       _uploadFailedPaths.remove(image.path);
@@ -578,20 +1061,17 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
     }
 
     if (res == null || res.files.single.path == null) return;
+    developer.log(
+      'journal_media event=media_picked data={context: new_entry, type: video, path: ${res.files.single.path}, name: ${res.files.single.name}}',
+      name: 'journal_media',
+    );
 
     final path = res.files.single.path!;
-    final localPayload = jsonEncode({
-      'bucket': _mediaBucket,
-      'path': path,
-      'url': path,
-    });
-    final index = _qc.selection.baseOffset;
-    _qc.document.insert(index, quill.BlockEmbed.video(localPayload));
-    _refreshMedia();
-    _qc.updateSelection(
-      TextSelection.collapsed(offset: index + 1),
-      quill.ChangeSource.local,
+    final object = _buildCanvasMediaObject(
+      type: JournalCanvasObjectType.video,
+      localPath: path,
     );
+    _addCanvasObject(object);
 
     _uploadProgressByPath[path] = 0.03;
     _uploadFailedPaths.remove(path);
@@ -600,7 +1080,39 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
     final task = _uploadVideoInBackground(
       localPath: path,
       filename: res.files.single.name,
-      localPayload: localPayload,
+      objectId: object.id,
+    );
+    _trackPendingUpload(task);
+  }
+
+  Future<void> _insertGif() async {
+    if (_activeUploads > 0 || _isPickingMedia) return;
+    _startPickIndicator();
+    FilePickerResult? res;
+    try {
+      res = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['gif'],
+      );
+    } finally {
+      _stopPickIndicator();
+    }
+    if (res == null || res.files.single.path == null) return;
+
+    final path = res.files.single.path!;
+    final object = _buildCanvasMediaObject(
+      type: JournalCanvasObjectType.gif,
+      localPath: path,
+    );
+    _addCanvasObject(object);
+    _uploadProgressByPath[path] = 0.03;
+    _uploadFailedPaths.remove(path);
+    if (mounted) setState(() {});
+
+    final task = _uploadGifInBackground(
+      localPath: path,
+      filename: res.files.single.name,
+      objectId: object.id,
     );
     _trackPendingUpload(task);
   }
@@ -608,7 +1120,8 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
   Future<void> _uploadVideoInBackground({
     required String localPath,
     required String filename,
-    required String localPayload,
+    String? objectId,
+    String? localPayload,
   }) async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
@@ -619,11 +1132,19 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
         fallback: 'mp4',
       );
       _uploadProgressByPath[localPath] = 0.35;
+      developer.log(
+        'journal_media event=upload_started data={context: new_entry, type: video, local_path: $localPath, filename: $filename}',
+        name: 'journal_media',
+      );
       if (mounted) setState(() {});
 
       final bytes = await File(localPath).readAsBytes();
       final storagePath =
           '${user.id}/videos/${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}.$ext';
+      developer.log(
+        'journal_media event=upload_target data={context: new_entry, type: video, bucket: $_mediaBucket, storage_path: $storagePath}',
+        name: 'journal_media',
+      );
       _uploadProgressByPath[localPath] = 0.75;
       if (mounted) setState(() {});
 
@@ -634,19 +1155,22 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
         contentType: JournalUploadPipeline.contentTypeFromExtension(ext),
       );
 
-      final publicUrl = Supabase.instance.client.storage
-          .from(_mediaBucket)
-          .getPublicUrl(storagePath);
-      final remotePayload = jsonEncode({
-        'bucket': _mediaBucket,
-        'path': storagePath,
-        'url': publicUrl,
-      });
-      _replaceEmbedPayload(
-        type: 'video',
-        oldPayload: localPayload,
-        newPayload: remotePayload,
+      developer.log(
+        'journal_media event=media_record_saved data={context: new_entry, type: video, storage_path: $storagePath}',
+        name: 'journal_media',
       );
+      if (objectId != null) {
+        _replaceCanvasObjectSource(objectId: objectId, remotePath: storagePath);
+      } else if (localPayload != null) {
+        _replaceEmbedPayload(
+          type: 'video',
+          oldPayload: localPayload,
+          newPayload: jsonEncode({
+            'bucket': _mediaBucket,
+            'path': storagePath,
+          }),
+        );
+      }
 
       _uploadProgressByPath[localPath] = 1.0;
       _uploadFailedPaths.remove(localPath);
@@ -661,6 +1185,49 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Video upload failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _uploadGifInBackground({
+    required String localPath,
+    required String filename,
+    required String objectId,
+  }) async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      _uploadProgressByPath[localPath] = 0.35;
+      if (mounted) setState(() {});
+      final bytes = await File(localPath).readAsBytes();
+      final storagePath =
+          '${user.id}/gifs/${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(99999)}.gif';
+      _uploadProgressByPath[localPath] = 0.75;
+      if (mounted) setState(() {});
+
+      await JournalUploadPipeline.uploadBinaryWithRetry(
+        bucket: _mediaBucket,
+        path: storagePath,
+        bytes: bytes,
+        contentType: 'image/gif',
+      );
+      _replaceCanvasObjectSource(objectId: objectId, remotePath: storagePath);
+      _uploadProgressByPath[localPath] = 1.0;
+      _uploadFailedPaths.remove(localPath);
+      if (mounted) setState(() {});
+      await Future.delayed(const Duration(milliseconds: 500));
+      _uploadProgressByPath.remove(localPath);
+    } catch (e) {
+      _uploadFailedPaths.add(localPath);
+      _uploadProgressByPath.remove(localPath);
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('GIF upload failed: $e')));
       }
     } finally {
       if (mounted) setState(() {});
@@ -718,15 +1285,7 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
         contentType: JournalUploadPipeline.contentTypeFromExtension(ext),
       );
 
-      final publicUrl = Supabase.instance.client.storage
-          .from(_mediaBucket)
-          .getPublicUrl(path);
-
-      return jsonEncode({
-        'bucket': _mediaBucket,
-        'path': path,
-        'url': publicUrl,
-      });
+      return jsonEncode({'bucket': _mediaBucket, 'path': path});
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -781,9 +1340,218 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
     if (attr != null) _qc.formatSelection(attr);
   }
 
+  void _applyHighlight(Color? color) {
+    _editorFocus.requestFocus();
+    setState(() => _selectedHighlightColor = color);
+    if (color == null) {
+      _qc.formatSelection(quill.Attribute.background);
+      return;
+    }
+    final hex = _colorToHex(color);
+    final attr = quill.Attribute.fromKeyValue('background', hex);
+    if (attr != null) _qc.formatSelection(attr);
+  }
+
+  bool get _isBoldActive =>
+      _qc.getSelectionStyle().attributes.containsKey(quill.Attribute.bold.key);
+
+  void _toggleBold() {
+    _editorFocus.requestFocus();
+    final next = _isBoldActive
+        ? quill.Attribute.clone(quill.Attribute.bold, null)
+        : quill.Attribute.bold;
+    _qc.formatSelection(next);
+    _refreshInlineStyleState();
+  }
+
+  void _refreshInlineStyleState() {
+    final next = _isBoldActive;
+    final attrs = _qc.getSelectionStyle().attributes;
+    final nextColor = _colorFromAttributeValue(attrs[quill.Attribute.color.key]);
+    final nextHighlight = _colorFromAttributeValue(
+      attrs[quill.Attribute.background.key],
+    );
+    if (!mounted) {
+      _boldEnabled = next;
+      _selectedColor = nextColor;
+      _selectedHighlightColor = nextHighlight;
+      return;
+    }
+    if (_boldEnabled != next ||
+        _selectedColor != nextColor ||
+        _selectedHighlightColor != nextHighlight) {
+      setState(() {
+        _boldEnabled = next;
+        _selectedColor = nextColor;
+        _selectedHighlightColor = nextHighlight;
+      });
+    }
+  }
+
+  void _ensurePlainTypingDefaults() {
+    if (_isBoldActive) {
+      _qc.formatSelection(quill.Attribute.clone(quill.Attribute.bold, null));
+    }
+    _refreshInlineStyleState();
+  }
+
+  String? get _activeListValue => _qc
+      .getSelectionStyle()
+      .attributes[quill.Attribute.list.key]
+      ?.value
+      ?.toString();
+
+  bool _isListActive(String listValue) => _activeListValue == listValue;
+
+  bool get _isChecklistActive {
+    final value = _activeListValue;
+    return value == quill.Attribute.checked.value ||
+        value == quill.Attribute.unchecked.value;
+  }
+
+  void _toggleList(quill.Attribute<String?> attribute) {
+    _editorFocus.requestFocus();
+    final current = _activeListValue;
+    final target = attribute.value;
+    if (target == null) return;
+    final next =
+        current == target ||
+            (_isChecklistActive &&
+                (target == quill.Attribute.checked.value ||
+                    target == quill.Attribute.unchecked.value))
+        ? quill.Attribute.clone(quill.Attribute.list, null)
+        : attribute;
+    _qc.formatSelection(next);
+    setState(() {});
+  }
+
+  Future<void> _pickLineSpacing() async {
+    final selected = await showModalBottomSheet<JournalLineSpacing>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final option in JournalLineSpacing.values)
+              ListTile(
+                title: Text(option.label),
+                trailing: !_lineSpacingMixed && option == _selectedLineSpacing
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () => Navigator.of(sheetContext).pop(option),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null) return;
+    _qc.formatSelection(selected.attribute);
+    _editorFocus.requestFocus();
+  }
+
+  void _refreshLineSpacingState() {
+    final spacings = _selectedParagraphLineSpacings();
+    final nextMixed = spacings.length > 1;
+    final nextSpacing = spacings.isEmpty
+        ? JournalLineSpacing.fallback
+        : (nextMixed ? JournalLineSpacing.fallback : spacings.first);
+    if (!mounted) {
+      _lineSpacingMixed = nextMixed;
+      _selectedLineSpacing = nextSpacing;
+      return;
+    }
+    setState(() {
+      _lineSpacingMixed = nextMixed;
+      _selectedLineSpacing = nextSpacing;
+    });
+  }
+
+  Set<JournalLineSpacing> _selectedParagraphLineSpacings() {
+    final selection = _qc.selection;
+    final documentLength = _qc.document.length;
+    if (documentLength <= 0) return {JournalLineSpacing.fallback};
+
+    final start = selection.start.clamp(0, documentLength - 1);
+    final end = selection.isCollapsed
+        ? start
+        : (selection.end > start ? selection.end - 1 : start);
+
+    final spacings = <JournalLineSpacing>{};
+    final delta = _qc.document.toDelta().toJson();
+    var offset = 0;
+    var lineStart = 0;
+
+    for (final rawOp in delta) {
+      final op = Map<String, dynamic>.from(rawOp);
+      final insert = op['insert'];
+      if (insert is String) {
+        final attrs = op['attributes'] is Map
+            ? Map<String, dynamic>.from(op['attributes'] as Map)
+            : const <String, dynamic>{};
+        for (var i = 0; i < insert.length; i++) {
+          if (insert[i] == '\n') {
+            final lineEnd = offset;
+            if (lineEnd >= start && lineStart <= end) {
+              spacings.add(
+                JournalLineSpacing.fromLineHeightValue(attrs['line-height']),
+              );
+            }
+            lineStart = offset + 1;
+          }
+          offset += 1;
+        }
+      } else {
+        offset += 1;
+      }
+    }
+
+    return spacings.isEmpty ? {JournalLineSpacing.fallback} : spacings;
+  }
+
   String _colorToHex(Color color) {
-    final value = color.value.toRadixString(16).padLeft(8, '0');
+    final value = color.toARGB32().toRadixString(16).padLeft(8, '0');
     return '#${value.substring(2)}';
+  }
+
+  Color? _colorFromAttributeValue(dynamic attribute) {
+    final value = switch (attribute) {
+      quill.Attribute<dynamic> attr => attr.value,
+      _ => attribute,
+    };
+    final raw = value?.toString().trim();
+    if (raw == null || raw.isEmpty) return null;
+    final hex = raw.startsWith('#') ? raw.substring(1) : raw;
+    if (hex.length != 6 && hex.length != 8) return null;
+    final parsed = int.tryParse(hex, radix: 16);
+    if (parsed == null) return null;
+    return hex.length == 6
+        ? Color(0xFF000000 | parsed)
+        : Color(parsed);
+  }
+
+  String _bgStyleLabel(DoodleBackgroundStyle style) {
+    switch (style) {
+      case DoodleBackgroundStyle.none:
+        return 'None';
+      case DoodleBackgroundStyle.dots:
+        return 'Dots';
+      case DoodleBackgroundStyle.lines:
+        return 'Lines';
+      case DoodleBackgroundStyle.grid:
+        return 'Grid';
+    }
+  }
+
+  String _bgStyleToString(DoodleBackgroundStyle style) {
+    return style.name;
+  }
+
+  DoodleBackgroundStyle _bgStyleFromString(String value) {
+    return DoodleBackgroundStyle.values.firstWhere(
+      (style) => style.name == value,
+      orElse: () => DoodleBackgroundStyle.none,
+    );
   }
 
   Future<void> _openShareForSavedEntry() async {
@@ -792,7 +1560,275 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
     await context.push('/journals/view/$journalId');
   }
 
-  Future<void> _save() async {
+  void _toggleDrawMode() {
+    final willEnable = !_drawMode;
+    if (willEnable) {
+      _editorFocus.unfocus();
+    }
+    setState(() {
+      _drawMode = willEnable;
+      if (willEnable) {
+        _canvasEditMode = false;
+        _selectedCanvasObjectId = null;
+      }
+    });
+    if (!willEnable) {
+      unawaited(_saveDoodleIfPossible(showSuccessMessage: false));
+    }
+  }
+
+  Future<void> _pickDoodleBackground() async {
+    var selectedStyle = _doodleBgStyle;
+    var spacing = _doodleBgSpacing;
+    final selected = await showModalBottomSheet<DoodleBackgroundStyle>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        const options = DoodleBackgroundStyle.values;
+        return SafeArea(
+          child: StatefulBuilder(
+            builder: (context, setSheetState) => Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ...options.map(
+                    (style) => ListTile(
+                      title: Text(_bgStyleLabel(style)),
+                      trailing: style == selectedStyle
+                          ? const Icon(Icons.check)
+                          : null,
+                      onTap: () => setSheetState(() => selectedStyle = style),
+                    ),
+                  ),
+                  Row(
+                    children: [
+                      const Text('Spacing'),
+                      Expanded(
+                        child: Slider(
+                          min: 12,
+                          max: 48,
+                          value: spacing,
+                          onChanged: (value) =>
+                              setSheetState(() => spacing = value),
+                        ),
+                      ),
+                    ],
+                  ),
+                  ElevatedButton(
+                    onPressed: () =>
+                        Navigator.of(sheetContext).pop(selectedStyle),
+                    child: const Text('Apply'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selected == null) return;
+    setState(() {
+      _doodleBgStyle = selected;
+      _doodleBgSpacing = spacing;
+      _hasUnsavedDoodleChanges = true;
+    });
+  }
+
+  Future<void> _pickDrawColor() async {
+    var tempColor = _drawColor;
+    final shouldApply = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              top: 8,
+              bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 16,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ColorPicker(
+                  pickerColor: tempColor,
+                  onColorChanged: (value) => tempColor = value,
+                  enableAlpha: false,
+                  pickerAreaHeightPercent: 0.55,
+                  displayThumbColor: true,
+                  paletteType: PaletteType.hsvWithHue,
+                  labelTypes: const [],
+                ),
+                const SizedBox(height: 10),
+                ElevatedButton(
+                  onPressed: () => Navigator.of(sheetContext).pop(true),
+                  child: const Text('Use Color'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (shouldApply == true) {
+      setState(() => _drawColor = tempColor);
+    }
+  }
+
+  Future<void> _refreshDoodleFromDb(String journalId) async {
+    final doodle = await JournalDoodleService.fetchDoodle(journalId);
+    if (!mounted) return;
+    setState(() {
+      _doodleStoragePath = doodle.storagePath;
+      _doodleImageUrl = doodle.previewUrl;
+      if (doodle.bgStyle != null) {
+        _doodleBgStyle = _bgStyleFromString(doodle.bgStyle!);
+      }
+    });
+  }
+
+  void _startStroke(Offset point) {
+    final tool = _activeTool;
+    final color = tool == DrawingTool.eraser ? Colors.transparent : _drawColor;
+    setState(() {
+      _activeStroke = DrawingStroke(
+        points: [point],
+        color: color,
+        width: _strokeWidth,
+        tool: tool,
+      );
+      _redoStrokes.clear();
+      _hasUnsavedDoodleChanges = true;
+    });
+  }
+
+  void _appendStrokePoint(Offset point) {
+    final active = _activeStroke;
+    if (active == null) return;
+    setState(() => active.points.add(point));
+  }
+
+  void _endStroke() {
+    final active = _activeStroke;
+    if (active == null) return;
+    setState(() {
+      _strokes.add(active);
+      _activeStroke = null;
+    });
+  }
+
+  void _undoStroke() {
+    if (_strokes.isEmpty) return;
+    setState(() {
+      _redoStrokes.add(_strokes.removeLast());
+      _hasUnsavedDoodleChanges = true;
+    });
+  }
+
+  void _redoStroke() {
+    if (_redoStrokes.isEmpty) return;
+    setState(() {
+      _strokes.add(_redoStrokes.removeLast());
+      _hasUnsavedDoodleChanges = true;
+    });
+  }
+
+  void _clearDoodleSession() {
+    setState(() {
+      _strokes.clear();
+      _redoStrokes.clear();
+      _activeStroke = null;
+      _doodleImageUrl = null;
+      _doodleStoragePath = null;
+      _hasUnsavedDoodleChanges = true;
+    });
+  }
+
+  Future<Uint8List?> _captureDoodlePngBytes() async {
+    final boundary =
+        _drawingBoundaryKey.currentContext?.findRenderObject()
+            as RenderRepaintBoundary?;
+    if (boundary == null) return null;
+    final ratio = View.of(context).devicePixelRatio;
+    final image = await boundary.toImage(pixelRatio: ratio.clamp(1, 3));
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    return bytes?.buffer.asUint8List();
+  }
+
+  Future<bool> _saveDoodleIfPossible({bool showSuccessMessage = true}) async {
+    final journalId = _savedJournalId;
+    if (journalId == null) {
+      if (showSuccessMessage && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Save the journal entry first.')),
+        );
+      }
+      return false;
+    }
+
+    try {
+      if (_strokes.isEmpty && _doodleStoragePath == null) {
+        await JournalDoodleService.clearDoodle(journalId);
+        if (!mounted) return false;
+        setState(() {
+          _doodleImageUrl = null;
+          _doodleStoragePath = null;
+          _hasUnsavedDoodleChanges = false;
+        });
+        if (showSuccessMessage) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Doodle cleared')));
+        }
+        return true;
+      }
+
+      final bytes = await _captureDoodlePngBytes();
+      if (bytes == null) return false;
+      await JournalDoodleService.saveDoodle(
+        journalEntryId: journalId,
+        pngBytes: bytes,
+        bgStyle: _bgStyleToString(_doodleBgStyle),
+      );
+      final doodle = await JournalDoodleService.fetchDoodle(journalId);
+      if (doodle.storagePath == null || doodle.storagePath!.isEmpty) {
+        throw Exception('Doodle save failed: storage path was not persisted.');
+      }
+      if (doodle.previewUrl == null || doodle.previewUrl!.isEmpty) {
+        throw Exception('Doodle save failed: could not resolve preview URL.');
+      }
+
+      if (!mounted) return false;
+      setState(() {
+        _doodleStoragePath = doodle.storagePath;
+        _doodleImageUrl = doodle.previewUrl;
+        _doodleBgStyle = _bgStyleFromString(doodle.bgStyle ?? 'none');
+        _strokes.clear();
+        _redoStrokes.clear();
+        _activeStroke = null;
+        _hasUnsavedDoodleChanges = false;
+      });
+      if (showSuccessMessage) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Doodle saved')));
+      }
+      return true;
+    } catch (e) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Doodle save failed: $e')));
+      return false;
+    }
+  }
+
+  Future<bool> _save() async {
     if (_pendingUploads.isNotEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -812,12 +1848,15 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
           ),
         );
       }
-      return;
+      return false;
     }
 
-    final deltaJson = jsonEncode(_qc.document.toDelta().toJson());
+    final deltaJson = JournalDocumentCodec.encode(
+      document: _qc.document,
+      canvasObjects: _canvasObjects,
+    );
     final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
+    if (user == null) return false;
 
     final now = DateTime.now();
     final startOfDay = DateTime(now.year, now.month, now.day);
@@ -836,7 +1875,7 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
             onUpgrade: () => context.go('/subscription'),
           );
         }
-        return;
+        return false;
       }
       if (_savedJournalId == null) {
         final countResponse = await Supabase.instance.client
@@ -857,42 +1896,18 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
               ),
             );
           }
-          return;
+          return false;
         }
       }
 
-      Map<String, dynamic> savedRow;
-      if (_savedJournalId == null) {
-        final inserted = await Supabase.instance.client
-            .from('journals')
-            .insert({
-              'user_id': user.id,
-              'day_id': dayId,
-              'title': _titleController.text.trim().isEmpty
-                  ? null
-                  : _titleController.text.trim(),
-              'text': deltaJson,
-              'created_at': now.toIso8601String(),
-            })
-            .select('id, share_id')
-            .single();
-        savedRow = Map<String, dynamic>.from(inserted);
-      } else {
-        final updated = await Supabase.instance.client
-            .from('journals')
-            .update({
-              'day_id': dayId,
-              'title': _titleController.text.trim().isEmpty
-                  ? null
-                  : _titleController.text.trim(),
-              'text': deltaJson,
-            })
-            .eq('id', _savedJournalId!)
-            .eq('user_id', user.id)
-            .select('id, share_id')
-            .single();
-        savedRow = Map<String, dynamic>.from(updated);
-      }
+      final savedRow = await _journalRepository.savePrivateJournal(
+        journalId: _savedJournalId,
+        title: _titleController.text.trim(),
+        body: deltaJson,
+        dayId: dayId,
+        folderId: _selectedFolderId,
+        now: now,
+      );
 
       if (mounted) {
         setState(() {
@@ -901,33 +1916,59 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
           _hasSavedChanges = true;
         });
       }
+
+      if (_hasUnsavedDoodleChanges ||
+          _strokes.isNotEmpty ||
+          _doodleStoragePath != null) {
+        final doodleSaved = await _saveDoodleIfPossible(
+          showSuccessMessage: false,
+        );
+        if (!doodleSaved) {
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('Save failed')));
+          }
+          return false;
+        }
+      } else {
+        final id = _savedJournalId;
+        if (id != null && _doodleStoragePath == null) {
+          await _refreshDoodleFromDb(id);
+        }
+      }
+      if (mounted) {
+        setState(() => _lastSavedDraftSignature = _captureDraftSignature());
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Save failed: $e')));
       }
-      return;
+      return false;
     }
 
-    if (!mounted) return;
+    if (!mounted) return false;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Saved')));
+    return true;
   }
 
   List<Widget> _buildActionButtons({required bool compact}) {
     if (compact) {
       return <Widget>[
         MbAppBarCircleButton(
-          icon: Icons.help_outline,
-          onPressed: () => _showGuideIfNeeded(force: true),
-        ),
-        MbAppBarCircleButton(
           key: _overflowButtonKey,
           icon: Icons.more_horiz,
           tooltip: 'More',
           onPressed: _openCompactActionsMenu,
+        ),
+        MbAppBarCircleButton(
+          tooltip: _drawMode ? 'Exit draw mode' : 'Draw mode',
+          icon: _drawMode ? Icons.edit_off : Icons.draw,
+          onPressed: _toggleDrawMode,
         ),
         MbAppBarCircleButton(
           key: _saveTickButtonKey,
@@ -938,10 +1979,6 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
       ];
     }
     return <Widget>[
-      MbAppBarCircleButton(
-        icon: Icons.help_outline,
-        onPressed: () => _showGuideIfNeeded(force: true),
-      ),
       if (_savedJournalId != null)
         MbAppBarCircleButton(
           tooltip: _savedShareId == null ? 'Share' : 'Share (updated)',
@@ -964,7 +2001,9 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
         key: _imageUploadButtonKey,
         tooltip: 'Add photo',
         icon: Icons.photo,
-        onPressed: (_activeUploads > 0 || _isPickingMedia) ? null : _insertImage,
+        onPressed: (_activeUploads > 0 || _isPickingMedia)
+            ? null
+            : _insertImage,
       ),
       MbAppBarCircleButton(
         key: _videoUploadButtonKey,
@@ -973,6 +2012,27 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
         onPressed: (_activeUploads > 0 || _isPickingMedia)
             ? null
             : _insertVideoLink,
+      ),
+      MbAppBarCircleButton(
+        tooltip: 'Add GIF',
+        icon: Icons.gif_box_outlined,
+        onPressed: (_activeUploads > 0 || _isPickingMedia) ? null : _insertGif,
+      ),
+      MbAppBarCircleButton(
+        tooltip: 'Add sticker',
+        icon: Icons.auto_awesome,
+        onPressed: _insertSticker,
+      ),
+      if (_canvasObjects.isNotEmpty)
+        MbAppBarCircleButton(
+          tooltip: _canvasEditMode ? 'Finish arranging' : 'Arrange items',
+          icon: _canvasEditMode ? Icons.check_circle : Icons.open_with_rounded,
+          onPressed: _toggleCanvasEditMode,
+        ),
+      MbAppBarCircleButton(
+        tooltip: _drawMode ? 'Exit draw mode' : 'Draw mode',
+        icon: _drawMode ? Icons.edit_off : Icons.draw,
+        onPressed: _toggleDrawMode,
       ),
       MbAppBarCircleButton(
         key: _saveTickButtonKey,
@@ -987,7 +2047,8 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
     final buttonContext = _overflowButtonKey.currentContext;
     if (buttonContext == null) return;
     final renderBox = buttonContext.findRenderObject() as RenderBox?;
-    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
     if (renderBox == null || overlay == null) return;
     final topLeft = renderBox.localToGlobal(Offset.zero, ancestor: overlay);
     final bottomRight = renderBox.localToGlobal(
@@ -1013,6 +2074,22 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
         const PopupMenuItem<String>(value: 'undo', child: Text('Undo remove')),
         const PopupMenuItem<String>(value: 'photo', child: Text('Add photo')),
         const PopupMenuItem<String>(value: 'video', child: Text('Add video')),
+        const PopupMenuItem<String>(value: 'gif', child: Text('Add GIF')),
+        const PopupMenuItem<String>(
+          value: 'sticker',
+          child: Text('Add sticker'),
+        ),
+        if (_canvasObjects.isNotEmpty)
+          PopupMenuItem<String>(
+            value: 'arrange',
+            child: Text(
+              _canvasEditMode ? 'Finish arranging' : 'Arrange items',
+            ),
+          ),
+        PopupMenuItem<String>(
+          value: 'draw_mode',
+          child: Text(_drawMode ? 'Exit draw mode' : 'Draw mode'),
+        ),
       ],
     );
     if (!mounted || action == null) return;
@@ -1037,16 +2114,290 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
           await _insertVideoLink();
         }
         break;
+      case 'gif':
+        if (_activeUploads == 0 && !_isPickingMedia) {
+          await _insertGif();
+        }
+        break;
+      case 'sticker':
+        await _insertSticker();
+        break;
+      case 'arrange':
+        _toggleCanvasEditMode();
+        break;
+      case 'draw_mode':
+        _toggleDrawMode();
+        break;
     }
+  }
+
+  Widget _buildCanvasToolbar() {
+    JournalCanvasObject? selected;
+    final selectedId = _selectedCanvasObjectId;
+    if (selectedId != null) {
+      for (final object in _canvasObjects) {
+        if (object.id == selectedId) {
+          selected = object;
+          break;
+        }
+      }
+    }
+    final selectedLabel = switch (selected?.type) {
+      JournalCanvasObjectType.image => 'Photo selected',
+      JournalCanvasObjectType.video => 'Video selected',
+      JournalCanvasObjectType.sticker => 'Sticker selected',
+      _ => null,
+    };
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        OutlinedButton.icon(
+          onPressed: _insertSticker,
+          icon: const Icon(Icons.auto_awesome_rounded),
+          label: const Text('Stickers'),
+        ),
+        OutlinedButton.icon(
+          onPressed: (_activeUploads > 0 || _isPickingMedia) ? null : _insertGif,
+          icon: const Icon(Icons.gif_box_outlined),
+          label: const Text('GIFs'),
+        ),
+        if (_canvasObjects.isNotEmpty)
+          OutlinedButton.icon(
+            onPressed: _toggleCanvasEditMode,
+            icon: Icon(
+              _canvasEditMode
+                  ? Icons.check_circle_rounded
+                  : Icons.open_with_rounded,
+            ),
+            label: Text(_canvasEditMode ? 'Done arranging' : 'Arrange items'),
+            style: OutlinedButton.styleFrom(
+              backgroundColor: _canvasEditMode
+                  ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
+                  : null,
+            ),
+          ),
+        if (_canvasObjects.isNotEmpty)
+          Chip(
+            avatar: const Icon(Icons.layers_rounded, size: 18),
+            label: Text('${_canvasObjects.length} creative item(s)'),
+          ),
+        if (selectedLabel != null)
+          Chip(
+            avatar: const Icon(Icons.touch_app_rounded, size: 18),
+            label: Text(selectedLabel),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDrawingToolbar() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => setState(() => _activeTool = DrawingTool.pen),
+                icon: const Icon(Icons.edit),
+                label: const Text('Pen'),
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: _activeTool == DrawingTool.pen
+                      ? Theme.of(context).colorScheme.primary.withOpacity(0.14)
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: () =>
+                    setState(() => _activeTool = DrawingTool.eraser),
+                icon: const Icon(Icons.auto_fix_off),
+                label: const Text('Eraser'),
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: _activeTool == DrawingTool.eraser
+                      ? Theme.of(context).colorScheme.primary.withOpacity(0.14)
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _pickDoodleBackground,
+                icon: const Icon(Icons.grid_on),
+                label: Text(_bgStyleLabel(_doodleBgStyle)),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: _pickDrawColor,
+                icon: Icon(Icons.color_lens, color: _drawColor),
+                label: const Text('Color'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 6,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 9,
+                  ),
+                ),
+                child: Slider(
+                  min: 1,
+                  max: 24,
+                  value: _strokeWidth,
+                  onChanged: (value) => setState(() => _strokeWidth = value),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            _StrokePreview(color: _drawColor, width: _strokeWidth),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildFormattingToolbar() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _FormatToggleChip(
+              label: 'Bold',
+              icon: Icons.format_bold,
+              selected: _boldEnabled,
+              onPressed: _toggleBold,
+            ),
+            _FormatToggleChip(
+              label: 'Bullet list',
+              icon: Icons.format_list_bulleted,
+              selected: _isListActive(quill.Attribute.ul.value!),
+              onPressed: () => _toggleList(quill.Attribute.ul),
+            ),
+            _FormatToggleChip(
+              label: 'Numbered list',
+              icon: Icons.format_list_numbered,
+              selected: _isListActive(quill.Attribute.ol.value!),
+              onPressed: () => _toggleList(quill.Attribute.ol),
+            ),
+            _FormatToggleChip(
+              label: 'Checklist',
+              icon: Icons.checklist,
+              selected: _isChecklistActive,
+              onPressed: () => _toggleList(quill.Attribute.unchecked),
+            ),
+            OutlinedButton.icon(
+              onPressed: _pickLineSpacing,
+              icon: const Icon(Icons.format_line_spacing),
+              label: Text(
+                _lineSpacingMixed
+                    ? 'Spacing: Mixed'
+                    : 'Spacing: ${_selectedLineSpacing.label}',
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<String?>(
+          initialValue: _selectedFont,
+          decoration: const InputDecoration(labelText: 'Font'),
+          items: [
+            const DropdownMenuItem<String?>(
+              value: null,
+              child: Text('Default'),
+            ),
+            ..._fonts.map(
+              (f) => DropdownMenuItem<String?>(value: f, child: Text(f)),
+            ),
+          ],
+          onChanged: _applyFont,
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: 32,
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _ColorDot(
+                  color: null,
+                  selected: _selectedColor == null,
+                  onTap: () => _applyColor(null),
+                ),
+                ..._colors.map(
+                  (c) => _ColorDot(
+                    color: c,
+                    selected: _selectedColor == c,
+                    onTap: () => _applyColor(c),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Highlight',
+            style: Theme.of(context).textTheme.labelMedium,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface.withOpacity(0.6),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outline.withOpacity(0.14),
+            ),
+          ),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _ColorDot(
+                color: null,
+                selected: _selectedHighlightColor == null,
+                onTap: () => _applyHighlight(null),
+                label: 'Clear',
+              ),
+              ..._highlightColors.map(
+                (c) => _ColorDot(
+                  color: c,
+                  selected: _selectedHighlightColor == c,
+                  onTap: () => _applyHighlight(c),
+                  isHighlight: true,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+    final editorStyles = JournalDocumentCodec.buildEditorStyles(context);
 
-    return MbScaffold(
-      applyBackground: true,
-      appBar: AppBar(
+    return WillPopScope(
+      onWillPop: _handleWillPop,
+      child: MbScaffold(
+        applyBackground: true,
+        appBar: AppBar(
         automaticallyImplyLeading: false,
         titleSpacing: 0,
         title: LayoutBuilder(
@@ -1054,15 +2405,15 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
             final compactActions = constraints.maxWidth < 430;
             final actionButtons = _buildActionButtons(compact: compactActions);
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: _appBarEdgePadding),
+              padding: const EdgeInsets.symmetric(
+                horizontal: _appBarEdgePadding,
+              ),
               child: Row(
                 children: [
                   MbAppBarCircleButton(
                     key: _backButtonKey,
                     icon: Icons.arrow_back,
-                    onPressed: () => context.canPop()
-                        ? context.pop(_hasSavedChanges)
-                        : context.go('/journals'),
+                    onPressed: _handleExitRequest,
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -1076,17 +2427,24 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
             );
           },
         ),
-      ),
-      body: MbFloatingHintOverlay(
+        ),
+        body: MbFloatingHintOverlay(
         hintKey: 'hint_journal_new',
         text: 'Write a little or a lot. Add media if it helps.',
         iconText: '🫧',
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(10),
           child: SizedBox.expand(
             child: _GlowPanel(
               child: Column(
                 children: [
+                  OutlinedButton.icon(
+                    key: _folderPickerKey,
+                    onPressed: _pickFolder,
+                    icon: const Icon(Icons.folder_open_rounded),
+                    label: Text(_selectedFolderLabel),
+                  ),
+                  const SizedBox(height: 8),
                   TextField(
                     controller: _titleController,
                     decoration: InputDecoration(
@@ -1096,79 +2454,117 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
                       fillColor: cs.surface,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  KeyedSubtree(
-                    key: _formattingDropdownKey,
-                    child: ExpansionTile(
-                      tilePadding: EdgeInsets.zero,
-                      title: const Text('Formatting'),
-                      initiallyExpanded: _showFormatBar,
-                      onExpansionChanged: (v) =>
-                          setState(() => _showFormatBar = v),
-                      children: [
-                        const SizedBox(height: 8),
-                        DropdownButtonFormField<String?>(
-                          initialValue: _selectedFont,
-                          decoration: const InputDecoration(labelText: 'Font'),
-                          items: [
-                            const DropdownMenuItem<String?>(
-                              value: null,
-                              child: Text('Default'),
-                            ),
-                            ..._fonts.map(
-                              (f) => DropdownMenuItem<String?>(
-                                value: f,
-                                child: Text(f),
+                  const SizedBox(height: 6),
+                  if (!_drawMode)
+                    KeyedSubtree(
+                      key: _formattingDropdownKey,
+                      child: ExpansionTile(
+                        tilePadding: EdgeInsets.zero,
+                        title: const Text('Formatting'),
+                        initiallyExpanded: _showFormatBar,
+                        onExpansionChanged: (v) =>
+                            setState(() => _showFormatBar = v),
+                        children: [
+                          const SizedBox(height: 8),
+                          _buildFormattingToolbar(),
+                        ],
+                      ),
+                    ),
+                  if (!_drawMode) const SizedBox(height: 8),
+                  if (_drawMode) _buildDrawingToolbar(),
+                  if (_drawMode || _canvasObjects.isNotEmpty)
+                    const SizedBox(height: 8),
+                  _buildCanvasToolbar(),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      curve: Curves.easeOutCubic,
+                      decoration: _journalCanvasDecoration(cs),
+                      clipBehavior: Clip.antiAlias,
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              ignoring: _drawMode,
+                              child: quill.QuillEditor.basic(
+                                controller: _qc,
+                                focusNode: _editorFocus,
+                                scrollController: _editorScrollController,
+                                config: quill.QuillEditorConfig(
+                                  autoFocus: true,
+                                  scrollable: true,
+                                  expands: false,
+                                  scrollBottomInset: keyboardInset + 24,
+                                  customStyles: editorStyles,
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    12,
+                                    12,
+                                    24,
+                                  ),
+                                  embedBuilders: const [
+                                    LocalImageEmbedBuilder(),
+                                    LocalVideoEmbedBuilder(),
+                                  ],
+                                ),
                               ),
                             ),
-                          ],
-                          onChanged: _applyFont,
-                        ),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          height: 32,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                _ColorDot(
-                                  color: null,
-                                  selected: _selectedColor == null,
-                                  onTap: () => _applyColor(null),
-                                ),
-                                ..._colors.map(
-                                  (c) => _ColorDot(
-                                    color: c,
-                                    selected: _selectedColor == c,
-                                    onTap: () => _applyColor(c),
-                                  ),
-                                ),
-                              ],
+                          ),
+                          Positioned.fill(
+                            child: JournalCanvasLayer(
+                              objects: _canvasObjects,
+                              selectedObjectId: _selectedCanvasObjectId,
+                              editable: true,
+                              interactionEnabled:
+                                  _canvasEditMode && !_drawMode,
+                              uploadProgressByPath: _uploadProgressByPath,
+                              failedPaths: _uploadFailedPaths,
+                              onSelectObject: _selectCanvasObject,
+                              onUpdateObject: _updateCanvasObject,
+                              onDeleteObject: _deleteCanvasObject,
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: Container(
-                      color: Theme.of(context).scaffoldBackgroundColor,
-                      child: quill.QuillEditor.basic(
-                        controller: _qc,
-                        focusNode: _editorFocus,
-                        config: const quill.QuillEditorConfig(
-                          autoFocus: true,
-                          expands: true,
-                          padding: EdgeInsets.all(12),
-                          embedBuilders: [
-                            LocalImageEmbedBuilder(),
-                            LocalVideoEmbedBuilder(),
-                          ],
-                        ),
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              ignoring: !_drawMode,
+                              child: JournalDrawingCanvas(
+                                repaintKey: _drawingBoundaryKey,
+                                strokes: _strokes,
+                                activeStroke: _activeStroke,
+                                baseImageUrl: _doodleImageUrl,
+                                backgroundStyle: _doodleBgStyle,
+                                backgroundSpacing: _doodleBgSpacing,
+                                onStrokeStart: _startStroke,
+                                onStrokeUpdate: _appendStrokePoint,
+                                onStrokeEnd: _endStroke,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
+                  if (_drawMode)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        'Draw mode is on. Text gestures are temporarily disabled.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  if (_canvasEditMode && !_drawMode)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Arrange mode is on. Drag items around the page, or pinch to resize and rotate them.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ),
                   _MediaPreviewStrip(
                     items: _media,
                     removeMode: _removeMediaMode,
@@ -1233,6 +2629,7 @@ class _NewJournalScreenState extends State<NewJournalScreen> {
             ),
           ),
         ),
+        ),
       ),
     );
   }
@@ -1247,7 +2644,7 @@ class _GlowPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
         borderRadius: BorderRadius.circular(18),
@@ -1263,6 +2660,74 @@ class _GlowPanel extends StatelessWidget {
       ),
       child: child,
     );
+  }
+}
+
+class _FormatToggleChip extends StatelessWidget {
+  const _FormatToggleChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        backgroundColor: selected
+            ? Theme.of(context).colorScheme.primary.withOpacity(0.14)
+            : null,
+      ),
+    );
+  }
+}
+
+class _StrokePreview extends StatelessWidget {
+  const _StrokePreview({required this.color, required this.width});
+
+  final Color color;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 28,
+      height: 28,
+      child: CustomPaint(
+        painter: _StrokePreviewPainter(color: color, width: width),
+      ),
+    );
+  }
+}
+
+class _StrokePreviewPainter extends CustomPainter {
+  const _StrokePreviewPainter({required this.color, required this.width});
+
+  final Color color;
+  final double width;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill
+      ..isAntiAlias = true;
+    final radius = width.clamp(1, size.shortestSide / 2).toDouble() / 2;
+    canvas.drawCircle(size.center(Offset.zero), radius, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _StrokePreviewPainter oldDelegate) {
+    return oldDelegate.color != color || oldDelegate.width != width;
   }
 }
 
@@ -1298,15 +2763,13 @@ class _MediaPreviewStrip extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
           final item = items[i];
-          final file = resolveMediaFile(item);
-          final url = item.url ?? item.path ?? '';
           final pathKey = item.path ?? '';
           final progress = uploadProgressByPath[pathKey];
           final failed = failedPaths.contains(pathKey);
           final uploading = progress != null && progress < 1;
           final thumb = item.type == 'video'
-              ? _VideoThumb(file: file, url: url)
-              : _ImageThumb(file: file, url: url);
+              ? _VideoThumb(item: item)
+              : _ImageThumb(item: item);
           return GestureDetector(
             onTap: uploading
                 ? null
@@ -1437,40 +2900,76 @@ class _RemovedEmbed {
 }
 
 class _ImageThumb extends StatelessWidget {
-  const _ImageThumb({required this.file, required this.url});
+  const _ImageThumb({required this.item});
 
-  final File? file;
-  final String url;
+  final JournalMediaItem item;
 
   @override
   Widget build(BuildContext context) {
-    if (file != null) {
-      return Image.file(file!, fit: BoxFit.cover);
-    }
-    return Image.network(url, fit: BoxFit.cover);
+    return FutureBuilder<ResolvedJournalMedia>(
+      future: resolveJournalMedia(item, debugContext: 'new_entry_image_thumb'),
+      builder: (context, snap) {
+        final resolved = snap.data;
+        if (resolved?.file != null) {
+          return Image.file(resolved!.file!, fit: BoxFit.cover);
+        }
+        if (resolved?.url != null && resolved!.url!.isNotEmpty) {
+          return Image.network(
+            resolved.url!,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _thumbFallback('Photo'),
+          );
+        }
+        if (snap.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+        }
+        return _thumbFallback('Photo');
+      },
+    );
   }
 }
 
 class _VideoThumb extends StatelessWidget {
-  const _VideoThumb({required this.file, required this.url});
+  const _VideoThumb({required this.item});
 
-  final File? file;
-  final String url;
+  final JournalMediaItem item;
 
   @override
   Widget build(BuildContext context) {
-    final child = file != null
-        ? Image.file(file!, fit: BoxFit.cover)
-        : Image.network(url, fit: BoxFit.cover);
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Positioned.fill(child: child),
-        Container(color: Colors.black26),
-        const Icon(Icons.play_circle, color: Colors.white, size: 32),
-      ],
+    return FutureBuilder<ResolvedJournalMedia>(
+      future: resolveJournalMedia(item, debugContext: 'new_entry_video_thumb'),
+      builder: (context, snap) {
+        final resolved = snap.data;
+        final child = resolved?.file != null
+            ? Image.file(resolved!.file!, fit: BoxFit.cover)
+            : (resolved?.url != null && resolved!.url!.isNotEmpty)
+            ? Image.network(
+                resolved.url!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _thumbFallback('Video'),
+              )
+            : snap.connectionState != ConnectionState.done
+            ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+            : _thumbFallback('Video');
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned.fill(child: child),
+            Container(color: Colors.black26),
+            const Icon(Icons.play_circle, color: Colors.white, size: 32),
+          ],
+        );
+      },
     );
   }
+}
+
+Widget _thumbFallback(String label) {
+  return Container(
+    color: Colors.black12,
+    alignment: Alignment.center,
+    child: Text('$label unavailable'),
+  );
 }
 
 class _ColorDot extends StatelessWidget {
@@ -1478,11 +2977,15 @@ class _ColorDot extends StatelessWidget {
     required this.color,
     required this.selected,
     required this.onTap,
+    this.label,
+    this.isHighlight = false,
   });
 
   final Color? color;
   final bool selected;
   final VoidCallback onTap;
+  final String? label;
+  final bool isHighlight;
 
   @override
   Widget build(BuildContext context) {
@@ -1491,22 +2994,44 @@ class _ColorDot extends StatelessWidget {
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(right: 6),
-        width: 22,
-        height: 22,
+        width: label != null ? 62 : 28,
+        height: 28,
         decoration: BoxDecoration(
           color: color == null ? Colors.transparent : displayColor,
-          borderRadius: BorderRadius.circular(11),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: selected
                 ? Theme.of(context).colorScheme.primary
                 : Theme.of(context).colorScheme.outline.withOpacity(0.4),
-            width: selected ? 2 : 1,
+            width: selected ? 2.4 : 1.2,
           ),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: Theme.of(context).colorScheme.primary.withOpacity(
+                      0.18,
+                    ),
+                    blurRadius: 10,
+                    spreadRadius: 1,
+                  ),
+                ]
+              : null,
         ),
-        child: color == null
+        child: label != null
             ? Center(
                 child: Text(
-                  'A',
+                  label!,
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Theme.of(context).colorScheme.onSurface,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              )
+            : color == null
+            ? Center(
+                child: Text(
+                  isHighlight ? '' : 'A',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context).colorScheme.onSurface,

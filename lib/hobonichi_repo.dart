@@ -114,20 +114,6 @@ class HobonichiRepo {
     });
   }
 
-  Future<void> addChatBox({
-    required String userId,
-    required String pageId,
-    required int sortOrder,
-  }) async {
-    await supabase.from('boxes').insert({
-      'user_id': userId,
-      'page_id': pageId,
-      'type': 'chat',
-      'sort_order': sortOrder,
-      'content': {},
-    });
-  }
-
   Future<void> addChecklistBox({
     required String userId,
     required String pageId,

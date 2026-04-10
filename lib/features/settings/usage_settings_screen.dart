@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
-import 'package:mind_buddy/services/mind_buddy_api.dart';
-import 'package:mind_buddy/services/subscription_plan_catalog.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:mind_buddy/services/subscription_limits.dart';
 
 class UsageSettingsScreen extends StatefulWidget {
   const UsageSettingsScreen({super.key});
@@ -13,19 +13,45 @@ class UsageSettingsScreen extends StatefulWidget {
 }
 
 class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
-  late Future<Map<String, dynamic>> _future;
+  late Future<_UsageSummary> _future;
 
   @override
   void initState() {
     super.initState();
-    _future = MindBuddyEnhancedApi().getChatUsageSummary();
+    _future = _loadUsageSummary();
   }
 
   Future<void> _refresh() async {
     setState(() {
-      _future = MindBuddyEnhancedApi().getChatUsageSummary();
+      _future = _loadUsageSummary();
     });
     await _future;
+  }
+
+  Future<_UsageSummary> _loadUsageSummary() async {
+    final client = Supabase.instance.client;
+    final user = client.auth.currentUser;
+    if (user == null) {
+      throw Exception('User is not signed in.');
+    }
+
+    final info = await SubscriptionLimits.fetchForCurrentUser();
+    final deviceCountResponse = await client
+        .from('user_devices')
+        .select()
+        .eq('user_id', user.id)
+        .count();
+    final journalCountResponse = await client
+        .from('journals')
+        .select()
+        .eq('user_id', user.id)
+        .count();
+
+    return _UsageSummary(
+      plan: info,
+      deviceCount: deviceCountResponse.count,
+      journalCount: journalCountResponse.count,
+    );
   }
 
   @override
@@ -44,7 +70,7 @@ class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
-        child: FutureBuilder<Map<String, dynamic>>(
+        child: FutureBuilder<_UsageSummary>(
           future: _future,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
@@ -70,23 +96,18 @@ class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
             }
 
             final usage = snapshot.data!;
-            final planName = (usage['planName'] ?? 'FREE MODE').toString();
-            final plan = SubscriptionPlanCatalog.fromRaw(
-              usage['normalizedTier'],
-            );
-            final messageCount = usage['messageCount'] as int? ?? 0;
-            final messageLimit = usage['messageLimit'] as int? ?? 0;
-            final chatCount = usage['chatCount'] as int? ?? 0;
-            final chatLimit = usage['chatLimit'] as int? ?? plan.dailyChats;
-            final journalCount = usage['journalCount'] as int? ?? 0;
-            final journalLimit = usage['journalLimit'] as int? ?? 0;
-            final deviceCount = usage['deviceCount'] as int? ?? 0;
-            final deviceLimit = usage['deviceLimit'] as int? ?? 0;
-            final dayId = usage['dayId'] as String? ?? '';
-
-            final isPending = usage['isPending'] == true;
-            final tierLabel = isPending ? 'FREE MODE' : planName;
-            final chatLimitLabel = chatLimit.toString();
+            final planInfo = usage.plan;
+            final plan = planInfo.plan;
+            final tierLabel = planInfo.isPending ? 'FREE MODE' : plan.name;
+            final deviceLimit = planInfo.deviceLimit;
+            final deviceCount = usage.deviceCount;
+            final journalCount = usage.journalCount;
+            final deviceValue = deviceLimit < 0
+                ? '$deviceCount / Unlimited'
+                : '$deviceCount / $deviceLimit';
+            final deviceSubtitle = deviceLimit < 0
+                ? '${plan.name} allows unlimited devices.'
+                : '${plan.name} allows up to $deviceLimit devices.';
 
             return ListView(
               padding: const EdgeInsets.all(16),
@@ -99,37 +120,27 @@ class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
                 _UsageCard(
                   title: 'Current Plan',
                   value: '$tierLabel (${plan.price})',
-                  subtitle: dayId.isEmpty ? null : 'Today: $dayId',
+                  subtitle: plan.insights
+                      ? 'Insights are enabled on this plan.'
+                      : 'Upgrade to Plus Support Mode for insights.',
                 ),
                 const SizedBox(height: 12),
                 _UsageCard(
-                  title: 'AI Chats Today',
-                  value: '$messageCount / $messageLimit',
-                  subtitle: isPending
-                      ? 'FREE MODE includes no AI chats.'
-                      : '${plan.name} includes $messageLimit AI chats per day.',
+                  title: 'Journal Entries',
+                  value: '$journalCount / Unlimited',
+                  subtitle: 'Unlimited journaling is included.',
                 ),
                 const SizedBox(height: 12),
                 _UsageCard(
-                  title: 'Conversations Started',
-                  value: '$chatCount / $chatLimitLabel',
-                  subtitle: isPending
-                      ? 'FREE MODE includes no AI chats.'
-                      : '${plan.name} allows $chatLimitLabel chats per day.',
-                ),
-                const SizedBox(height: 12),
-                _UsageCard(
-                  title: 'Journal Entries Today',
-                  value: journalLimit < 0
-                      ? '$journalCount / Unlimited'
-                      : '$journalCount / $journalLimit',
-                  subtitle: 'Unlimited journal entries are included.',
+                  title: 'Journal Sharing',
+                  value: 'Unlimited',
+                  subtitle: 'Unlimited journal sharing is included.',
                 ),
                 const SizedBox(height: 12),
                 _UsageCard(
                   title: 'Devices',
-                  value: '$deviceCount / $deviceLimit',
-                  subtitle: '${plan.name} allows up to $deviceLimit devices.',
+                  value: deviceValue,
+                  subtitle: deviceSubtitle,
                 ),
                 const SizedBox(height: 20),
                 OutlinedButton(
@@ -145,12 +156,20 @@ class _UsageSettingsScreenState extends State<UsageSettingsScreen> {
   }
 }
 
-class _UsageCard extends StatelessWidget {
-  const _UsageCard({
-    required this.title,
-    required this.value,
-    this.subtitle,
+class _UsageSummary {
+  const _UsageSummary({
+    required this.plan,
+    required this.deviceCount,
+    required this.journalCount,
   });
+
+  final SubscriptionInfo plan;
+  final int deviceCount;
+  final int journalCount;
+}
+
+class _UsageCard extends StatelessWidget {
+  const _UsageCard({required this.title, required this.value, this.subtitle});
 
   final String title;
   final String value;
@@ -187,10 +206,7 @@ class _UsageCard extends StatelessWidget {
           ),
           if (subtitle != null) ...[
             const SizedBox(height: 6),
-            Text(
-              subtitle!,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            Text(subtitle!, style: Theme.of(context).textTheme.bodySmall),
           ],
         ],
       ),

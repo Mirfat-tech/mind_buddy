@@ -10,30 +10,21 @@ class SubscriptionInfo {
     required this.rawTier,
     required this.tier,
     required this.plan,
-    required this.isFull,
-    required this.isLight,
     required this.isPending,
   });
 
   final String rawTier;
   final MbPlanTier tier;
   final PlanBenefits plan;
-  final bool isFull;
-  final bool isLight;
   final bool isPending;
 
   bool get isFree => tier == MbPlanTier.free;
   bool get isPlus => tier == MbPlanTier.plusSupport;
-  bool get supportsMemory => plan.longTermMemory;
   bool get supportsInsights => plan.insights;
-  bool get supportsVoice => plan.voiceChatsPerDay > 0;
   bool get supportsCustomTemplates => plan.canCreateCustomTemplates;
-
-  int get messageLimit => isPending ? 0 : plan.dailyChats;
-  int get chatLimit => isPending ? 0 : plan.dailyChats;
-  int get journalLimit => -1; // Unlimited journal entries for every active plan.
+  int get journalLimit =>
+      -1; // Unlimited journal entries for every active plan.
   int get deviceLimit => isPending ? 0 : plan.devices;
-  int get voiceChatsPerDay => isPending ? 0 : plan.voiceChatsPerDay;
   int get sharesPerDay => isPending ? 0 : plan.sharesPerDay;
 
   String get planName => plan.name;
@@ -53,6 +44,7 @@ class SubscriptionLimits {
       GoRouter.of(context).go('/onboarding/plan');
       return;
     }
+    if (!context.mounted) return;
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -84,15 +76,11 @@ class SubscriptionLimits {
   }
 
   static bool isFullTier(dynamic tier) {
-    return SubscriptionPlanCatalog.resolveTier(tier) == MbPlanTier.fullSupport;
+    return SubscriptionPlanCatalog.resolveTier(tier) == MbPlanTier.plusSupport;
   }
 
   static bool isPendingTier(dynamic tier) {
     return SubscriptionPlanCatalog.resolveTier(tier) == MbPlanTier.pending;
-  }
-
-  static bool isLightTier(dynamic tier) {
-    return SubscriptionPlanCatalog.resolveTier(tier) == MbPlanTier.lightSupport;
   }
 
   static SubscriptionInfo fromRawTier(dynamic rawTier) {
@@ -100,11 +88,9 @@ class SubscriptionLimits {
     final tier = SubscriptionPlanCatalog.resolveTier(normalized);
     final plan = SubscriptionPlanCatalog.forTier(tier);
     return SubscriptionInfo(
-      rawTier: normalized,
+      rawTier: SubscriptionPlanCatalog.databaseTierFor(tier),
       tier: tier,
       plan: plan,
-      isFull: tier == MbPlanTier.fullSupport,
-      isLight: tier == MbPlanTier.lightSupport,
       isPending: tier == MbPlanTier.pending,
     );
   }

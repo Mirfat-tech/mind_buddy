@@ -10,13 +10,10 @@ import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
-import 'widgets/chat_box_widget.dart';
 import 'widgets/journal_box_widget.dart';
 import 'widgets/pomodoro_box_widget.dart';
 import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'widgets/checklist_box_widget.dart';
-
-import 'package:mind_buddy/services/mind_buddy_api.dart';
 
 class DailyPageScreen extends StatefulWidget {
   const DailyPageScreen({super.key, required this.dayId});
@@ -35,8 +32,6 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
   String? coverId;
 
   List<Map<String, dynamic>> boxes = [];
-
-  late final MindBuddyEnhancedApi _api;
 
   @override
   void initState() {
@@ -127,12 +122,6 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                 icon: Icons.edit_note,
                 title: 'Journal box',
                 subtitle: 'Write anything for this day',
-              ),
-              _AddTile(
-                value: 'chat',
-                icon: Icons.chat_bubble_outline,
-                title: 'Chat box',
-                subtitle: 'Talk to MyBrainBubble about this day',
               ),
               _AddTile(
                 value: 'checklist',
@@ -297,21 +286,6 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
                                       content: newContent,
                                     );
                                   },
-                                ),
-                              ),
-                            );
-                          }
-
-                          if (type == 'chat') {
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: HoboBox(
-                                style: style,
-                                title: 'CHAT',
-                                child: ChatBoxWidget(
-                                  dayId: widget.dayId,
-                                  box: box,
-                                  api: _api,
                                 ),
                               ),
                             );

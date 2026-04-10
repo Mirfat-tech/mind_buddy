@@ -667,7 +667,6 @@ class _BrainFogScreenState extends State<BrainFogScreen>
                       right: 16,
                       bottom: 28,
                       child: _FigureOutActions(
-                        onVent: () => _goFigureAction('/chat'),
                         onJournal: () => _goFigureAction('/journals'),
                         onHabit: () => _goFigureAction('/habits'),
                         onPomodoro: () => _goFigureAction('/pomodoro'),
@@ -936,13 +935,11 @@ class _FigureOutCard extends StatelessWidget {
 
 class _FigureOutActions extends StatelessWidget {
   const _FigureOutActions({
-    required this.onVent,
     required this.onJournal,
     required this.onHabit,
     required this.onPomodoro,
   });
 
-  final VoidCallback onVent;
   final VoidCallback onJournal;
   final VoidCallback onHabit;
   final VoidCallback onPomodoro;
@@ -983,12 +980,6 @@ class _FigureOutActions extends StatelessWidget {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _ActionBubble(
-                icon: '🫧',
-                title: 'Let it out',
-                subtitle: 'Say what’s still sitting in your chest.',
-                onTap: onVent,
-              ),
               _ActionBubble(
                 icon: '📖',
                 title: 'Write it through',

@@ -3,14 +3,36 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
-import 'package:mind_buddy/features/settings/settings_provider.dart';
+import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/features/settings/settings_model.dart';
-import 'package:mind_buddy/services/notification_catalog.dart';
+import 'package:mind_buddy/features/settings/settings_provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-class NotificationsSettingsScreen extends ConsumerWidget {
+class NotificationsSettingsScreen extends ConsumerStatefulWidget {
   const NotificationsSettingsScreen({super.key});
+
+  @override
+  ConsumerState<NotificationsSettingsScreen> createState() =>
+      _NotificationsSettingsScreenState();
+}
+
+class _NotificationsSettingsScreenState
+    extends ConsumerState<NotificationsSettingsScreen> {
+  static const String _calendarReminderSpaceId = 'calendar_reminders';
+  static const String _pomodoroAlertSpaceId = 'pomodoro_finished';
+  static const List<int> _stopwatchReminderOptions = [0, 5, 10, 15, 30, 60];
+
+  final _supabase = Supabase.instance.client;
+
+  bool _loadingHabits = true;
+  List<Map<String, dynamic>> _habits = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHabits();
+  }
 
   String _resolveBackTarget(BuildContext context, {String? from}) {
     switch (from) {
@@ -23,34 +45,66 @@ class NotificationsSettingsScreen extends ConsumerWidget {
     }
   }
 
-  String _formatScheduleSummary(
-    NotificationSpaceSetting space,
-    List<String> dayKeys,
-    List<String> dayLabels,
-  ) {
-    if (!space.enabled) return '';
-    if (space.time == null || space.time!.isEmpty) {
-      return 'Set a gentle time →';
+  Future<void> _loadHabits() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      setState(() {
+        _habits = const [];
+        _loadingHabits = false;
+      });
+      return;
     }
-    final time = space.time!;
+
+    try {
+      final rows = await _supabase
+          .from('user_habits')
+          .select('id, name, sort_order, category_id, habit_categories(name)')
+          .eq('user_id', user.id)
+          .eq('is_active', true)
+          .order('sort_order');
+
+      final habits = (rows as List)
+          .map((row) => Map<String, dynamic>.from(row as Map))
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _habits = habits;
+        _loadingHabits = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _habits = const [];
+        _loadingHabits = false;
+      });
+    }
+  }
+
+  String _formatScheduleSummary(NotificationSpaceSetting space) {
+    if (!space.enabled) return '';
+    final time = (space.time == null || space.time!.isEmpty)
+        ? '09:00'
+        : space.time!;
     if (space.frequency == 'remember') {
       return 'Only when I open the app';
     }
     if (space.frequency == 'monthly') {
-      return 'Monthly • ${space.dayOfMonth} • $time';
+      return 'Once a month • ${space.dayOfMonth} • $time';
     }
     if (space.frequency == 'weekly') {
       final days = space.days.isEmpty ? ['Mon'] : _labelsForDays(space.days);
-      return 'Weekly • ${days.join(' / ')} • $time';
+      return 'Once a week • ${days.join(' / ')} • $time';
     }
     if (space.frequency == 'certain') {
       final days = space.days.isEmpty ? ['Mon'] : _labelsForDays(space.days);
       return '${days.join(' / ')} • $time';
     }
     if (space.skipWeekends) {
-      return 'Weekdays • $time';
+      return 'Every day • $time • Skip weekends';
     }
-    return 'Most days • $time';
+    return 'Every day • $time';
   }
 
   List<String> _labelsForDays(List<String> days) {
@@ -66,14 +120,14 @@ class NotificationsSettingsScreen extends ConsumerWidget {
     return days.map((d) => map[d] ?? d).toList();
   }
 
-  Future<void> _openSpaceSheet({
+  Future<void> _openScheduleSheet({
     required BuildContext context,
-    required WidgetRef ref,
-    required NotificationCategory category,
+    required String title,
     required NotificationSpaceSetting initial,
+    required Future<void> Function(NotificationSpaceSetting setting) onSave,
   }) async {
-    final controller = ref.read(settingsControllerProvider);
     var space = initial;
+
     final result = await showModalBottomSheet<NotificationSpaceSetting>(
       context: context,
       useRootNavigator: true,
@@ -84,9 +138,7 @@ class NotificationsSettingsScreen extends ConsumerWidget {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             void apply(NotificationSpaceSetting next) {
-              setSheetState(() {
-                space = next;
-              });
+              setSheetState(() => space = next);
             }
 
             final dayValues = List<int>.generate(28, (index) => index + 1);
@@ -113,7 +165,7 @@ class NotificationsSettingsScreen extends ConsumerWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                '${category.title} reminder',
+                                title,
                                 style: Theme.of(context).textTheme.titleLarge,
                               ),
                               const SizedBox(height: 6),
@@ -129,7 +181,7 @@ class NotificationsSettingsScreen extends ConsumerWidget {
                               RadioListTile<String>(
                                 value: 'most',
                                 groupValue: space.frequency,
-                                title: const Text('Most days'),
+                                title: const Text('Every day'),
                                 onChanged: (value) {
                                   if (value == null) return;
                                   apply(space.copyWith(frequency: value));
@@ -194,7 +246,9 @@ class NotificationsSettingsScreen extends ConsumerWidget {
                                             space.days,
                                           );
                                           if (value) {
-                                            nextDays.add(entry[0]);
+                                            if (!nextDays.contains(entry[0])) {
+                                              nextDays.add(entry[0]);
+                                            }
                                           } else {
                                             nextDays.remove(entry[0]);
                                           }
@@ -224,8 +278,8 @@ class NotificationsSettingsScreen extends ConsumerWidget {
                                   ),
                                 ),
                               ListTile(
-                                title: const Text('Time (optional)'),
-                                subtitle: Text(space.time ?? 'Off'),
+                                title: const Text('Time'),
+                                subtitle: Text(space.time ?? '09:00'),
                                 trailing: const Icon(Icons.chevron_right),
                                 onTap: () async {
                                   final current = space.time ?? '09:00';
@@ -238,15 +292,18 @@ class NotificationsSettingsScreen extends ConsumerWidget {
                                   }
                                 },
                               ),
-                              CheckboxListTile(
-                                value: space.skipWeekends,
-                                title: const Text('Skip weekends'),
-                                onChanged: (value) {
-                                  apply(
-                                    space.copyWith(skipWeekends: value == true),
-                                  );
-                                },
-                              ),
+                              if (space.frequency == 'most')
+                                CheckboxListTile(
+                                  value: space.skipWeekends,
+                                  title: const Text('Skip weekends'),
+                                  onChanged: (value) {
+                                    apply(
+                                      space.copyWith(
+                                        skipWeekends: value == true,
+                                      ),
+                                    );
+                                  },
+                                ),
                               const SizedBox(height: 4),
                               Text(
                                 'Style',
@@ -301,13 +358,14 @@ class NotificationsSettingsScreen extends ConsumerWidget {
         );
       },
     );
+
     if (result == null) return;
-    unawaited(controller.setNotificationSpaceSetting(category.id, result));
+    await onSave(result);
   }
 
   Future<String?> _pickTime(BuildContext context, String current) async {
     final parts = current.split(':');
-    final hour = int.tryParse(parts.first) ?? 0;
+    final hour = int.tryParse(parts.first) ?? 9;
     final minute = parts.length > 1 ? int.tryParse(parts[1]) ?? 0 : 0;
 
     final picked = await showTimePicker(
@@ -321,15 +379,156 @@ class NotificationsSettingsScreen extends ConsumerWidget {
     return '$h:$m';
   }
 
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final controller = ref.read(settingsControllerProvider);
-    final settings = ref.watch(settingsControllerProvider).settings;
-    const dayKeys = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-    const dayLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  NotificationSpaceSetting _effectiveEnabledSetting(
+    NotificationSpaceSetting current,
+    bool enabled,
+  ) {
+    return current.copyWith(
+      enabled: enabled,
+      time: current.time == null || current.time!.isEmpty
+          ? '09:00'
+          : current.time,
+    );
+  }
 
+  Future<void> _saveHabitSetting(
+    String habitId,
+    NotificationSpaceSetting setting,
+  ) async {
+    final controller = ref.read(settingsControllerProvider);
+    await controller.setNotificationSpaceSetting('habit:$habitId', setting);
+  }
+
+  Future<void> _setCalendarSetting(
+    NotificationSpaceSetting setting,
+    bool enabled,
+  ) async {
+    final controller = ref.read(settingsControllerProvider);
+    final nextSpaces = Map<String, NotificationSpaceSetting>.from(
+      ref.read(settingsControllerProvider).settings.notificationSpaceSettings,
+    );
+    nextSpaces[_calendarReminderSpaceId] = setting.copyWith(enabled: enabled);
+    await controller.update(
+      ref
+          .read(settingsControllerProvider)
+          .settings
+          .copyWith(
+            calendarRemindersEnabled: enabled,
+            notificationSpaceSettings: nextSpaces,
+          ),
+    );
+  }
+
+  Future<void> _setPomodoroSetting(
+    NotificationSpaceSetting setting,
+    bool enabled,
+  ) async {
+    final controller = ref.read(settingsControllerProvider);
+    final nextSpaces = Map<String, NotificationSpaceSetting>.from(
+      ref.read(settingsControllerProvider).settings.notificationSpaceSettings,
+    );
+    nextSpaces[_pomodoroAlertSpaceId] = setting.copyWith(enabled: enabled);
+    await controller.update(
+      ref
+          .read(settingsControllerProvider)
+          .settings
+          .copyWith(
+            pomodoroAlertsEnabled: enabled,
+            notificationSpaceSettings: nextSpaces,
+          ),
+    );
+  }
+
+  Widget _buildCoreTile({
+    required BuildContext context,
+    required String title,
+    required bool enabled,
+    required NotificationSpaceSetting space,
+    bool showSummaryWhenEnabled = true,
+    bool showEditHint = true,
+    required ValueChanged<bool> onToggle,
+    required VoidCallback onEditTap,
+  }) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.transparent,
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 8,
+          ),
+          title: Text(title, style: theme.textTheme.titleMedium),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (showEditHint) ...[
+                const SizedBox(height: 4),
+                GestureDetector(
+                  onTap: onEditTap,
+                  child: Text(
+                    'Tap to edit dates and times',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+              if (enabled) ...[
+                if (showSummaryWhenEnabled) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _formatScheduleSummary(space),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                ],
+              ] else ...[
+                const SizedBox(height: 4),
+                Text(
+                  'Notification off',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          trailing: Switch(value: enabled, onChanged: onToggle),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = ref.watch(settingsControllerProvider).settings;
     final from = GoRouterState.of(context).uri.queryParameters['from'];
     final backTarget = _resolveBackTarget(context, from: from);
+
+    final calendarSpace =
+        settings.notificationSpaceSettings[_calendarReminderSpaceId] ??
+        NotificationSpaceSetting.defaults();
+    final pomodoroSpace =
+        settings.notificationSpaceSettings[_pomodoroAlertSpaceId] ??
+        NotificationSpaceSetting.defaults();
+
+    final groupedHabits = <String, List<Map<String, dynamic>>>{};
+    for (final habit in _habits) {
+      final group =
+          (habit['habit_categories']?['name'] ?? 'Uncategorized')
+              .toString()
+              .trim()
+              .isEmpty
+          ? 'Uncategorized'
+          : (habit['habit_categories']?['name'] ?? 'Uncategorized')
+                .toString()
+                .trim();
+      groupedHabits.putIfAbsent(group, () => []).add(habit);
+    }
 
     return MbScaffold(
       applyBackground: true,
@@ -346,195 +545,207 @@ class NotificationsSettingsScreen extends ConsumerWidget {
           },
         ),
       ),
-      body: Builder(
-        builder: (screenContext) => ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text('Habit Tracker', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          if (_loadingHabits)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_habits.isEmpty)
             Text(
-              'You do not have to set everything up at once.\nTurn on only what feels helpful.',
+              'No active habits yet.',
               style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'We will suggest something gently. You can change this anytime.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Global safety',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              value: settings.quietHoursEnabled,
-              title: const Text('Quiet Hours'),
-              subtitle: const Text('Pause reminders during this window'),
-              onChanged: (value) => controller.setQuietHours(
-                enabled: value,
-                start: settings.quietStart,
-                end: settings.quietEnd,
-              ),
-            ),
-            ListTile(
-              title: const Text('Quiet start'),
-              subtitle: Text(settings.quietStart),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: settings.quietHoursEnabled
-                  ? () async {
-                      final next = await _pickTime(
+            )
+          else
+            ...groupedHabits.entries.map((entry) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+                  Text(
+                    entry.key,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: Theme.of(
                         context,
-                        settings.quietStart,
-                      );
-                      if (next != null) {
-                        await controller.setQuietHours(
-                          enabled: settings.quietHoursEnabled,
-                          start: next,
-                          end: settings.quietEnd,
-                        );
-                      }
-                    }
-                  : null,
-            ),
-            ListTile(
-              title: const Text('Quiet end'),
-              subtitle: Text(settings.quietEnd),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: settings.quietHoursEnabled
-                  ? () async {
-                      final next = await _pickTime(context, settings.quietEnd);
-                      if (next != null) {
-                        await controller.setQuietHours(
-                          enabled: settings.quietHoursEnabled,
-                          start: settings.quietStart,
-                          end: next,
-                        );
-                      }
-                    }
-                  : null,
-            ),
-            Builder(
-              builder: (context) {
-                final rawMaxValues = <int>[0, 1, 2, 5, 10, 20, 30, 40, 50];
-                final maxValues = rawMaxValues.toSet().toList()..sort();
-                final currentMax = settings.maxNotificationsPerDay;
-                final safeMaxValue = maxValues.contains(currentMax)
-                    ? currentMax
-                    : null;
-                return ListTile(
-                  title: const Text('Max reminders per day'),
-                  subtitle: const Text('Many days can be quiet'),
-                  trailing: DropdownButton<int>(
-                    value: safeMaxValue,
-                    hint: const Text('Select'),
-                    items: maxValues
-                        .map(
-                          (value) => DropdownMenuItem<int>(
-                            value: value,
-                            child: Text('$value'),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) {
-                      if (value != null) {
-                        controller.setMaxNotificationsPerDay(value);
-                      }
-                    },
+                      ).colorScheme.onSurface.withValues(alpha: 0.7),
+                    ),
                   ),
+                  const SizedBox(height: 6),
+                  ...entry.value.map((habit) {
+                    final habitId = (habit['id'] ?? '').toString();
+                    final title = (habit['name'] ?? '').toString().trim();
+                    final space =
+                        settings.notificationSpaceSettings['habit:$habitId'] ??
+                        NotificationSpaceSetting.defaults();
+                    return _buildCoreTile(
+                      context: context,
+                      title: title,
+                      enabled: space.enabled,
+                      space: space,
+                      onToggle: (value) {
+                        unawaited(
+                          _saveHabitSetting(
+                            habitId,
+                            _effectiveEnabledSetting(space, value),
+                          ),
+                        );
+                      },
+                      onEditTap: () {
+                        _openScheduleSheet(
+                          context: context,
+                          title: '$title reminder',
+                          initial: _effectiveEnabledSetting(space, true),
+                          onSave: (setting) =>
+                              _saveHabitSetting(habitId, setting),
+                        );
+                      },
+                    );
+                  }),
+                ],
+              );
+            }),
+          const SizedBox(height: 20),
+          Text(
+            'Calendar Reminders',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          _buildCoreTile(
+            context: context,
+            title: 'Calendar Reminders',
+            enabled: settings.calendarRemindersEnabled,
+            space: calendarSpace.copyWith(
+              enabled: settings.calendarRemindersEnabled,
+            ),
+            showSummaryWhenEnabled: false,
+            showEditHint: false,
+            onToggle: (value) {
+              unawaited(
+                _setCalendarSetting(
+                  _effectiveEnabledSetting(calendarSpace, value),
+                  value,
+                ),
+              );
+            },
+            onEditTap: () {
+              _openScheduleSheet(
+                context: context,
+                title: 'Calendar reminder settings',
+                initial: _effectiveEnabledSetting(
+                  calendarSpace.copyWith(
+                    enabled: settings.calendarRemindersEnabled,
+                  ),
+                  true,
+                ),
+                onSave: (setting) => _setCalendarSetting(
+                  setting,
+                  settings.calendarRemindersEnabled,
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Pomodoro Finished Alerts',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          _buildCoreTile(
+            context: context,
+            title: 'Pomodoro Finished Alerts',
+            enabled: settings.pomodoroAlertsEnabled,
+            space: pomodoroSpace.copyWith(
+              enabled: settings.pomodoroAlertsEnabled,
+            ),
+            showSummaryWhenEnabled: false,
+            showEditHint: false,
+            onToggle: (value) {
+              unawaited(
+                _setPomodoroSetting(
+                  _effectiveEnabledSetting(pomodoroSpace, value),
+                  value,
+                ),
+              );
+            },
+            onEditTap: () {
+              _openScheduleSheet(
+                context: context,
+                title: 'Pomodoro finished alert settings',
+                initial: _effectiveEnabledSetting(
+                  pomodoroSpace.copyWith(
+                    enabled: settings.pomodoroAlertsEnabled,
+                  ),
+                  true,
+                ),
+                onSave: (setting) => _setPomodoroSetting(
+                  setting,
+                  settings.pomodoroAlertsEnabled,
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 20),
+          Text(
+            'Stopwatch Alerts',
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: const Text('Show stopwatch running notification'),
+            subtitle: Text(
+              settings.stopwatchAlertsEnabled
+                  ? 'Keep a subtle stopwatch status notification while it runs.'
+                  : 'Stopwatch notifications are off.',
+            ),
+            value: settings.stopwatchAlertsEnabled,
+            onChanged: (value) {
+              unawaited(
+                ref
+                    .read(settingsControllerProvider)
+                    .setStopwatchAlertsEnabled(value),
+              );
+            },
+          ),
+          ListTile(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: const Text('Running reminder'),
+            subtitle: Text(
+              settings.stopwatchReminderMinutes <= 0
+                  ? 'Off'
+                  : 'Remind me every ${settings.stopwatchReminderMinutes} min while running',
+            ),
+            trailing: DropdownButton<int>(
+              value:
+                  _stopwatchReminderOptions.contains(
+                    settings.stopwatchReminderMinutes,
+                  )
+                  ? settings.stopwatchReminderMinutes
+                  : 0,
+              items: _stopwatchReminderOptions
+                  .map(
+                    (minutes) => DropdownMenuItem<int>(
+                      value: minutes,
+                      child: Text(minutes == 0 ? 'Off' : '$minutes min'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (value) {
+                if (value == null) return;
+                unawaited(
+                  ref
+                      .read(settingsControllerProvider)
+                      .setStopwatchReminderMinutes(value),
                 );
               },
             ),
-            const SizedBox(height: 20),
-            Text('Spaces', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 6),
-            Text(
-              'Each space can nudge you in its own way. Nothing is daily unless you want it to be.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            ...notificationCategories.map((category) {
-              final space =
-                  settings.notificationSpaceSettings[category.id] ??
-                  NotificationSpaceSetting.defaults();
-              final summary = _formatScheduleSummary(space, dayKeys, dayLabels);
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Material(
-                  color: Colors.transparent,
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    onTap: () {
-                      _openSpaceSheet(
-                        context: screenContext,
-                        ref: ref,
-                        category: category,
-                        initial: space,
-                      );
-                    },
-                    title: Text(
-                      category.title,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(category.description),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Tap to edit dates and times',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withValues(alpha: 0.6),
-                              ),
-                        ),
-                        if (space.enabled) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            summary,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    trailing: Switch(
-                      value: space.enabled,
-                      onChanged: (value) {
-                        controller.setNotificationSpaceSetting(
-                          category.id,
-                          space.copyWith(enabled: value),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              );
-            }),
-            const SizedBox(height: 16),
-            Text('Extras', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            SwitchListTile(
-              value: settings.calendarRemindersEnabled,
-              title: const Text('Calendar reminders'),
-              subtitle: const Text('Use reminder titles in notifications'),
-              onChanged: (value) =>
-                  controller.setCalendarRemindersEnabled(value),
-            ),
-            SwitchListTile(
-              value: settings.pomodoroAlertsEnabled,
-              title: const Text('Pomodoro finished alerts'),
-              subtitle: const Text('Show a system notification at the end'),
-              onChanged: (value) => controller.setPomodoroAlertsEnabled(value),
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
+          ),
+          const SizedBox(height: 24),
+        ],
       ),
     );
   }

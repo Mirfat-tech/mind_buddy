@@ -1,15 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:mind_buddy/common/mb_responsive.dart';
+
 class TemplatesSection extends StatelessWidget {
   const TemplatesSection({super.key});
 
   @override
   Widget build(BuildContext context) {
     const items = _items;
-    final width = MediaQuery.of(context).size.width;
-    final crossAxisCount = width < 360 ? 2 : 3;
-    final childAspectRatio = width < 360 ? 1.85 : 1.6;
+    final responsive = MbResponsive.of(context);
+    final crossAxisCount = responsive.columnsFor(
+      phone: 2,
+      tablet: 3,
+      desktop: 3,
+    );
+    final childAspectRatio = responsive.isPhone ? 1.75 : 1.5;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -30,15 +36,15 @@ class TemplatesSection extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 4),
+        SizedBox(height: responsive.compactGap),
         GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: items.length,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            mainAxisSpacing: 6,
-            crossAxisSpacing: 6,
+            mainAxisSpacing: responsive.compactGap,
+            crossAxisSpacing: responsive.compactGap,
             childAspectRatio: childAspectRatio,
           ),
           itemBuilder: (context, i) {
@@ -54,7 +60,7 @@ class TemplatesSection extends StatelessWidget {
             );
           },
         ),
-        const SizedBox(height: 10),
+        SizedBox(height: responsive.compactGap),
       ],
     );
   }
@@ -101,25 +107,26 @@ class _TemplateCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final responsive = MbResponsive.of(context);
     final cs = Theme.of(context).colorScheme;
 
     return InkWell(
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(responsive.cardRadius - 4),
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
           color: cs.surface,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(responsive.cardRadius - 4),
           border: Border.all(color: cs.outlineVariant),
         ),
-        padding: const EdgeInsets.all(8),
+        padding: EdgeInsets.all(responsive.isPhone ? 10 : 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(icon, size: 18),
-                const SizedBox(width: 6),
+                Icon(icon, size: responsive.iconSize),
+                SizedBox(width: responsive.compactGap * 0.75),
                 Expanded(
                   child: Align(
                     alignment: Alignment.centerRight,
@@ -137,9 +144,10 @@ class _TemplateCard extends StatelessWidget {
                         child: Text(
                           badge,
                           maxLines: 1,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.labelSmall?.copyWith(fontSize: 10),
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                fontSize: responsive.isPhone ? 10 : 11,
+                              ),
                         ),
                       ),
                     ),
@@ -152,9 +160,9 @@ class _TemplateCard extends StatelessWidget {
               title,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(
-                context,
-              ).textTheme.labelLarge?.copyWith(fontSize: 11),
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                fontSize: responsive.isPhone ? 12 : 13,
+              ),
             ),
           ],
         ),

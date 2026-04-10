@@ -58,10 +58,6 @@ class QuietGuideScreen extends StatelessWidget {
             text: 'Search to filter. Tap an entry to open.',
           ),
           const _GuideItem(
-            title: 'Chat',
-            text: 'Open the menu to find past chats.',
-          ),
-          const _GuideItem(
             title: 'Brain fog',
             text: 'Long press to pop. Tap to edit. Drag to move.',
           ),

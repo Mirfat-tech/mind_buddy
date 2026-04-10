@@ -10,12 +10,14 @@ class StartupUserDataBundle {
     this.profileRow,
     this.userProfileRow,
     this.failedTables = const <String>{},
+    this.failedDetails = const <String, String>{},
   });
 
   final Map<String, dynamic>? settingsRow;
   final Map<String, dynamic>? profileRow;
   final Map<String, dynamic>? userProfileRow;
   final Set<String> failedTables;
+  final Map<String, String> failedDetails;
 }
 
 class StartupUserDataService {
@@ -37,6 +39,12 @@ class StartupUserDataService {
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null) return;
     invalidateUser(userId);
+  }
+
+  StartupUserDataBundle? peekCachedForCurrentUser() {
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return null;
+    return _cache[userId]?.bundle;
   }
 
   Future<StartupUserDataBundle> fetchCombinedForCurrentUser() async {
@@ -95,14 +103,10 @@ class StartupUserDataService {
           .maybeSingle(),
     );
 
-    final profileRead = await _safeRead(
-      label: 'profiles',
-      userId: userId,
-      call: () => _supabase
-          .from('profiles')
-          .select('subscription_tier, username, is_active')
-          .eq('id', userId)
-          .maybeSingle(),
+    final profileRead = await _readProfileRowWithFallback(userId);
+    final profileKeys = profileRead.data?.keys.toList() ?? const <String>[];
+    debugPrint(
+      '[StartupUserData] profiles keys=$profileKeys has_onboarding_completed=${profileRead.data?.containsKey('onboarding_completed') == true} has_username_completed=${profileRead.data?.containsKey('username_completed') == true} has_subscription_completed=${profileRead.data?.containsKey('subscription_completed') == true} onboarding_completed=${profileRead.data?['onboarding_completed']} username_completed=${profileRead.data?['username_completed']} subscription_completed=${profileRead.data?['subscription_completed']} subscription_tier=${profileRead.data?['subscription_tier']}',
     );
 
     final userProfileRead = await _safeRead(
@@ -116,15 +120,56 @@ class StartupUserDataService {
     );
 
     final failed = <String>{};
+    final failedDetails = <String, String>{};
     if (settingsRead.failed) failed.add('user_settings');
+    if (settingsRead.failed && settingsRead.error != null) {
+      failedDetails['user_settings'] = settingsRead.error.toString();
+    }
     if (profileRead.failed) failed.add('profiles');
+    if (profileRead.failed && profileRead.error != null) {
+      failedDetails['profiles'] = profileRead.error.toString();
+    }
     if (userProfileRead.failed) failed.add('user_profile');
+    if (userProfileRead.failed && userProfileRead.error != null) {
+      failedDetails['user_profile'] = userProfileRead.error.toString();
+    }
 
     return StartupUserDataBundle(
       settingsRow: settingsRead.data,
       profileRow: profileRead.data,
       userProfileRow: userProfileRead.data,
       failedTables: failed,
+      failedDetails: failedDetails,
+    );
+  }
+
+  Future<_ReadResult> _readProfileRowWithFallback(String userId) async {
+    const primarySelect =
+        'subscription_tier, username, is_active, onboarding_completed, username_completed, subscription_completed, completed_at, terms_version, terms_accepted_at, privacy_version, privacy_accepted_at';
+    final primary = await _safeRead(
+      label: 'profiles',
+      userId: userId,
+      queryContext: 'select=$primarySelect mode=completion_gate',
+      call: () => _supabase
+          .from('profiles')
+          .select(primarySelect)
+          .eq('id', userId)
+          .maybeSingle(),
+    );
+    if (!primary.failed || !_isSchemaMismatchError(primary.error)) {
+      return primary;
+    }
+
+    const legacySelect = 'subscription_tier, username, is_active';
+    return _safeRead(
+      label: 'profiles',
+      userId: userId,
+      queryContext: 'select=$legacySelect mode=schema_safe_fallback',
+      call: () => _supabase
+          .from('profiles')
+          .select(legacySelect)
+          .eq('id', userId)
+          .maybeSingle(),
     );
   }
 
@@ -156,7 +201,7 @@ class StartupUserDataService {
         await _supabase.from('profiles').insert({
           'id': userId,
           'email': user.email,
-          'subscription_tier': 'pending',
+          'subscription_tier': 'free',
           'subscription_status': 'inactive',
         });
       } on PostgrestException catch (_) {
@@ -164,7 +209,7 @@ class StartupUserDataService {
         await _supabase.from('profiles').upsert({
           'id': userId,
           'email': user.email,
-          'subscription_tier': 'pending',
+          'subscription_tier': 'free',
           'subscription_status': 'inactive',
         }, onConflict: 'id');
       }
@@ -180,6 +225,7 @@ class StartupUserDataService {
   Future<_ReadResult> _safeRead({
     required String label,
     required String userId,
+    String? queryContext,
     required Future<Map<String, dynamic>?> Function() call,
   }) async {
     const delays = <Duration>[
@@ -192,16 +238,22 @@ class StartupUserDataService {
       _requestCount++;
       final session = _supabase.auth.currentSession;
       debugPrint(
-        '[StartupUserData] request=$_requestCount label=$label user=$userId session=${session != null} attempt=${attempt + 1}',
+        '[StartupUserData] request=$_requestCount label=$label user=$userId session=${session != null} attempt=${attempt + 1} ${queryContext ?? ''}',
       );
       try {
         final result = await call().timeout(const Duration(seconds: 12));
-        return _ReadResult(data: result, failed: false);
+        return _ReadResult(data: result, failed: false, error: null);
       } on TimeoutException catch (e) {
         lastError = e;
       } on SocketException catch (e) {
         lastError = e;
       } on PostgrestException catch (e) {
+        debugPrint(
+          '[StartupUserData] PostgrestException label=$label user=$userId code=${e.code} message=${e.message} details=${e.details} hint=${e.hint} ${queryContext ?? ''}',
+        );
+        if (_isSchemaMismatchError(e)) {
+          return _ReadResult(data: null, failed: true, error: e);
+        }
         lastError = e;
       } catch (e) {
         lastError = e;
@@ -215,15 +267,27 @@ class StartupUserDataService {
     debugPrint(
       '[StartupUserData] failed label=$label user=$userId error=$lastError',
     );
-    return const _ReadResult(data: null, failed: true);
+    return _ReadResult(data: null, failed: true, error: lastError);
+  }
+
+  bool _isSchemaMismatchError(Object? error) {
+    if (error is! PostgrestException) return false;
+    if (error.code == '42703' || error.code == 'PGRST204') return true;
+    final msg = '${error.message} ${error.details} ${error.hint}'.toLowerCase();
+    return msg.contains('column') && msg.contains('does not exist');
   }
 }
 
 class _ReadResult {
-  const _ReadResult({required this.data, required this.failed});
+  const _ReadResult({
+    required this.data,
+    required this.failed,
+    required this.error,
+  });
 
   final Map<String, dynamic>? data;
   final bool failed;
+  final Object? error;
 }
 
 class _CachedBundle {

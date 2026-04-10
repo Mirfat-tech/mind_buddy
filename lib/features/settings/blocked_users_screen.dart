@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/services/block_service.dart';
 
 class BlockedUsersScreen extends StatefulWidget {
   const BlockedUsersScreen({super.key});
@@ -23,30 +23,24 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
 
   Future<void> _load() async {
     setState(() => _loading = true);
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) {
+    try {
+      final rows = await BlockService.instance.listBlockedUsers();
+      if (!mounted) return;
+      setState(() {
+        _blocks = rows;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
       setState(() {
         _blocks = [];
         _loading = false;
       });
-      return;
     }
-    final rows = await Supabase.instance.client
-        .from('journal_share_blocks')
-        .select('id, blocked_id, created_at, blocked:blocked_id (username)')
-        .eq('blocker_id', user.id)
-        .order('created_at', ascending: false);
-    setState(() {
-      _blocks = (rows as List).cast<Map<String, dynamic>>();
-      _loading = false;
-    });
   }
 
-  Future<void> _unblock(String blockId) async {
-    await Supabase.instance.client
-        .from('journal_share_blocks')
-        .delete()
-        .eq('id', blockId);
+  Future<void> _unblock(String blockedId) async {
+    await BlockService.instance.unblockUser(blockedId);
     await _load();
   }
 
@@ -72,8 +66,8 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                   separatorBuilder: (_, __) => const SizedBox(height: 8),
                   itemBuilder: (context, i) {
                     final row = _blocks[i];
-                    final username =
-                        (row['blocked']?['username'] ?? '').toString();
+                    final username = (row['username'] ?? '').toString();
+                    final blockedId = row['blocked_id']?.toString() ?? '';
                     return Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
@@ -97,7 +91,9 @@ class _BlockedUsersScreenState extends State<BlockedUsersScreen> {
                             ),
                           ),
                           TextButton(
-                            onPressed: () => _unblock(row['id'].toString()),
+                            onPressed: blockedId.isEmpty
+                                ? null
+                                : () => _unblock(blockedId),
                             child: const Text('Unblock'),
                           ),
                         ],

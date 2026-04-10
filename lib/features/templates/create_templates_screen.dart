@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
-import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 
 class CreateLogTemplateScreen extends StatefulWidget {
-  const CreateLogTemplateScreen({super.key});
+  const CreateLogTemplateScreen({super.key, this.templateId});
+
+  final String? templateId;
 
   @override
   State<CreateLogTemplateScreen> createState() =>
@@ -21,14 +22,25 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
   final keyCtrl = TextEditingController();
 
   bool saving = false;
+  bool _loadingTemplate = false;
 
   final fields = <_FieldDraft>[
     _FieldDraft(label: 'Item', key: '', type: 'text'),
   ];
-  String _examplePreset = 'None';
+  List<_FieldDraft> _originalFields = const <_FieldDraft>[];
 
   static const tTemplates = 'log_templates_v2';
   static const tFields = 'log_template_fields_v2';
+
+  bool get _isEditing => widget.templateId != null;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isEditing) {
+      _loadExistingTemplate();
+    }
+  }
 
   @override
   void dispose() {
@@ -73,47 +85,6 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     );
   }
 
-  void _applyExamplePreset(String preset) {
-    setState(() {
-      _examplePreset = preset;
-      final presetFields = _exampleFields(preset);
-      if (presetFields.isNotEmpty) {
-        fields
-          ..clear()
-          ..addAll(presetFields);
-      }
-      if (nameCtrl.text.trim().isEmpty) {
-        nameCtrl.text = preset;
-      }
-    });
-  }
-
-  List<_FieldDraft> _exampleFields(String preset) {
-    switch (preset) {
-      case 'Mood log':
-        return [
-          _FieldDraft(label: 'Feeling', key: 'feeling', type: 'text'),
-          _FieldDraft(label: 'Intensity', key: 'intensity', type: 'rating'),
-          _FieldDraft(label: 'Notes', key: 'notes', type: 'text'),
-        ];
-      case 'Budget':
-        return [
-          _FieldDraft(label: 'Category', key: 'category', type: 'text'),
-          _FieldDraft(label: 'Amount', key: 'amount', type: 'number'),
-          _FieldDraft(label: 'Notes', key: 'notes', type: 'text'),
-        ];
-      case 'Workout':
-        return [
-          _FieldDraft(label: 'Exercise', key: 'exercise', type: 'text'),
-          _FieldDraft(label: 'Sets', key: 'sets', type: 'number'),
-          _FieldDraft(label: 'Reps', key: 'reps', type: 'number'),
-          _FieldDraft(label: 'Notes', key: 'notes', type: 'text'),
-        ];
-      default:
-        return [];
-    }
-  }
-
   // --- LOGIC ---
 
   String _slugify(String s) {
@@ -139,6 +110,152 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     }
   }
 
+  Future<void> _loadExistingTemplate() async {
+    final user = supabase.auth.currentUser;
+    final templateId = widget.templateId;
+    if (user == null || templateId == null) return;
+
+    setState(() => _loadingTemplate = true);
+    try {
+      final tpl = await supabase
+          .from(tTemplates)
+          .select('id, name, template_key, user_id')
+          .eq('id', templateId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+      if (tpl == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('This template could not be loaded for editing.'),
+          ),
+        );
+        Navigator.pop(context);
+        return;
+      }
+
+      final fieldRows = await supabase
+          .from(tFields)
+          .select('id, field_key, label, field_type, options, sort_order')
+          .eq('template_id', templateId)
+          .eq('is_hidden', false)
+          .order('sort_order');
+      final loadedFields = List<Map<String, dynamic>>.from(
+        fieldRows,
+      ).map(_FieldDraft.fromDatabase).toList();
+
+      if (!mounted) return;
+      setState(() {
+        nameCtrl.text = (tpl['name'] ?? '').toString();
+        keyCtrl.text = (tpl['template_key'] ?? '').toString();
+        fields
+          ..clear()
+          ..addAll(
+            loadedFields.isEmpty
+                ? <_FieldDraft>[
+                    _FieldDraft(label: 'Item', key: '', type: 'text'),
+                  ]
+                : loadedFields,
+          );
+        _originalFields = List<_FieldDraft>.from(loadedFields);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not load template: $e')));
+      Navigator.pop(context);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingTemplate = false);
+      }
+    }
+  }
+
+  Future<bool> _existingLogsNeedWarning() async {
+    if (!_isEditing || widget.templateId == null) return false;
+    final beforeById = <String, _FieldDraft>{
+      for (final field in _originalFields)
+        if (field.id != null) field.id!: field,
+    };
+    var changedDefinition = false;
+
+    for (final field in fields) {
+      final id = field.id;
+      if (id == null) continue;
+      final original = beforeById[id];
+      if (original == null) continue;
+      if (original.type != field.type ||
+          original.label.trim() != field.label.trim()) {
+        changedDefinition = true;
+        break;
+      }
+    }
+
+    final removedExistingIds = beforeById.keys.where(
+      (id) => !fields.any((field) => field.id == id),
+    );
+    if (!changedDefinition && removedExistingIds.isEmpty) {
+      return false;
+    }
+
+    final user = supabase.auth.currentUser;
+    if (user == null) return false;
+    final templateKey = keyCtrl.text.trim();
+    final logTable = templateKey.isEmpty
+        ? null
+        : '${_slugify(templateKey)}_logs';
+
+    try {
+      if (logTable != null) {
+        final response = await supabase
+            .from(logTable)
+            .select('id')
+            .eq('user_id', user.id)
+            .limit(1);
+        if ((response as List).isNotEmpty) return true;
+      }
+    } catch (_) {
+      // Some custom templates may not have a dedicated logs table yet.
+    }
+
+    try {
+      final genericRows = await supabase
+          .from('log_entries')
+          .select('id')
+          .eq('template_id', widget.templateId!)
+          .limit(1);
+      return (genericRows as List).isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> _confirmDefinitionChangeIfNeeded() async {
+    final needsWarning = await _existingLogsNeedWarning();
+    if (!needsWarning || !mounted) return true;
+    final keepGoing = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Update template structure?'),
+        content: const Text(
+          'Existing logs will stay saved. Renamed fields will keep their old data linked, and removed fields will be hidden so older logs are not corrupted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Save changes'),
+          ),
+        ],
+      ),
+    );
+    return keepGoing == true;
+  }
+
   Future<void> _save() async {
     final user = supabase.auth.currentUser;
     if (user == null) return;
@@ -148,18 +265,6 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
         await SubscriptionLimits.showTrialUpgradeDialog(
           context,
           onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
-        );
-      }
-      return;
-    }
-    if (!info.supportsCustomTemplates) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '${info.planName} includes template preview mode. Custom templates are available in PLUS SUPPORT MODE and FULL SUPPORT MODE.',
-            ),
-          ),
         );
       }
       return;
@@ -174,39 +279,87 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
 
     if (cleanedFields.isEmpty) return;
 
+    if (_isEditing) {
+      final continueSave = await _confirmDefinitionChangeIfNeeded();
+      if (!continueSave) return;
+    }
+
     setState(() => saving = true);
 
     try {
-      final baseKey = _slugify(keyCtrl.text.isEmpty ? name : keyCtrl.text);
-      final templateKey = await _uniqueTemplateKey(baseKey, user.id);
+      late final String templateId;
+      if (_isEditing) {
+        templateId = widget.templateId!;
+        await supabase
+            .from(tTemplates)
+            .update({'name': name})
+            .eq('id', templateId)
+            .eq('user_id', user.id);
+      } else {
+        final baseKey = _slugify(keyCtrl.text.isEmpty ? name : keyCtrl.text);
+        final templateKey = await _uniqueTemplateKey(baseKey, user.id);
 
-      final tpl = await supabase
-          .from(tTemplates)
-          .insert({
-            'user_id': user.id,
-            'template_key': templateKey,
-            'name': name,
-          })
-          .select()
-          .single();
+        final tpl = await supabase
+            .from(tTemplates)
+            .insert({
+              'user_id': user.id,
+              'template_key': templateKey,
+              'name': name,
+            })
+            .select()
+            .single();
+        templateId = (tpl['id'] ?? '').toString();
+      }
 
-      final templateId = (tpl['id'] ?? '').toString();
-      final rows = cleanedFields.asMap().entries.map((entry) {
-        final i = entry.key;
-        final f = entry.value;
-        return {
+      final incomingIds = <String>{};
+      for (final entry in cleanedFields.asMap().entries) {
+        final index = entry.key;
+        final field = entry.value;
+        final fieldId = field.id;
+        final payload = {
           'user_id': user.id,
           'template_id': templateId,
-          'field_key': f.key,
-          'label': f.label,
-          'field_type': f.type,
-          'sort_order': i,
-          'options': f.optionsJson,
+          'field_key': field.key,
+          'label': field.label,
+          'field_type': field.type,
+          'sort_order': index,
+          'options': field.optionsJson,
           'is_hidden': false,
         };
-      }).toList();
 
-      await supabase.from(tFields).insert(rows);
+        if (fieldId == null) {
+          final inserted = await supabase
+              .from(tFields)
+              .insert(payload)
+              .select('id')
+              .single();
+          final insertedId = (inserted['id'] ?? '').toString();
+          if (insertedId.isNotEmpty) incomingIds.add(insertedId);
+        } else {
+          incomingIds.add(fieldId);
+          await supabase
+              .from(tFields)
+              .update(payload)
+              .eq('id', fieldId)
+              .eq('template_id', templateId);
+        }
+      }
+
+      if (_isEditing) {
+        final existingIds = _originalFields
+            .map((field) => field.id)
+            .whereType<String>()
+            .toSet();
+        final removedIds = existingIds.difference(incomingIds);
+        if (removedIds.isNotEmpty) {
+          await supabase
+              .from(tFields)
+              .update({'is_hidden': true})
+              .inFilter('id', removedIds.toList())
+              .eq('template_id', templateId);
+        }
+      }
+
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
@@ -226,164 +379,160 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
-        leading: MbGlowBackButton(
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text('New Template'),
+        leading: MbGlowBackButton(onPressed: () => Navigator.pop(context)),
+        title: Text(_isEditing ? 'Edit Template' : 'New Template'),
         actions: [
           MbGlowIconButton(
-            icon: Icons.notifications_outlined,
-            onPressed: () =>
-                context.push('/settings/notifications?from=templates'),
-          ),
-          MbGlowIconButton(
             icon: Icons.check,
-            tooltip: saving ? 'Saving...' : 'Save',
+            tooltip: saving
+                ? 'Saving...'
+                : (_isEditing ? 'Save changes' : 'Save'),
             onPressed: saving ? null : _save,
           ),
         ],
       ),
       body: MbFloatingHintOverlay(
         hintKey: 'hint_templates_create',
-        text: 'Add fields, then tap Save to build your table.',
+        text: _isEditing
+            ? 'Adjust the template, then save your changes.'
+            : 'Add fields, then tap Save to build your table.',
         iconText: '✨',
-        child: ListView(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 60),
-          children: [
-          _GlowPanel(
-            child: Column(
-              children: [
-                Center(
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      color: scheme.primary.withOpacity(0.05),
-                      shape: BoxShape.circle,
-                      border: Border.all(color: scheme.primary.withOpacity(0.1)),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      _getEmoji(nameCtrl.text),
-                      style: const TextStyle(fontSize: 40),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  'Create your own table in 3 steps:',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                const SizedBox(height: 6),
-                _StepsRow(scheme: scheme),
-                const SizedBox(height: 24),
-                _inputWrapper(
-                  scheme,
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _examplePreset,
-                    decoration: const InputDecoration(
-                      hintText: 'Field examples',
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'None', child: Text('Examples')),
-                      DropdownMenuItem(
-                        value: 'Mood log',
-                        child: Text('Mood log'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Budget',
-                        child: Text('Budget'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'Workout',
-                        child: Text('Workout'),
-                      ),
-                    ],
-                    onChanged: (v) {
-                      if (v == null || v == 'None') return;
-                      _applyExamplePreset(v);
-                    },
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _inputWrapper(
-                  scheme,
-                  child: TextField(
-                    controller: nameCtrl,
-                    onChanged: (v) => setState(() {}),
-                    decoration: const InputDecoration(
-                      hintText: 'Template Name',
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
+        child: _loadingTemplate
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 60),
+                children: [
+                  _GlowPanel(
+                    child: Column(
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              color: scheme.primary.withOpacity(0.05),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: scheme.primary.withOpacity(0.1),
+                              ),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              _getEmoji(nameCtrl.text),
+                              style: const TextStyle(fontSize: 40),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _isEditing
+                              ? 'Shape your custom template gently:'
+                              : 'Create your own table in 3 steps:',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 6),
+                        _StepsRow(scheme: scheme),
+                        const SizedBox(height: 24),
+                        _inputWrapper(
+                          scheme,
+                          child: TextField(
+                            controller: nameCtrl,
+                            onChanged: (v) => setState(() {}),
+                            decoration: const InputDecoration(
+                              hintText: 'Template Name',
+                              border: InputBorder.none,
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_isEditing) ...[
+                          const SizedBox(height: 10),
+                          Text(
+                            'Renaming a field keeps its existing logs linked. Removing one hides it from the template so older data stays safe.',
+                            style: Theme.of(context).textTheme.bodySmall,
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _GlowPanel(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'FIELDS',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    letterSpacing: 1.2,
+                  const SizedBox(height: 16),
+                  _GlowPanel(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'FIELDS',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Add columns your table should track (e.g. "Cost", "Mood", "Duration").',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 16),
+                        for (int i = 0; i < fields.length; i++) ...[
+                          _FieldEditor(
+                            field: fields[i],
+                            onChanged: (f) => setState(() => fields[i] = f),
+                            onMoveUp: i == 0
+                                ? null
+                                : () => setState(() {
+                                    final current = fields[i];
+                                    fields[i] = fields[i - 1];
+                                    fields[i - 1] = current;
+                                  }),
+                            onMoveDown: i == fields.length - 1
+                                ? null
+                                : () => setState(() {
+                                    final current = fields[i];
+                                    fields[i] = fields[i + 1];
+                                    fields[i + 1] = current;
+                                  }),
+                            onDelete: () => setState(() {
+                              fields.removeAt(i);
+                              if (fields.isEmpty) {
+                                fields.add(
+                                  _FieldDraft(
+                                    label: 'Item',
+                                    key: '',
+                                    type: 'text',
+                                  ),
+                                );
+                              }
+                            }),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: () => setState(
+                              () => fields.add(
+                                _FieldDraft(label: '', key: '', type: 'text'),
+                              ),
+                            ),
+                            icon: const Icon(Icons.add, size: 18),
+                            label: const Text('Add Field'),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        _PreviewTable(fields: fields),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Add columns your table should track (e.g. "Cost", "Mood", "Duration").',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-                const SizedBox(height: 16),
-                for (int i = 0; i < fields.length; i++) ...[
-                  _FieldEditor(
-                    field: fields[i],
-                    onChanged: (f) => setState(() => fields[i] = f),
-                    onDelete: () => setState(() {
-                      fields.removeAt(i);
-                      if (fields.isEmpty) {
-                        fields.add(
-                          _FieldDraft(label: 'Item', key: '', type: 'text'),
-                        );
-                      }
-                    }),
-                  ),
-                  const SizedBox(height: 12),
                 ],
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () => setState(
-                      () => fields.add(
-                        _FieldDraft(label: '', key: '', type: 'text'),
-                      ),
-                    ),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Add Field'),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _PreviewTable(fields: fields),
-              ],
-            ),
-          ),
-          ],
-        ),
+              ),
       ),
     );
   }
@@ -392,25 +541,45 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
 // --- DATA CLASSES ---
 
 class _FieldDraft {
+  final String? id;
   final String label;
   final String key;
   final String type;
   final List<String> options;
 
   _FieldDraft({
+    this.id,
     required this.label,
     required this.key,
     required this.type,
     this.options = const [],
   });
 
+  factory _FieldDraft.fromDatabase(Map<String, dynamic> row) {
+    final rawOptions = row['options'];
+    final values = rawOptions is Map && rawOptions['values'] is List
+        ? List<String>.from(
+            (rawOptions['values'] as List).map((value) => '$value'),
+          )
+        : const <String>[];
+    return _FieldDraft(
+      id: row['id']?.toString(),
+      label: (row['label'] ?? '').toString(),
+      key: (row['field_key'] ?? '').toString(),
+      type: (row['field_type'] ?? 'text').toString(),
+      options: values,
+    );
+  }
+
   _FieldDraft copyWith({
+    String? id,
     String? label,
     String? key,
     String? type,
     List<String>? options,
   }) {
     return _FieldDraft(
+      id: id ?? this.id,
       label: label ?? this.label,
       key: key ?? this.key,
       type: type ?? this.type,
@@ -420,7 +589,7 @@ class _FieldDraft {
 
   _CleanedField cleaned() {
     final label2 = label.trim();
-    final key2 = (key.trim().isEmpty) ? _autoKey(label2) : _autoKey(key);
+    final key2 = key.trim().isEmpty ? _autoKey(label2) : _autoKey(key);
     final type2 = type.trim().isEmpty ? 'text' : type.trim();
 
     Map<String, dynamic>? optionsJson;
@@ -434,6 +603,7 @@ class _FieldDraft {
     }
 
     return _CleanedField(
+      id: id,
       label: label2,
       key: key2,
       type: type2,
@@ -451,9 +621,11 @@ class _FieldDraft {
 }
 
 class _CleanedField {
+  final String? id;
   final String label, key, type;
   final Map<String, dynamic>? optionsJson;
   _CleanedField({
+    required this.id,
     required this.label,
     required this.key,
     required this.type,
@@ -467,10 +639,14 @@ class _FieldEditor extends StatelessWidget {
   const _FieldEditor({
     required this.field,
     required this.onChanged,
+    required this.onMoveUp,
+    required this.onMoveDown,
     required this.onDelete,
   });
   final _FieldDraft field;
   final ValueChanged<_FieldDraft> onChanged;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
   final VoidCallback onDelete;
 
   @override
@@ -509,6 +685,26 @@ class _FieldEditor extends StatelessWidget {
                     contentPadding: EdgeInsets.zero,
                   ),
                   onChanged: (v) => onChanged(field.copyWith(label: v)),
+                ),
+              ),
+              IconButton(
+                onPressed: onMoveUp,
+                icon: Icon(
+                  Icons.keyboard_arrow_up,
+                  size: 18,
+                  color: scheme.primary.withOpacity(
+                    onMoveUp == null ? 0.2 : 0.5,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: onMoveDown,
+                icon: Icon(
+                  Icons.keyboard_arrow_down,
+                  size: 18,
+                  color: scheme.primary.withOpacity(
+                    onMoveDown == null ? 0.2 : 0.5,
+                  ),
                 ),
               ),
               IconButton(
@@ -615,23 +811,11 @@ class _StepsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Row(
       children: [
-        _StepChip(
-          number: '1',
-          label: 'Name it',
-          scheme: scheme,
-        ),
+        _StepChip(number: '1', label: 'Name it', scheme: scheme),
         const SizedBox(width: 8),
-        _StepChip(
-          number: '2',
-          label: 'Add fields',
-          scheme: scheme,
-        ),
+        _StepChip(number: '2', label: 'Add fields', scheme: scheme),
         const SizedBox(width: 8),
-        _StepChip(
-          number: '3',
-          label: 'Save',
-          scheme: scheme,
-        ),
+        _StepChip(number: '3', label: 'Save', scheme: scheme),
       ],
     );
   }
@@ -677,10 +861,7 @@ class _StepChip extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelMedium,
-          ),
+          Text(label, style: Theme.of(context).textTheme.labelMedium),
         ],
       ),
     );
@@ -695,7 +876,9 @@ class _PreviewTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final previewFields = fields.where((f) => f.label.trim().isNotEmpty).toList();
+    final previewFields = fields
+        .where((f) => f.label.trim().isNotEmpty)
+        .toList();
     if (previewFields.isEmpty) {
       return Container(
         padding: const EdgeInsets.all(12),
@@ -721,10 +904,7 @@ class _PreviewTable extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Preview',
-            style: Theme.of(context).textTheme.labelLarge,
-          ),
+          Text('Preview', style: Theme.of(context).textTheme.labelLarge),
           const SizedBox(height: 8),
           Row(
             children: previewFields

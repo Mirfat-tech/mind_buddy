@@ -5,13 +5,25 @@ import 'create_templates_screen.dart';
 import 'package:mind_buddy/router.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
-import 'package:mind_buddy/services/subscription_plan_catalog.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
+import 'package:mind_buddy/features/templates/template_preview_store.dart';
+
+enum _CustomTemplateAction { edit, delete }
+
+class _TemplateDeleteResult {
+  const _TemplateDeleteResult({
+    required this.success,
+    this.message,
+  });
+
+  final bool success;
+  final String? message;
+}
 
 class TemplatesScreen extends StatefulWidget {
   const TemplatesScreen({super.key});
@@ -27,43 +39,12 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
   List<Map<String, dynamic>> templates = [];
   bool _showHidden = false;
   Set<String> _hiddenTemplateIds = {};
-  bool _canCreateCustomTemplates = false;
   bool _isPending = false;
   late final _TrialBannerController _trialBannerController;
   final GlobalKey _templateListItemKey = GlobalKey();
   final GlobalKey _hideToggleKey = GlobalKey();
   final GlobalKey _addTemplateButtonKey = GlobalKey();
-
-  // Updated to match the template_keys we inserted via SQL
-  final List<String> _builtInTemplates = [
-    'menstrual',
-    'cycle',
-    'sleep',
-    'bills',
-    'income',
-    'expenses',
-    'tasks',
-    'wishlist',
-    'music',
-    'mood',
-    'water',
-    'movies',
-    'tv_log',
-    'places',
-    'restaurants',
-    'books',
-    'health',
-    'workout',
-    'fast',
-    'study',
-    'skin_care',
-    'meditation',
-    'social',
-    'Goals/Resolutions',
-    // 'symptoms',
-    // 'habits',
-    //'meal_prep'
-  ];
+  final Set<String> _deletingTemplateIds = <String>{};
 
   @override
   void initState() {
@@ -81,18 +62,56 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
 
   String _today() => DateTime.now().toIso8601String().substring(0, 10);
 
-  bool _isDeletable(Map<String, dynamic> t) {
-    final name = (t['name'] ?? '').toString().toLowerCase();
-    final key = (t['template_key'] ?? '').toString().toLowerCase();
-
-    // If it matches our built-in list OR if user_id is null (System Template), don't delete
-    final isBuiltIn = _builtInTemplates.any(
-      (b) => name.contains(b) || key.contains(b),
-    );
-    if (isBuiltIn || t['user_id'] == null) return false;
-
-    final user = supabase.auth.currentUser;
-    return (t['user_id'] ?? '').toString() == user?.id;
+  String _tableNameForTemplateKey(String templateKey) {
+    final key = templateKey.toLowerCase();
+    switch (key) {
+      case 'goals':
+        return 'goal_logs';
+      case 'water':
+        return 'water_logs';
+      case 'sleep':
+        return 'sleep_logs';
+      case 'cycle':
+        return 'menstrual_logs';
+      case 'books':
+        return 'book_logs';
+      case 'income':
+        return 'income_logs';
+      case 'wishlist':
+        return 'wishlist';
+      case 'restaurants':
+        return 'restaurant_logs';
+      case 'movies':
+        return 'movie_logs';
+      case 'bills':
+        return 'bill_logs';
+      case 'expenses':
+        return 'expense_logs';
+      case 'places':
+        return 'place_logs';
+      case 'tasks':
+        return 'task_logs';
+      case 'fast':
+        return 'fast_logs';
+      case 'meditation':
+        return 'meditation_logs';
+      case 'skin_care':
+        return 'skin_care_logs';
+      case 'social':
+        return 'social_logs';
+      case 'study':
+        return 'study_logs';
+      case 'workout':
+        return 'workout_logs';
+      case 'tv_log':
+        return 'tv_logs';
+      case 'mood':
+        return 'mood_logs';
+      case 'symptoms':
+        return 'symptom_logs';
+      default:
+        return '${key}_logs';
+    }
   }
 
   Future<void> _load() async {
@@ -102,7 +121,6 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       final user = supabase.auth.currentUser;
       if (user == null) return;
       final info = await SubscriptionLimits.fetchForCurrentUser();
-      _canCreateCustomTemplates = info.supportsCustomTemplates;
       _isPending = info.isPending;
 
       final hiddenRows = await supabase
@@ -133,10 +151,9 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       if (mounted) {
         setState(() {
           // Filter out 'habits' if you want it hidden from this view
-          final all = List<Map<String, dynamic>>.from(rows)
-              .where((t) => (t['template_key'] ?? '') != 'habits')
-              .where((t) => _canCreateCustomTemplates || t['user_id'] == null)
-              .toList();
+          final all = List<Map<String, dynamic>>.from(
+            rows,
+          ).where((t) => (t['template_key'] ?? '') != 'habits').toList();
           templates = _showHidden
               ? all
                     .where(
@@ -163,18 +180,179 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     }
   }
 
-  Future<void> _deleteTemplate(String templateId) async {
+  Future<_TemplateDeleteResult> _deleteTemplate(
+    Map<String, dynamic> template, {
+    required String templateKey,
+  }) async {
+    final user = supabase.auth.currentUser;
+    if (user == null) {
+      return const _TemplateDeleteResult(
+        success: false,
+        message: 'You need to be signed in to delete templates.',
+      );
+    }
+
+    final templateId = (template['id'] ?? '').toString();
+    final ownerId = (template['user_id'] ?? '').toString();
+    if (templateId.isEmpty || ownerId != user.id) {
+      return const _TemplateDeleteResult(
+        success: false,
+        message: 'Only templates you created can be deleted.',
+      );
+    }
+
     try {
-      await supabase.from('log_entries').delete().eq('template_id', templateId);
+      final existingTemplate = await supabase
+          .from('log_templates_v2')
+          .select('id')
+          .eq('id', templateId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+      if (existingTemplate == null) {
+        return const _TemplateDeleteResult(
+          success: true,
+          message: 'That template is already gone.',
+        );
+      }
+
+      final rpcDeleted = await _deleteTemplateViaRpc(templateId);
+      if (rpcDeleted == true) {
+        try {
+          await TemplatePreviewStore.saveEntries(
+            userId: user.id,
+            tableName: _tableNameForTemplateKey(templateKey),
+            entries: const <Map<String, dynamic>>[],
+          );
+        } catch (_) {}
+        _hiddenTemplateIds.remove(templateId);
+        await _load();
+        return const _TemplateDeleteResult(success: true);
+      }
+
+      final tableName = _tableNameForTemplateKey(templateKey);
+
+      await _deleteOptionalTableRows(
+        tableName,
+        filters: (query) => query.eq('user_id', user.id),
+      );
+      await _deleteOptionalTableRows(
+        'log_entries',
+        filters: (query) =>
+            query.eq('template_id', templateId).eq('user_id', user.id),
+      );
+      await _deleteOptionalTableRows(
+        'user_template_settings',
+        filters: (query) =>
+            query.eq('template_id', templateId).eq('user_id', user.id),
+      );
+      await _deleteOptionalTableRows(
+        'log_template_fields_v2',
+        filters: (query) =>
+            query.eq('template_id', templateId).eq('user_id', user.id),
+      );
+
       await supabase
-          .from('log_template_fields_v2')
+          .from('log_templates_v2')
           .delete()
-          .eq('template_id', templateId);
-      await supabase.from('log_templates_v2').delete().eq('id', templateId);
-      _load();
+          .eq('id', templateId)
+          .eq('user_id', user.id);
+
+      final remainingTemplate = await supabase
+          .from('log_templates_v2')
+          .select('id')
+          .eq('id', templateId)
+          .eq('user_id', user.id)
+          .maybeSingle();
+      if (remainingTemplate != null) {
+        return const _TemplateDeleteResult(
+          success: false,
+          message: 'Supabase did not confirm the template deletion.',
+        );
+      }
+
+      try {
+        await TemplatePreviewStore.saveEntries(
+          userId: user.id,
+          tableName: tableName,
+          entries: const <Map<String, dynamic>>[],
+        );
+      } catch (_) {
+        // Keep the remote deletion successful even if local preview cleanup fails.
+      }
+
+      _hiddenTemplateIds.remove(templateId);
+      await _load();
+      return const _TemplateDeleteResult(success: true);
     } catch (e) {
       debugPrint('Delete failed: $e');
+      return _TemplateDeleteResult(
+        success: false,
+        message: _deleteFailureMessage(e),
+      );
     }
+  }
+
+  Future<void> _deleteOptionalTableRows(
+    String tableName, {
+    required PostgrestFilterBuilder<dynamic> Function(
+      PostgrestFilterBuilder<dynamic> query,
+    )
+    filters,
+  }) async {
+    try {
+      await filters(supabase.from(tableName).delete());
+    } on PostgrestException catch (e) {
+      if (_isMissingRelationError(e)) {
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<bool?> _deleteTemplateViaRpc(String templateId) async {
+    try {
+      final res = await supabase.rpc(
+        'delete_my_log_template',
+        params: {'p_template_id': templateId},
+      );
+      if (res is Map) {
+        final deleted = res['deleted'];
+        if (deleted is bool) return deleted;
+      }
+      if (res is bool) return res;
+      return true;
+    } on PostgrestException catch (e) {
+      final code = (e.code ?? '').toUpperCase();
+      final message =
+          '${e.message} ${e.details} ${e.hint}'.toLowerCase();
+      final missingRpc = code == 'PGRST202' ||
+          code == '42883' ||
+          message.contains('delete_my_log_template');
+      if (missingRpc) {
+        return null;
+      }
+      rethrow;
+    }
+  }
+
+  bool _isMissingRelationError(PostgrestException error) {
+    final code = (error.code ?? '').toUpperCase();
+    final message =
+        '${error.message} ${error.details} ${error.hint}'.toLowerCase();
+    return code == 'PGRST205' ||
+        code == '42P01' ||
+        message.contains('schema cache') ||
+        message.contains('could not find the table');
+  }
+
+  String _deleteFailureMessage(Object error) {
+    if (error is PostgrestException) {
+      final message =
+          (error.message.isNotEmpty ? error.message : 'Supabase rejected the delete request.')
+              .trim();
+      return message;
+    }
+    return error.toString();
   }
 
   Future<void> _setHidden(String templateId, bool hidden) async {
@@ -198,32 +376,78 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     }
   }
 
-  String _getEmoji(String title) {
-    final t = title.toLowerCase();
-    if (t.contains('menstrual') || t.contains('cycle')) return '🩸';
-    if (t.contains('sleep')) return '😴';
-    if (t.contains('bill')) return '💸';
-    if (t.contains('income')) return '💰';
-    if (t.contains('expense')) return '📉';
-    if (t.contains('task')) return '✅';
-    if (t.contains('wishlist')) return '✨';
-    if (t.contains('music')) return '🎵';
-    if (t.contains('mood')) return '🎭';
-    if (t.contains('water')) return '💧';
-    if (t.contains('movie')) return '🍿';
-    if (t.contains('tv log')) return '📺';
-    if (t.contains('place')) return '📍';
-    if (t.contains('restaurant')) return '🍽️';
-    if (t.contains('book')) return '📖';
-    //if (t.contains('health') || t.contains('symptoms')) return '🏥';
-    if (t.contains('workout')) return '💪';
-    if (t.contains('fast')) return '⏳';
-    if (t.contains('skin care')) return '🧼';
-    if (t.contains('meditation')) return '🧘';
-    if (t.contains('study')) return '🧠';
-    if (t.contains('goals')) return '🎊';
-    // if (t.contains('meal prep')) return '🍱';
-    return '📋';
+  Future<void> _openEditTemplate(Map<String, dynamic> template) async {
+    final ok = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => themed(
+          CreateLogTemplateScreen(
+            templateId: (template['id'] ?? '').toString(),
+          ),
+        ),
+      ),
+    );
+    if (ok == true) {
+      await _load();
+    }
+  }
+
+  Future<void> _confirmDeleteTemplate(Map<String, dynamic> template) async {
+    final user = supabase.auth.currentUser;
+    final templateId = (template['id'] ?? '').toString();
+    final ownerId = (template['user_id'] ?? '').toString();
+    final title = (template['name'] ?? template['template_key'] ?? 'template')
+        .toString();
+    if (user == null || templateId.isEmpty || ownerId != user.id) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only templates you created can be deleted.'),
+        ),
+      );
+      return;
+    }
+
+    final scheme = Theme.of(context).colorScheme;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete this template?'),
+        content: const Text(
+          'This will delete the template and the logs connected to it. Older entries will not be recoverable after this.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Delete', style: TextStyle(color: scheme.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    setState(() => _deletingTemplateIds.add(templateId));
+
+    final result = await _deleteTemplate(
+      template,
+      templateKey: (template['template_key'] ?? '').toString(),
+    );
+    if (!mounted) return;
+    setState(() => _deletingTemplateIds.remove(templateId));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.success
+              ? 'Custom template deleted.'
+              : 'Could not delete "$title": ${result.message ?? 'Please try again.'}',
+        ),
+      ),
+    );
   }
 
   IconData _getIcon(String title) {
@@ -315,15 +539,6 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
         centerTitle: true,
         actions: [
           MbGlowIconButton(
-            icon: Icons.help_outline,
-            onPressed: () => _showGuideIfNeeded(force: true),
-          ),
-          MbGlowIconButton(
-            icon: Icons.notifications_outlined,
-            onPressed: () =>
-                context.push('/settings/notifications?from=templates'),
-          ),
-          MbGlowIconButton(
             key: _addTemplateButtonKey,
             icon: Icons.add,
             onPressed: _openAddMenu,
@@ -403,7 +618,15 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
                         final title = (t['name'] ?? t['template_key'] ?? '')
                             .toString();
                         final templateId = t['id'].toString();
-                        final isBuiltIn = t['user_id'] == null;
+                        final currentUserId =
+                            supabase.auth.currentUser?.id ?? '';
+                        final ownerId = (t['user_id'] ?? '').toString();
+                        final isOwnedByCurrentUser =
+                            ownerId.isNotEmpty && ownerId == currentUserId;
+                        final isCustom = isOwnedByCurrentUser;
+                        final isDeleting = _deletingTemplateIds.contains(
+                          templateId,
+                        );
 
                         final isHidden = _hiddenTemplateIds.contains(
                           templateId,
@@ -425,7 +648,9 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
                             borderRadius: BorderRadius.circular(16),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(16),
-                              onTap: () async {
+                              onTap: isDeleting
+                                  ? null
+                                  : () async {
                                 if (isHidden) {
                                   final unhide = await showDialog<bool>(
                                     context: context,
@@ -514,6 +739,43 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
                                         ),
                                       ),
                                     ),
+                                    if (isDeleting)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 8,
+                                        ),
+                                        child: SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: scheme.primary,
+                                          ),
+                                        ),
+                                      ),
+                                    if (isCustom)
+                                      PopupMenuButton<_CustomTemplateAction>(
+                                        tooltip: 'Template options',
+                                        enabled: !isDeleting,
+                                        onSelected: (action) {
+                                          switch (action) {
+                                            case _CustomTemplateAction.edit:
+                                              _openEditTemplate(t);
+                                            case _CustomTemplateAction.delete:
+                                              _confirmDeleteTemplate(t);
+                                          }
+                                        },
+                                        itemBuilder: (context) => const [
+                                          PopupMenuItem(
+                                            value: _CustomTemplateAction.edit,
+                                            child: Text('Edit template'),
+                                          ),
+                                          PopupMenuItem(
+                                            value: _CustomTemplateAction.delete,
+                                            child: Text('Delete template'),
+                                          ),
+                                        ],
+                                      ),
                                     if (isHidden)
                                       IconButton(
                                         tooltip: 'Unhide',
@@ -530,7 +792,9 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
 
                         return Dismissible(
                           key: ValueKey(templateId),
-                          direction: DismissDirection.endToStart,
+                          direction: isDeleting
+                              ? DismissDirection.none
+                              : DismissDirection.endToStart,
                           confirmDismiss: (_) async {
                             final isUnhideAction = isHidden || _showHidden;
                             final ok = await showDialog<bool>(
@@ -604,40 +868,14 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       }
       return;
     }
-    if (!info.supportsCustomTemplates) {
-      if (mounted) {
-        final goUpgrade = await showDialog<bool>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Custom templates are locked'),
-            content: Text(
-              '${info.planName} includes template preview mode. Upgrade to PLUS SUPPORT MODE or FULL SUPPORT MODE to create and save custom templates.\n\n${SubscriptionPlanCatalog.previewModeHelpText}',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                child: const Text('Not now'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                child: const Text('View modes'),
-              ),
-            ],
-          ),
-        );
-        if (goUpgrade == true && context.mounted) {
-          context.go('/subscription');
-        }
-      }
-      return;
-    }
-
+    if (!mounted) return;
     final ok = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => themed(const CreateLogTemplateScreen()),
       ),
     );
+    if (!mounted) return;
     if (ok == true) _load();
   }
 }
@@ -672,7 +910,7 @@ class _TrialBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'FREE MODE uses 24-hour preview mode for templates. Preview data disappears after 24 hours.',
+              'Choose your mode to finish setup. Templates and journaling save normally once your account setup is complete.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),

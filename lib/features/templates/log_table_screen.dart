@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
@@ -14,8 +12,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mind_buddy/common/month_navigator.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/common/input_sanitizer.dart';
+import 'package:mind_buddy/common/money_format.dart';
+import 'package:mind_buddy/features/mood/mood_catalog.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mind_buddy/features/templates/template_preview_store.dart';
 
 final logTableMonthProvider = StateProvider.family<DateTime, String>((
   ref,
@@ -24,6 +24,20 @@ final logTableMonthProvider = StateProvider.family<DateTime, String>((
   final now = DateTime.now();
   return DateTime(now.year, now.month, 1);
 });
+
+String expenseItemServiceLabel(Map<String, dynamic> entry) {
+  for (final key in <String>[
+    'item_service',
+    'title',
+    'item',
+    'service',
+    'notes',
+  ]) {
+    final value = entry[key]?.toString().trim() ?? '';
+    if (value.isNotEmpty) return value;
+  }
+  return '-';
+}
 
 class LogTableScreen extends ConsumerStatefulWidget {
   const LogTableScreen({
@@ -50,8 +64,6 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
   final SupabaseClient supabase = Supabase.instance.client;
   bool loading = true;
   bool _isPending = false;
-  bool _isCoreTemplate = true;
-  SubscriptionInfo? _planInfo;
   int _localIdCounter = -1;
 
   List<Map<String, dynamic>> fields = [];
@@ -62,6 +74,49 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
   final GlobalKey _logTableContainerKey = GlobalKey();
   final GlobalKey _dateCellKey = GlobalKey();
   final GlobalKey _logRowItemKey = GlobalKey();
+
+  Map<String, dynamic> _sanitizePayloadForTemplate(Map<String, dynamic> input) {
+    final data = Map<String, dynamic>.from(input);
+    if (widget.templateKey.toLowerCase() == 'goals') {
+      data.remove('notes');
+      data.remove('note');
+    }
+    if (widget.templateKey.toLowerCase() == 'social') {
+      final personEvent =
+          data['person_event']?.toString().trim() ??
+          data['people']?.toString().trim() ??
+          '';
+      if (personEvent.isEmpty) {
+        data.remove('person_event');
+      } else {
+        data['person_event'] = personEvent;
+      }
+      data.remove('people');
+
+      if (data.containsKey('social_energy')) {
+        try {
+          data['social_energy'] = parseNullableIntLike(
+            data['social_energy'],
+            fieldName: 'social_energy',
+          );
+        } on FormatException {
+          // Let the dialog-level validation surface this to the user.
+        }
+      }
+    }
+    return data;
+  }
+
+  String? _friendlySchemaMessage(PostgrestException error) {
+    final message = error.message.toLowerCase();
+    if (error.code == '42703' &&
+        message.contains('goal_logs') &&
+        message.contains('notes')) {
+      return 'Goals save is out of sync with the current database schema. '
+          'Notes are not supported for goals right now.';
+    }
+    return null;
+  }
 
   String _getTableName() {
     final key = widget.templateKey.toLowerCase();
@@ -121,6 +176,10 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
   }
 
   String _dayKey(DateTime date) => toYyyyMmDd(date);
+
+  String _previewLegacyStorageKey(String userId) {
+    return 'template_preview_entries:$userId:${widget.templateId}';
+  }
 
   Future<Map<String, dynamic>?> _findExistingDailyLog({
     required String tableName,
@@ -207,9 +266,7 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     if (!mounted) return;
     setState(() => loading = true);
     final info = await SubscriptionLimits.fetchForCurrentUser();
-    _planInfo = info;
     _isPending = info.isPending;
-    _isCoreTemplate = await _loadTemplateCoreFlag();
 
     // 1) Always load fields first
     try {
@@ -230,18 +287,9 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     // 2) Then try load entries (can fail without breaking the dialog)
     if (_isPending) {
       if (mounted) setState(() => entries = []);
-    } else if (_isPreviewMode) {
-      final user = supabase.auth.currentUser;
-      if (user != null) {
-        final preview = await _loadPreviewEntries(user.id);
-        if (mounted) {
-          setState(() => entries = preview);
-        }
-      } else if (mounted) {
-        setState(() => entries = []);
-      }
     } else {
       try {
+        await _migratePreviewEntriesToSupabaseIfNeeded();
         final currentTable = _getTableName();
         final e = await supabase
             .from(currentTable)
@@ -266,6 +314,63 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     if (mounted) {
       setState(() => loading = false);
       _scheduleGuideAutoStart();
+    }
+  }
+
+  Future<void> _migratePreviewEntriesToSupabaseIfNeeded() async {
+    final user = supabase.auth.currentUser;
+    if (user == null || _isPending) return;
+
+    final tableName = _getTableName();
+    final previewEntries = await TemplatePreviewStore.loadEntries(
+      userId: user.id,
+      tableName: tableName,
+      legacyStorageKeys: <String>[_previewLegacyStorageKey(user.id)],
+    );
+    if (previewEntries.isEmpty) return;
+
+    try {
+      for (final previewEntry in previewEntries) {
+        final payload = _sanitizePayloadForTemplate(<String, dynamic>{
+          'user_id': user.id,
+          ...previewEntry,
+        });
+        payload.remove('id');
+        payload.remove('_preview_table_name');
+        payload.remove('_preview_saved_at');
+        payload.remove(TemplatePreviewStore.createdAtKey);
+        payload.remove(TemplatePreviewStore.expiresAtKey);
+        payload.remove(TemplatePreviewStore.isPreviewKey);
+
+        final dayKey = (payload['day'] ?? '').toString();
+        if (dayKey.isEmpty) continue;
+
+        if (_enforceUniqueDailyLog(tableName)) {
+          final existing = await _findExistingDailyLog(
+            tableName: tableName,
+            userId: user.id,
+            dayKey: dayKey,
+          );
+          if (existing != null && existing['id'] != null) {
+            await supabase
+                .from(tableName)
+                .update(payload)
+                .eq('id', existing['id']);
+            continue;
+          }
+        }
+
+        await supabase.from(tableName).insert(payload);
+      }
+
+      await TemplatePreviewStore.saveEntries(
+        userId: user.id,
+        tableName: tableName,
+        entries: const <Map<String, dynamic>>[],
+        legacyStorageKeys: <String>[_previewLegacyStorageKey(user.id)],
+      );
+    } catch (error) {
+      debugPrint('Preview migration skipped for $tableName: $error');
     }
   }
 
@@ -314,11 +419,11 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     if (result == null) return;
 
     if (_isPending) {
-      final localEntry = {
+      final localEntry = _sanitizePayloadForTemplate({
         'id': _localIdCounter--,
         'day': result.day.toIso8601String().substring(0, 10),
         ...result.data,
-      };
+      });
       if (mounted) {
         setState(() {
           entries = [localEntry, ...entries];
@@ -331,43 +436,15 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
       return;
     }
 
-    if (_isPreviewMode) {
-      final localEntry = {
-        'id': _localIdCounter--,
-        'day': result.day.toIso8601String().substring(0, 10),
-        '_preview_saved_at': DateTime.now().toIso8601String(),
-        ...result.data,
-      };
-      if (mounted) {
-        setState(() {
-          entries = [localEntry, ...entries];
-        });
-      }
-      final user = supabase.auth.currentUser;
-      if (user != null) {
-        await _savePreviewEntries(user.id);
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Saved in 24-hour preview mode. This template data disappears after 24 hours.',
-            ),
-          ),
-        );
-      }
-      return;
-    }
-
     try {
       final tableName = _getTableName();
       final userId = supabase.auth.currentUser!.id;
       final dayKey = _dayKey(result.day);
-      final payload = <String, dynamic>{
+      final payload = _sanitizePayloadForTemplate(<String, dynamic>{
         'user_id': userId,
         'day': dayKey,
         ...result.data,
-      };
+      });
 
       if (_enforceUniqueDailyLog(tableName)) {
         final existing = await _findExistingDailyLog(
@@ -402,9 +479,10 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     } on PostgrestException catch (e) {
       if (mounted) {
         final isUniqueViolation = e.code == '23505';
+        final schemaMessage = _friendlySchemaMessage(e);
         final message = isUniqueViolation
             ? 'You’ve already logged today — edit your existing entry instead.'
-            : 'Save error: ${e.message}';
+            : schemaMessage ?? 'Save error: ${e.message}';
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(message)));
@@ -436,11 +514,11 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
 
     if (_isPending) {
       final id = entry['id'];
-      final updated = {
+      final updated = _sanitizePayloadForTemplate({
         ...entry,
         'day': result.day.toIso8601String().substring(0, 10),
         ...result.data,
-      };
+      });
       if (mounted) {
         setState(() {
           final idx = entries.indexWhere((e) => e['id'] == id);
@@ -453,40 +531,6 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
         await SubscriptionLimits.showTrialUpgradeDialog(
           context,
           onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
-        );
-      }
-      return;
-    }
-
-    if (_isPreviewMode) {
-      final id = entry['id'];
-      final updated = {
-        ...entry,
-        'day': result.day.toIso8601String().substring(0, 10),
-        '_preview_saved_at': DateTime.now().toIso8601String(),
-        ...result.data,
-      };
-      if (mounted) {
-        setState(() {
-          final idx = entries.indexWhere((e) => e['id'] == id);
-          if (idx != -1) {
-            final copy = List<Map<String, dynamic>>.from(entries);
-            copy[idx] = updated;
-            entries = copy;
-          }
-        });
-      }
-      final user = supabase.auth.currentUser;
-      if (user != null) {
-        await _savePreviewEntries(user.id);
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Updated in 24-hour preview mode. This template data disappears after 24 hours.',
-            ),
-          ),
         );
       }
       return;
@@ -519,15 +563,18 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
 
       await supabase
           .from(tableName)
-          .update({'day': newDayKey, ...result.data})
+          .update(
+            _sanitizePayloadForTemplate({'day': newDayKey, ...result.data}),
+          )
           .eq('id', entry['id']);
       _load();
     } on PostgrestException catch (err) {
       if (mounted) {
         final isUniqueViolation = err.code == '23505';
+        final schemaMessage = _friendlySchemaMessage(err);
         final message = isUniqueViolation
             ? 'A log already exists for that day. Edit the existing entry instead.'
-            : 'Update error: ${err.message}';
+            : schemaMessage ?? 'Update error: ${err.message}';
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(message)));
@@ -577,85 +624,9 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
         }
         return;
       }
-      if (_isPreviewMode) {
-        if (mounted) {
-          setState(() {
-            entries = entries.where((e) => e['id'] != entry['id']).toList();
-          });
-        }
-        final user = supabase.auth.currentUser;
-        if (user != null) {
-          await _savePreviewEntries(user.id);
-        }
-      } else {
-        await supabase.from(_getTableName()).delete().eq('id', entry['id']);
-        _load();
-      }
+      await supabase.from(_getTableName()).delete().eq('id', entry['id']);
+      _load();
     }
-  }
-
-  bool get _isPreviewMode {
-    final info = _planInfo;
-    if (info == null) return false;
-    if (info.isFree) return true;
-    if (info.isLight && !_isCoreTemplate) return true;
-    return false;
-  }
-
-  String _previewStorageKey(String userId) {
-    return 'template_preview_entries:$userId:${widget.templateId}';
-  }
-
-  Future<bool> _loadTemplateCoreFlag() async {
-    try {
-      final row = await supabase
-          .from('log_templates_v2')
-          .select('user_id')
-          .eq('id', widget.templateId)
-          .maybeSingle();
-      return row == null || row['user_id'] == null;
-    } catch (_) {
-      return true;
-    }
-  }
-
-  Future<List<Map<String, dynamic>>> _loadPreviewEntries(String userId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_previewStorageKey(userId));
-    if (raw == null || raw.isEmpty) return <Map<String, dynamic>>[];
-    try {
-      final now = DateTime.now();
-      final cutoff = now.subtract(const Duration(hours: 24));
-      final decoded = (jsonDecode(raw) as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
-      final filtered = decoded.where((entry) {
-        final savedAtRaw = (entry['_preview_saved_at'] ?? '').toString();
-        final savedAt = DateTime.tryParse(savedAtRaw);
-        if (savedAt == null) return false;
-        return savedAt.isAfter(cutoff);
-      }).toList();
-      if (filtered.length != decoded.length) {
-        await prefs.setString(_previewStorageKey(userId), jsonEncode(filtered));
-      }
-      return filtered;
-    } catch (_) {
-      await prefs.remove(_previewStorageKey(userId));
-      return <Map<String, dynamic>>[];
-    }
-  }
-
-  Future<void> _savePreviewEntries(String userId) async {
-    final prefs = await SharedPreferences.getInstance();
-    final now = DateTime.now();
-    final cutoff = now.subtract(const Duration(hours: 24));
-    final filtered = entries.where((entry) {
-      final savedAtRaw = (entry['_preview_saved_at'] ?? '').toString();
-      final savedAt = DateTime.tryParse(savedAtRaw);
-      if (savedAt == null) return false;
-      return savedAt.isAfter(cutoff);
-    }).toList();
-    await prefs.setString(_previewStorageKey(userId), jsonEncode(filtered));
   }
 
   String _fmtEntryDate(Map<String, dynamic> e) {
@@ -685,47 +656,15 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
   }
 
   String _currencyCode(String raw) {
-    final match = RegExp(r'[A-Z]{3}').firstMatch(raw);
-    if (match != null) return match.group(0)!;
-    return raw.trim();
+    return currencyCode(raw);
   }
 
   String _currencySymbol(String raw) {
-    if (raw.contains('£')) return '£';
-    if (raw.contains('\$')) return '\$';
-    if (raw.contains('€')) return '€';
-    final code = _currencyCode(raw);
-    switch (code) {
-      case 'GBP':
-        return '£';
-      case 'USD':
-        return '\$';
-      case 'EUR':
-        return '€';
-      case 'AED':
-        return 'AED';
-      case 'SAR':
-        return 'SAR';
-      case 'JPY':
-        return '¥';
-      default:
-        return code;
-    }
+    return currencySymbol(raw);
   }
 
   String formatMoney(dynamic amount, String currencyRaw) {
-    final numVal = (amount is num)
-        ? amount
-        : (double.tryParse(amount?.toString() ?? '') ?? 0);
-    final symbol = _currencySymbol(currencyRaw);
-    final formatted = numVal.toStringAsFixed(2);
-    if (symbol.length <= 2 ||
-        symbol == '\$' ||
-        symbol == '£' ||
-        symbol == '€') {
-      return '$symbol$formatted';
-    }
-    return '$symbol $formatted';
+    return formatCurrencyAmount(amount, currencyRaw);
   }
 
   Map<String, double> _sumByCurrency(
@@ -761,6 +700,27 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     return sums;
   }
 
+  String _formatCurrencyTotalsInline(Map<String, double> sums) {
+    if (sums.isEmpty) return '—';
+
+    final sortedEntries = sums.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+
+    return sortedEntries
+        .map((entry) {
+          final symbol = _currencySymbol(entry.key);
+          final formatted = entry.value.toStringAsFixed(2);
+          if (symbol.length <= 2 ||
+              symbol == '\$' ||
+              symbol == '£' ||
+              symbol == '€') {
+            return '$symbol$formatted';
+          }
+          return '$symbol $formatted';
+        })
+        .join(' • ');
+  }
+
   Widget _buildTotalsCard(List<Map<String, dynamic>> data) {
     final selectedMonth = ref.watch(logTableMonthProvider(widget.templateKey));
     final monthStart = DateTime(selectedMonth.year, selectedMonth.month, 1);
@@ -772,22 +732,6 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     final yearSums = _sumByCurrency(data, yearStart, yearEnd);
 
     final cs = Theme.of(context).colorScheme;
-    String renderLine(Map<String, double> sums) {
-      if (sums.isEmpty) return '—';
-      return sums.entries
-          .map((e) {
-            final symbol = _currencySymbol(e.key);
-            final formatted = e.value.toStringAsFixed(2);
-            if (symbol.length <= 2 ||
-                symbol == '\$' ||
-                symbol == '£' ||
-                symbol == '€') {
-              return '$symbol$formatted';
-            }
-            return '$symbol $formatted';
-          })
-          .join(' • ');
-    }
 
     return _GlowPanel(
       child: Padding(
@@ -821,7 +765,7 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
               ),
               const SizedBox(height: 2),
               Text(
-                renderLine(monthSums),
+                _formatCurrencyTotalsInline(monthSums),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: 6),
@@ -833,7 +777,7 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
               ),
               const SizedBox(height: 2),
               Text(
-                renderLine(yearSums),
+                _formatCurrencyTotalsInline(yearSums),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -856,10 +800,6 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
               : context.go('/home'),
         ),
         actions: [
-          MbGlowIconButton(
-            icon: Icons.help_outline,
-            onPressed: () => _showGuideIfNeeded(force: true),
-          ),
           MbGlowIconButton(
             icon: Icons.calendar_month,
             onPressed: () async {
@@ -1022,7 +962,7 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
                                 widget.templateKey == 'bills')
                               Padding(
                                 padding: const EdgeInsets.only(top: 12),
-                                child: _buildTotalsCard(_filteredEntries),
+                                child: _buildTotalsCard(entries),
                               ),
                           ],
                         ),
@@ -1060,6 +1000,9 @@ class _StickyLogTable extends StatelessWidget {
 
   // ✅ ADD THIS METHOD HERE (after constructor, before _buildColumns)
   String _detectTemplate(Map<String, dynamic> entry) {
+    if (entry.containsKey('source')) {
+      return 'income';
+    }
     if (entry.containsKey('currency') && entry.containsKey('is_paid')) {
       return 'bills';
     }
@@ -1076,9 +1019,6 @@ class _StickyLogTable extends StatelessWidget {
       return 'fast';
     }
     if (entry.containsKey('goal_title')) return 'goals';
-    if (entry.containsKey('source') && !entry.containsKey('currency')) {
-      return 'income';
-    }
     if (entry.containsKey('duration_minutes') &&
         entry.containsKey('technique')) {
       return 'meditation';
@@ -1161,9 +1101,8 @@ class _StickyLogTable extends StatelessWidget {
       else if (firstEntry.containsKey('goal_title')) {
         templateKey = 'goals';
       }
-      // Income: has source + amount (but no currency)
-      else if (firstEntry.containsKey('source') &&
-          !firstEntry.containsKey('currency')) {
+      // Income: has source
+      else if (firstEntry.containsKey('source')) {
         templateKey = 'income';
       }
       // Meditation: has duration_minutes + technique
@@ -1319,9 +1258,9 @@ class _StickyLogTable extends StatelessWidget {
       return [
         const DataColumn(label: Text('DATE')),
         const DataColumn(label: Text('SOURCE')),
+        const DataColumn(label: Text('STATUS')),
         const DataColumn(label: Text('AMOUNT')),
         const DataColumn(label: Text('CATEGORY')),
-        const DataColumn(label: Text('STATUS')),
         const DataColumn(label: Text('CURRENCY')),
         const DataColumn(label: Text('NOTES')),
       ];
@@ -1587,9 +1526,7 @@ class _StickyLogTable extends StatelessWidget {
           ),
           onTap: () => onEdit(entry),
         ),
-        DataCell(
-          Text(entry['notes']?.toString() ?? '-'),
-        ), // Item/Service is stored in notes
+        DataCell(Text(expenseItemServiceLabel(entry))),
         DataCell(Text(entry['category']?.toString() ?? '-')),
         DataCell(Text(entry['currency']?.toString() ?? '-')),
         DataCell(
@@ -1646,13 +1583,13 @@ class _StickyLogTable extends StatelessWidget {
           onTap: () => onEdit(entry),
         ),
         DataCell(Text(entry['source']?.toString() ?? '-')),
+        DataCell(Text(entry['status']?.toString() ?? '-')),
         DataCell(
           Text(
             formatMoney(entry['amount'], entry['currency']?.toString() ?? ''),
           ),
         ),
         DataCell(Text(entry['category']?.toString() ?? '-')),
-        DataCell(Text(entry['status']?.toString() ?? '-')),
         DataCell(Text(entry['currency']?.toString() ?? '-')),
         DataCell(Text(entry['notes']?.toString() ?? '-')),
       ];
@@ -1798,7 +1735,15 @@ class _StickyLogTable extends StatelessWidget {
           ),
           onTap: () => onEdit(entry),
         ),
-        DataCell(Text(entry['person_event']?.toString() ?? '-')),
+        DataCell(
+          Text(
+            entry['person_event']?.toString().trim().isNotEmpty == true
+                ? entry['person_event'].toString()
+                : (entry['people']?.toString().trim().isNotEmpty == true
+                      ? entry['people'].toString()
+                      : '-'),
+          ),
+        ),
         DataCell(Text(entry['activity_type']?.toString() ?? '-')),
         DataCell(Text(entry['people']?.toString() ?? '-')),
         DataCell(Text(entry['social_energy']?.toString() ?? '-')),
@@ -2193,6 +2138,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       'products',
       'skin_condition',
       'people',
+      'person_event',
       'study_methods',
       'hours_slept',
       'paid',
@@ -2208,6 +2154,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       'hours_slept',
       'duration_hours',
       'energy_level',
+      'social_energy',
       //   'amount_ml',
       // 'duration_minutes',
       'intensity',
@@ -2221,7 +2168,13 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
 
     for (var f in widget.fields) {
       final key = f['field_key'];
-      final initVal = widget.initialData?[key];
+      dynamic initVal = widget.initialData?[key];
+
+      if (widget.templateKey.toLowerCase() == 'social' &&
+          (key == 'people' || key == 'person_event')) {
+        initVal ??= widget.initialData?['person_event'];
+        initVal ??= widget.initialData?['people'];
+      }
 
       if (key == 'duration_minutes') {
         values[key] = _durationFromMinutes(initVal);
@@ -2267,6 +2220,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
             'products',
             'skin_condition',
             'people',
+            'person_event',
             'study_methods',
             'feeling',
             'mood',
@@ -2287,6 +2241,13 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         !controllers.containsKey('notes')) {
       controllers['notes'] = TextEditingController(
         text: widget.initialData?['notes']?.toString() ?? '',
+      );
+    }
+
+    if (widget.templateKey.toLowerCase() == 'goals' &&
+        !controllers.containsKey('action_plan')) {
+      controllers['action_plan'] = TextEditingController(
+        text: widget.initialData?['action_plan']?.toString() ?? '',
       );
     }
 
@@ -2405,6 +2366,34 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       sortedFields = filtered;
     }
 
+    if (widget.templateKey.toLowerCase() == 'goals') {
+      final filtered = sortedFields.where((f) {
+        final key = (f['field_key'] ?? '').toString().toLowerCase();
+        return key != 'notes' && key != 'note';
+      }).toList();
+      final hasActionPlan = filtered.any(
+        (f) => (f['field_key'] ?? '').toString().toLowerCase() == 'action_plan',
+      );
+      if (!hasActionPlan) {
+        final actionPlanField = <String, dynamic>{
+          'field_key': 'action_plan',
+          'field_type': 'text',
+          'label': 'Action Plan',
+          'sort_order': 998,
+        };
+        final targetDateIndex = filtered.indexWhere(
+          (f) =>
+              (f['field_key'] ?? '').toString().toLowerCase() == 'target_date',
+        );
+        if (targetDateIndex >= 0) {
+          filtered.insert(targetDateIndex + 1, actionPlanField);
+        } else {
+          filtered.add(actionPlanField);
+        }
+      }
+      sortedFields = filtered;
+    }
+
     return AlertDialog(
       title: Text(widget.title ?? 'New Entry'),
       content: SizedBox(
@@ -2511,6 +2500,19 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                       data['quality'] = (data['quality'] as num?)?.toInt() ?? 0;
                     }
 
+                    if (tKey == 'social') {
+                      final companion =
+                          data['person_event']?.toString().trim() ??
+                          data['people']?.toString().trim() ??
+                          '';
+                      if (companion.isNotEmpty) {
+                        data['person_event'] = companion;
+                      } else {
+                        data.remove('person_event');
+                      }
+                      data.remove('people');
+                    }
+
                     if (data.containsKey('target_date') &&
                         data['target_date'].toString().isEmpty) {
                       data.remove('target_date');
@@ -2539,6 +2541,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                       'severity',
                       'libido',
                       'energy_level',
+                      'social_energy',
                       'sets',
                       'reps',
                       'current_page',
@@ -2760,6 +2763,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           'exercises',
           'flow',
           'category',
+          'person_event',
           'cuisine_type',
           'routine_type',
           'symptoms',
@@ -2767,7 +2771,6 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           'status',
           'genre',
           'subject',
-          'location',
           'study_methods',
           'people',
           'currency',
@@ -2887,6 +2890,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           'hours_slept',
           'duration_hours',
           'energy_level',
+          'social_energy',
           'priority',
           'intensity',
         ].contains(key) ||
@@ -3053,9 +3057,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           minLines: (key == 'notes' || key == 'note') ? 3 : null,
           maxLines: (key == 'notes' || key == 'note')
               ? 5
-              : ((key == 'action_plan' ||
-                        key == 'feeling' ||
-                        key == 'products')
+              : ((key == 'action_plan' || key == 'feeling' || key == 'products')
                     ? 4
                     : 1),
           decoration: InputDecoration(
@@ -3192,19 +3194,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     }
     // --- 4. OTHER LOGIC (Skin, People, Symptoms, etc.) ---
     else if (key == 'feeling') {
-      options = [
-        '😊 Happy',
-        '🤩 Excited',
-        '😎 Confident',
-        '🧘 Calm',
-        '😐 Neutral',
-        '😔 Sad',
-        '😤 Angry',
-        '🤯 Stressed',
-        '🤔 Anxious',
-        '😴 Tired',
-        '🤒 Sick',
-      ];
+      options = moodOptions.toList();
     } else if (key == 'symptoms') {
       options = [
         'Cramps',
@@ -3239,7 +3229,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         '🏠 Chilling at Home',
         'Other',
       ];
-    } else if (key == 'people') {
+    } else if (key == 'people' || key == 'person_event') {
       options = [
         'Family',
         'Partner',
@@ -3352,19 +3342,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       options = ['Groceries', 'Dining', 'Shopping', 'Health', 'Travel'];
     } // --- MOOD & FEELING SHARED LOGIC ---
     if (key == 'feeling' || key == 'mood' || tKey == 'mood') {
-      options = [
-        '😊 Happy',
-        '🤩 Excited',
-        '😎 Confident',
-        '🧘 Calm',
-        '😐 Neutral',
-        '😔 Sad',
-        '😤 Angry',
-        '🤯 Stressed',
-        '🤔 Anxious',
-        '😴 Tired',
-        '🤒 Sick',
-      ];
+      options = moodOptions.toList();
     }
     // --- NEW CURRENCY LOGIC ---
     if (key == 'currency') {

@@ -49,21 +49,6 @@ const List<NotificationCategory> notificationCategories = [
     ],
   ),
   NotificationCategory(
-    id: 'vent',
-    title: 'Vent',
-    description: 'A private place to unload',
-    subtitle: 'Vent bubble',
-    morningMessages: [
-      'You do not have to make sense here. Just let it out.',
-      'This is a space with no reactions, no fixing, no judgment.',
-    ],
-    eveningMessages: [
-      'If you need to unload without explaining yourself, I am here.',
-      'Say the thing you would not say out loud.',
-      'Big feelings are allowed here. You are not too much.',
-    ],
-  ),
-  NotificationCategory(
     id: 'brainfog',
     title: 'Brainfog',
     description: 'A gentle brain dump',

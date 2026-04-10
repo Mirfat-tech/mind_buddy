@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/common/mb_responsive.dart';
+import 'package:mind_buddy/features/auth/auth_layout.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/services/oauth_sign_in_coordinator.dart';
 
@@ -23,6 +25,7 @@ class _SignInScreenState extends State<SignInScreen> {
   // Loading states
   bool _loading = false;
   bool _resetSending = false;
+  bool _isPasswordVisible = false;
 
   @override
   void dispose() {
@@ -72,7 +75,7 @@ class _SignInScreenState extends State<SignInScreen> {
       await OnboardingController.setAuthStageCompleted(true);
       if (!mounted) return;
 
-      context.go('/onboarding/doorway');
+      context.go('/bootstrap');
     } on AuthException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -142,6 +145,9 @@ class _SignInScreenState extends State<SignInScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final responsive = MbResponsive.of(context);
+    final accentColor = Theme.of(context).colorScheme.primary;
+
     return MindBuddyBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -158,152 +164,146 @@ class _SignInScreenState extends State<SignInScreen> {
         ),
 
         body: SafeArea(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return SingleChildScrollView(
-                padding: EdgeInsets.fromLTRB(
-                  16,
-                  16,
-                  16,
-                  16 + MediaQuery.of(context).viewInsets.bottom,
-                ),
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Center(
-                        child: Image.asset(
-                          'assets/images/MYBB_Trans_logo_2.png',
-                          width: 140,
-                          height: 140,
-                          fit: BoxFit.contain,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Email
-                      TextField(
-                        controller: _email,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(labelText: 'Email'),
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      // Password
-                      TextField(
-                        controller: _password,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Password',
-                        ),
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      // Forgot password link
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton(
-                          onPressed: _resetSending ? null : _sendPasswordReset,
-                          child: _resetSending
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text('Forgot password?'),
-                        ),
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      // Continue button
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: _loading ? null : _signIn,
-                          child: _loading
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Text('Continue to MyBrainBubble'),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      const Row(
-                        children: [
-                          Expanded(child: Divider()),
-                          Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 8),
-                            child: Text('OR'),
-                          ),
-                          Expanded(child: Divider()),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      ValueListenableBuilder<bool>(
-                        valueListenable: OAuthSignInCoordinator
-                            .instance
-                            .isSigningInListenable,
-                        builder: (context, oauthBusy, _) {
-                          final disabled = oauthBusy || _loading;
-                          return Column(
-                            children: [
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  icon: const Icon(Icons.g_mobiledata),
-                                  label: Text(
-                                    oauthBusy
-                                        ? 'Continue in browser...'
-                                        : 'Continue with Google',
-                                  ),
-                                  onPressed: disabled
-                                      ? null
-                                      : () => _signInWithOAuth(
-                                          OAuthProvider.google,
-                                        ),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: OutlinedButton.icon(
-                                  icon: const Icon(Icons.apple),
-                                  label: Text(
-                                    oauthBusy
-                                        ? 'Continue in browser...'
-                                        : 'Continue with Apple',
-                                  ),
-                                  onPressed: disabled
-                                      ? null
-                                      : () => _signInWithOAuth(
-                                          OAuthProvider.apple,
-                                        ),
-                                ),
-                              ),
-                            ],
-                          );
+          child: AuthLayout(
+            title: ' ',
+            subtitle: ' ',
+            bottom: TextButton(
+              onPressed: () => context.go('/signup'),
+              child: const Text('Create an account'),
+            ),
+            child: Padding(
+              padding: EdgeInsets.all(responsive.cardPadding),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _email,
+                    keyboardType: TextInputType.emailAddress,
+                    decoration: const InputDecoration(labelText: 'Email'),
+                  ),
+                  SizedBox(height: responsive.blockGap),
+                  TextField(
+                    controller: _password,
+                    obscureText: !_isPasswordVisible,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _isPasswordVisible = !_isPasswordVisible;
+                          });
                         },
+                        icon: Icon(
+                          _isPasswordVisible
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                          color: accentColor,
+                        ),
                       ),
-                      const SizedBox(height: 12),
-                      TextButton(
-                        onPressed: () => context.go('/signup'),
-                        child: const Text('Create an account'),
+                    ),
+                  ),
+                  SizedBox(height: responsive.compactGap),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: _resetSending ? null : _sendPasswordReset,
+                      child: _resetSending
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Forgot password?'),
+                    ),
+                  ),
+                  SizedBox(height: responsive.compactGap),
+                  SizedBox(
+                    height: responsive.buttonHeight,
+                    child: FilledButton(
+                      onPressed: _loading ? null : _signIn,
+                      child: _loading
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Continue to MyBrainBubble'),
+                    ),
+                  ),
+                  SizedBox(height: responsive.blockGap),
+                  Row(
+                    children: [
+                      const Expanded(child: Divider()),
+                      Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: responsive.compactGap,
+                        ),
+                        child: const Text('OR'),
                       ),
+                      const Expanded(child: Divider()),
                     ],
                   ),
-                ),
-              );
-            },
+                  SizedBox(height: responsive.blockGap),
+                  ValueListenableBuilder<bool>(
+                    valueListenable:
+                        OAuthSignInCoordinator.instance.isSigningInListenable,
+                    builder: (context, oauthBusy, _) {
+                      final disabled = oauthBusy || _loading;
+                      final socialSpacing = responsive.compactGap;
+                      final isWide = responsive.isTabletUp;
+
+                      final googleButton = SizedBox(
+                        height: responsive.buttonHeight,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.g_mobiledata),
+                          label: Text(
+                            oauthBusy
+                                ? 'Continue in browser...'
+                                : 'Continue with Google',
+                          ),
+                          onPressed: disabled
+                              ? null
+                              : () => _signInWithOAuth(OAuthProvider.google),
+                        ),
+                      );
+                      final appleButton = SizedBox(
+                        height: responsive.buttonHeight,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.apple),
+                          label: Text(
+                            oauthBusy
+                                ? 'Continue in browser...'
+                                : 'Continue with Apple',
+                          ),
+                          onPressed: disabled
+                              ? null
+                              : () => _signInWithOAuth(OAuthProvider.apple),
+                        ),
+                      );
+
+                      if (!isWide) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            googleButton,
+                            SizedBox(height: socialSpacing),
+                            appleButton,
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          Expanded(child: googleButton),
+                          SizedBox(width: socialSpacing),
+                          Expanded(child: appleButton),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

@@ -43,7 +43,7 @@ begin
     select 1 from pg_constraint
     where conname = 'user_devices_user_device_unique'
       and conrelid = 'public.user_devices'::regclass
-  ) then
+  ) and to_regclass('public.user_devices_user_device_unique') is null then
     alter table public.user_devices
       add constraint user_devices_user_device_unique unique (user_id, device_id);
   end if;
@@ -52,9 +52,37 @@ begin
     select 1 from pg_constraint
     where conname = 'user_sessions_user_device_unique'
       and conrelid = 'public.user_sessions'::regclass
-  ) then
+  ) and to_regclass('public.user_sessions_user_device_unique') is null then
     alter table public.user_sessions
       add constraint user_sessions_user_device_unique unique (user_id, device_id);
+  end if;
+end
+$$;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'user_devices_user_device_unique'
+      and conrelid = 'public.user_devices'::regclass
+  ) then
+    null;
+  elsif to_regclass('public.user_devices_user_device_unique') is not null then
+    raise notice
+      'Skipping add constraint user_devices_user_device_unique because a relation with that name already exists.';
+  end if;
+
+  if exists (
+    select 1
+    from pg_constraint
+    where conname = 'user_sessions_user_device_unique'
+      and conrelid = 'public.user_sessions'::regclass
+  ) then
+    null;
+  elsif to_regclass('public.user_sessions_user_device_unique') is not null then
+    raise notice
+      'Skipping add constraint user_sessions_user_device_unique because a relation with that name already exists.';
   end if;
 end
 $$;

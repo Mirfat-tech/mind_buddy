@@ -4,12 +4,15 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:math' as math;
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:mind_buddy/features/insights/brainbubble_insights.dart';
 import 'package:mind_buddy/features/insights/habit_completion_stats.dart';
+import 'package:mind_buddy/features/mood/mood_catalog.dart' as mood_catalog;
 import 'package:mind_buddy/guides/guide_manager.dart';
 
 import 'sleep_insights.dart';
@@ -22,16 +25,32 @@ class InsightsScreen extends StatefulWidget {
 }
 
 class _InsightsScreenState extends State<InsightsScreen> {
+  static const List<String> _allInsightSections = [
+    'Habits',
+    'Sleep',
+    'Mood',
+    'Meditation',
+    'Finance',
+    'Cycle',
+    'Workout',
+    'Social',
+    'Fasting',
+    'Water',
+    'Activities',
+  ];
+  static const String _insightsVisibilityPrefsKey =
+      'insights_visible_sections_v1';
+
   final ScrollController _mainScrollController = ScrollController();
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month, 1);
   int _refreshSeed = 0;
   bool _loading = false;
   String? _error;
+  Set<String> _visibleSections = {..._allInsightSections};
   final GlobalKey _insightsBackButtonKey = GlobalKey();
   final GlobalKey _insightsMonthPrevChevronKey = GlobalKey();
   final GlobalKey _insightsMonthNextChevronKey = GlobalKey();
   final GlobalKey _insightsCategoryChipsRowKey = GlobalKey();
-  final GlobalKey _insightsBellButtonKey = GlobalKey();
   final GlobalKey _insightsRefreshButtonKey = GlobalKey();
   final GlobalKey _insightsFirstCardKey = GlobalKey();
   bool _guideScheduledThisOpen = false;
@@ -64,6 +83,168 @@ class _InsightsScreenState extends State<InsightsScreen> {
     'November',
     'December',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVisibleSections();
+  }
+
+  Future<void> _loadVisibleSections() async {
+    final prefs = await SharedPreferences.getInstance();
+    final stored = prefs.getStringList(_insightsVisibilityPrefsKey);
+    if (stored == null || stored.isEmpty) return;
+    final visible = stored.where(_allInsightSections.contains).toSet();
+    if (!mounted || visible.isEmpty) return;
+    setState(() => _visibleSections = visible);
+  }
+
+  Future<void> _persistVisibleSections(Set<String> visibleSections) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _insightsVisibilityPrefsKey,
+      _allInsightSections.where(visibleSections.contains).toList(),
+    );
+  }
+
+  Future<void> _showSectionFilters() async {
+    final result = await showModalBottomSheet<Set<String>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
+        var tempVisible = <String>{..._visibleSections};
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: scheme.surface,
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(color: scheme.primary.withOpacity(0.16)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: scheme.primary.withOpacity(0.10),
+                        blurRadius: 26,
+                        spreadRadius: 1,
+                        offset: const Offset(0, 12),
+                      ),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Choose insights',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(fontWeight: FontWeight.w800),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Show only the sections you want to keep in view.',
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () => setModalState(() {
+                                tempVisible = {..._allInsightSections};
+                              }),
+                              child: const Text('Show all'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Flexible(
+                          child: SingleChildScrollView(
+                            child: Wrap(
+                              spacing: 10,
+                              runSpacing: 10,
+                              children: _allInsightSections.map((section) {
+                                final isSelected = tempVisible.contains(
+                                  section,
+                                );
+                                return FilterChip(
+                                  selected: isSelected,
+                                  showCheckmark: true,
+                                  label: Text(section),
+                                  selectedColor: scheme.primary.withOpacity(
+                                    0.16,
+                                  ),
+                                  backgroundColor: scheme.surfaceContainerHigh,
+                                  labelStyle: TextStyle(
+                                    color: isSelected
+                                        ? scheme.primary
+                                        : scheme.onSurface,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                  onSelected: (selected) => setModalState(() {
+                                    if (selected) {
+                                      tempVisible.add(section);
+                                    } else {
+                                      tempVisible.remove(section);
+                                    }
+                                  }),
+                                );
+                              }).toList(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: () => Navigator.of(context).pop(),
+                                child: const Text('Cancel'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: () =>
+                                    Navigator.of(context).pop(tempVisible),
+                                child: const Text('Apply'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null) return;
+    final visible = result.where(_allInsightSections.contains).toSet();
+    if (!mounted) return;
+    setState(() => _visibleSections = visible);
+    await _persistVisibleSections(visible);
+  }
 
   Future<void> _refresh() async {
     setState(() {
@@ -127,13 +308,6 @@ class _InsightsScreenState extends State<InsightsScreen> {
           body:
               'Each card shows your totals, trends, and consistency for this month.',
           align: GuideAlign.top,
-        ),
-        GuideStep(
-          key: _insightsBellButtonKey,
-          title: 'Stay in the loop',
-          body:
-              'Tap the bell for reminders and updates linked to your insights.',
-          align: GuideAlign.bottom,
         ),
         GuideStep(
           key: _insightsRefreshButtonKey,
@@ -248,6 +422,10 @@ class _InsightsScreenState extends State<InsightsScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     _scheduleGuideAutoStart();
+    final sections = _buildInsightSections(scheme);
+    final visibleSections = sections
+        .where((section) => _visibleSections.contains(section.id))
+        .toList();
 
     return Scaffold(
       backgroundColor: Colors.transparent,
@@ -262,13 +440,8 @@ class _InsightsScreenState extends State<InsightsScreen> {
         ),
         actions: [
           MbGlowIconButton(
-            icon: Icons.help_outline,
-            onPressed: () => _showGuideIfNeeded(force: true),
-          ),
-          MbGlowIconButton(
-            key: _insightsBellButtonKey,
-            icon: Icons.notifications_outlined,
-            onPressed: () => context.push('/settings/notifications'),
+            icon: Icons.tune_rounded,
+            onPressed: _showSectionFilters,
           ),
           MbGlowIconButton(
             key: _insightsRefreshButtonKey,
@@ -297,6 +470,9 @@ class _InsightsScreenState extends State<InsightsScreen> {
                       key: _insightsCategoryChipsRowKey,
                       controller: _mainScrollController,
                       scheme: scheme,
+                      categories: visibleSections
+                          .map((section) => section.id)
+                          .toList(),
                       sectionKeys: _sectionKeys,
                     ),
                     const SizedBox(height: 8),
@@ -311,149 +487,71 @@ class _InsightsScreenState extends State<InsightsScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Container(
-                              key: _sectionKeys['Habits'],
-                              child: _sectionTitle(
-                                'Habit Tracker',
-                                Icons.check_circle_outline,
-                              ),
-                            ),
-                            KeyedSubtree(
-                              key: _insightsFirstCardKey,
-                              child: _GlowingCard(
+                            if (visibleSections.isEmpty)
+                              _GlowingCard(
                                 scheme: scheme,
-                                child: HabitStepLineChartContainer(
-                                  selectedMonth: _month,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(20),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'No insight sections are showing right now.',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .titleMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Use the filter in the top corner whenever you want to bring everything back.',
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                              color: scheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 14),
+                                      FilledButton.tonal(
+                                        onPressed: _showSectionFilters,
+                                        child: const Text('Show sections'),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ),
-                            const SizedBox(height: 32),
-                            Container(
-                              key: _sectionKeys['Sleep'],
-                              child: _sectionTitle(
-                                'Sleep Insights',
-                                Icons.bedtime_outlined,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: SleepInsights(selectedMonth: _month),
-                            ),
-                            const SizedBox(height: 32),
-                            Container(
-                              key: _sectionKeys['Mood'],
-                              child: _sectionTitle(
-                                'Mood Tracker',
-                                Icons.sentiment_satisfied,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: MoodInsights(selectedMonth: _month),
-                            ),
-                            const SizedBox(height: 32),
-                            Container(
-                              key: _sectionKeys['Meditation'],
-                              child: _sectionTitle(
-                                'Meditation',
-                                Icons.spa_outlined,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: MeditationInsights(selectedMonth: _month),
-                            ),
-                            const SizedBox(height: 32),
-                            Container(
-                              key: _sectionKeys['Finance'],
-                              child: _sectionTitle(
-                                'Finance Insights',
-                                Icons.payments_outlined,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: FinanceInsights(selectedMonth: _month),
-                            ),
-                            const SizedBox(height: 32),
-                            Container(
-                              key: _sectionKeys['Cycle'],
-                              child: _sectionTitle(
-                                'Cycle Insights',
-                                Icons.water_drop_outlined,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: CycleInsights(selectedMonth: _month),
-                            ),
-                            const SizedBox(height: 32),
-                            Container(
-                              key: _sectionKeys['Workout'],
-                              child: _sectionTitle(
-                                'Workout Calendar',
-                                Icons.fitness_center,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: WorkoutInsights(selectedMonth: _month),
-                            ),
-                            const SizedBox(height: 32),
-                            Container(
-                              key: _sectionKeys['Social'],
-                              child: _sectionTitle(
-                                'Social Outings',
-                                Icons.people,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: SocialOutingsInsights(
-                                selectedMonth: _month,
-                              ),
-                            ),
-                            const SizedBox(height: 32),
-                            Container(
-                              key: _sectionKeys['Fasting'],
-                              child: _sectionTitle(
-                                'Fasting Tracker',
-                                Icons.access_time,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: FastingInsights(selectedMonth: _month),
-                            ),
-                            const SizedBox(height: 32),
-
-                            Container(
-                              key: _sectionKeys['Water'],
-                              child: _sectionTitle(
-                                'Water Intake',
-                                Icons.local_drink,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: WaterInsights(selectedMonth: _month),
-                            ),
-                            const SizedBox(height: 32),
-
-                            Container(
-                              key: _sectionKeys['Activities'],
-                              child: _sectionTitle(
-                                'Activity Trends',
-                                Icons.auto_graph,
-                              ),
-                            ),
-                            _GlowingCard(
-                              scheme: scheme,
-                              child: GenericActivityTrends(
-                                selectedMonth: _month,
-                                refreshSeed: _refreshSeed,
-                              ),
-                            ),
+                              )
+                            else
+                              ...visibleSections.asMap().entries.expand((
+                                entry,
+                              ) {
+                                final index = entry.key;
+                                final section = entry.value;
+                                final card = _GlowingCard(
+                                  scheme: scheme,
+                                  child: section.child,
+                                );
+                                return [
+                                  Container(
+                                    key: _sectionKeys[section.id],
+                                    child: _sectionTitle(
+                                      section.title,
+                                      section.icon,
+                                    ),
+                                  ),
+                                  if (index == 0)
+                                    KeyedSubtree(
+                                      key: _insightsFirstCardKey,
+                                      child: card,
+                                    )
+                                  else
+                                    card,
+                                  const SizedBox(height: 32),
+                                ];
+                              }),
                             const SizedBox(height: 100),
 
                             // const SizedBox(height: 32),
@@ -494,6 +592,80 @@ class _InsightsScreenState extends State<InsightsScreen> {
       ),
     );
   }
+
+  List<_InsightSectionDefinition> _buildInsightSections(ColorScheme scheme) {
+    return [
+      _InsightSectionDefinition(
+        id: 'Habits',
+        title: 'Habit Tracker',
+        icon: Icons.check_circle_outline,
+        child: HabitStepLineChartContainer(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Sleep',
+        title: 'Sleep Insights',
+        icon: Icons.bedtime_outlined,
+        child: SleepInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Mood',
+        title: 'Mood Tracker',
+        icon: Icons.sentiment_satisfied,
+        child: MoodInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Meditation',
+        title: 'Meditation',
+        icon: Icons.spa_outlined,
+        child: MeditationInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Finance',
+        title: 'Finance Insights',
+        icon: Icons.payments_outlined,
+        child: FinanceInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Cycle',
+        title: 'Cycle Insights',
+        icon: Icons.water_drop_outlined,
+        child: CycleInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Workout',
+        title: 'Workout Calendar',
+        icon: Icons.fitness_center,
+        child: WorkoutInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Social',
+        title: 'Social Outings',
+        icon: Icons.people,
+        child: SocialOutingsInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Fasting',
+        title: 'Fasting Tracker',
+        icon: Icons.access_time,
+        child: FastingInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Water',
+        title: 'Water Intake',
+        icon: Icons.local_drink,
+        child: WaterInsights(selectedMonth: _month),
+      ),
+      _InsightSectionDefinition(
+        id: 'Activities',
+        title: 'Activity Trends',
+        icon: Icons.auto_graph,
+        child: GenericActivityTrends(
+          selectedMonth: _month,
+          refreshSeed: _refreshSeed,
+        ),
+      ),
+    ];
+  }
 }
 
 // CATEGORY NAVIGATOR
@@ -501,22 +673,9 @@ Widget _buildCategoryNavigator({
   GlobalKey? key,
   required ScrollController controller,
   required ColorScheme scheme,
+  required List<String> categories,
   required Map<String, GlobalKey> sectionKeys,
 }) {
-  const categories = [
-    'Habits',
-    'Sleep',
-    'Mood',
-    'Meditation',
-    'Finance',
-    'Cycle',
-    'Workout',
-    'Social',
-    'Fasting',
-    'Water',
-    'Activities',
-  ];
-
   return SizedBox(
     key: key,
     height: 50,
@@ -562,10 +721,26 @@ Widget _buildCategoryNavigator({
   );
 }
 
+class _InsightSectionDefinition {
+  const _InsightSectionDefinition({
+    required this.id,
+    required this.title,
+    required this.icon,
+    required this.child,
+  });
+
+  final String id;
+  final String title;
+  final IconData icon;
+  final Widget child;
+}
+
 // SHARED HELPERS
 DateTime _startOfMonth(DateTime month) => DateTime(month.year, month.month, 1);
 DateTime _startOfNextMonth(DateTime month) =>
     DateTime(month.year, month.month + 1, 1);
+DateTime _startOfPreviousMonth(DateTime month) =>
+    DateTime(month.year, month.month - 1, 1);
 
 int _daysInMonth(DateTime month) {
   final startNext = DateTime(month.year, month.month + 1, 1);
@@ -1112,8 +1287,9 @@ class FinanceInsights extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final start = _startOfMonth(selectedMonth);
+    final previousStart = _startOfPreviousMonth(selectedMonth);
     final endExclusive = _startOfNextMonth(selectedMonth);
-    final startDate = _ymd(start);
+    final startDate = _ymd(previousStart);
     final endExclusiveDate = _ymd(endExclusive);
 
     return FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
@@ -1151,11 +1327,18 @@ class FinanceInsights extends StatelessWidget {
 
         double totalIncome = 0;
         double totalExpenses = 0;
+        double previousTotalExpenses = 0;
+        DateTime? spendingSpikeDate;
 
         for (final r in incomeRows) {
           final amount = (r['amount'] as num?)?.toDouble() ?? 0.0;
           final dayKey = _parseDayKey(r['day']);
-          if (dayKey != null && byDay.containsKey(dayKey)) {
+          final parsed = dayKey == null ? null : DateTime.tryParse(dayKey);
+          if (dayKey != null &&
+              parsed != null &&
+              parsed.year == selectedMonth.year &&
+              parsed.month == selectedMonth.month &&
+              byDay.containsKey(dayKey)) {
             byDay[dayKey]!.income += amount;
             totalIncome += amount;
           }
@@ -1167,18 +1350,48 @@ class FinanceInsights extends StatelessWidget {
               (r['amount'] as num?)?.toDouble() ??
               0.0;
           final dayKey = _parseDayKey(r['day']);
-          if (dayKey != null && byDay.containsKey(dayKey)) {
+          final parsed = dayKey == null ? null : DateTime.tryParse(dayKey);
+          if (dayKey != null &&
+              parsed != null &&
+              parsed.year == selectedMonth.year &&
+              parsed.month == selectedMonth.month &&
+              byDay.containsKey(dayKey)) {
             byDay[dayKey]!.expenses += amount;
             totalExpenses += amount;
+            final currentTotalForDay = byDay[dayKey]!.expenses;
+            if (spendingSpikeDate == null ||
+                currentTotalForDay >
+                    (byDay[_ymd(spendingSpikeDate!)]?.expenses ?? -1)) {
+              spendingSpikeDate = parsed;
+            }
+          } else if (parsed != null &&
+              parsed.year == previousStart.year &&
+              parsed.month == previousStart.month) {
+            previousTotalExpenses += amount;
           }
         }
 
         for (final r in billRows) {
           final amount = (r['amount'] as num?)?.toDouble() ?? 0.0;
           final dayKey = _parseDayKey(r['day']);
-          if (dayKey != null && byDay.containsKey(dayKey)) {
+          final parsed = dayKey == null ? null : DateTime.tryParse(dayKey);
+          if (dayKey != null &&
+              parsed != null &&
+              parsed.year == selectedMonth.year &&
+              parsed.month == selectedMonth.month &&
+              byDay.containsKey(dayKey)) {
             byDay[dayKey]!.expenses += amount;
             totalExpenses += amount;
+            final currentTotalForDay = byDay[dayKey]!.expenses;
+            if (spendingSpikeDate == null ||
+                currentTotalForDay >
+                    (byDay[_ymd(spendingSpikeDate!)]?.expenses ?? -1)) {
+              spendingSpikeDate = parsed;
+            }
+          } else if (parsed != null &&
+              parsed.year == previousStart.year &&
+              parsed.month == previousStart.month) {
+            previousTotalExpenses += amount;
           }
         }
         _debugMonthQuery(
@@ -1197,10 +1410,25 @@ class FinanceInsights extends StatelessWidget {
 
         final chartData = byDay.values.toList()
           ..sort((a, b) => a.period.compareTo(b.period));
-        final burnRate = totalIncome > 0
-            ? (totalExpenses / totalIncome) * 100
+        final moneyKept = totalIncome - totalExpenses;
+        final savingsRate = totalIncome > 0
+            ? (moneyKept / totalIncome) * 100
+            : null;
+        final chartExpenses = totalIncome > 0
+            ? math.min(totalExpenses, totalIncome).toDouble()
+            : totalExpenses;
+        final chartRemaining = totalIncome > 0
+            ? math.max(moneyKept, 0).toDouble()
             : 0.0;
-        final netSavings = totalIncome - totalExpenses;
+        final chartOverspent = totalIncome > 0
+            ? math.max(totalExpenses - totalIncome, 0).toDouble()
+            : 0.0;
+        final insight = BrainBubbleInsights.finance(
+          currentExpenses: totalExpenses,
+          previousExpenses: previousTotalExpenses,
+          currentNet: moneyKept,
+          spikeDate: spendingSpikeDate,
+        );
 
         if (totalIncome == 0 && totalExpenses == 0) {
           return const _ErrorBox(
@@ -1211,22 +1439,77 @@ class FinanceInsights extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            BrainBubbleInsightCallout(
+              data: insight,
+              scheme: scheme,
+              accentColor: scheme.primary,
+            ),
+            const SizedBox(height: 12),
             _SectionHeaderRow(
-              title: 'Income vs Expenses',
+              title: 'Monthly money picture',
               subtitle: _monthLabel(selectedMonth),
               trailing: _Legend(
                 items: [
-                  _LegendItem(label: 'Income', color: scheme.primary),
                   _LegendItem(label: 'Expenses', color: scheme.error),
+                  _LegendItem(
+                    label: chartOverspent > 0 ? 'Overspent' : 'Kept',
+                    color: chartOverspent > 0
+                        ? scheme.errorContainer
+                        : scheme.primary,
+                  ),
                 ],
               ),
             ),
             const SizedBox(height: 12),
-            SizedBox(
-              height: 280,
-              child: FinanceComparisonLineChart(
-                data: chartData,
-                scheme: scheme,
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest.withOpacity(0.45),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(color: scheme.primary.withOpacity(0.08)),
+              ),
+              child: Column(
+                children: [
+                  SizedBox(
+                    height: 220,
+                    child: FinanceBreakdownDonutChart(
+                      scheme: scheme,
+                      totalIncome: totalIncome,
+                      expenses: chartExpenses,
+                      remaining: chartRemaining,
+                      overspent: chartOverspent,
+                      moneyKept: moneyKept,
+                    ),
+                  ),
+                  if (chartData.any(
+                    (day) => day.income > 0 || day.expenses > 0,
+                  )) ...[
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        Text(
+                          'Daily trend',
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const Spacer(),
+                        Text(
+                          'A softer view of your spikes',
+                          style: Theme.of(context).textTheme.labelMedium
+                              ?.copyWith(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      height: 140,
+                      child: FinanceComparisonLineChart(
+                        data: chartData,
+                        scheme: scheme,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             const SizedBox(height: 16),
@@ -1258,23 +1541,27 @@ class FinanceInsights extends StatelessWidget {
               children: [
                 Expanded(
                   child: _StatCard(
-                    label: 'Burn Rate',
-                    value: '${burnRate.toStringAsFixed(0)}%',
-                    icon: Icons.local_fire_department,
+                    label: 'Money Kept',
+                    value: _currency(moneyKept),
+                    icon: Icons.account_balance_wallet,
                     scheme: scheme,
-                    valueColor: burnRate > 100 ? scheme.error : scheme.primary,
+                    valueColor: moneyKept < 0 ? scheme.error : scheme.primary,
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: _StatCard(
-                    label: 'Net Savings',
-                    value: _currency(netSavings),
-                    icon: Icons.account_balance_wallet,
+                    label: 'Savings Rate',
+                    value: savingsRate == null
+                        ? '—'
+                        : '${savingsRate.toStringAsFixed(1)}%',
+                    icon: Icons.savings_outlined,
                     scheme: scheme,
-                    valueColor: netSavings < 0
+                    valueColor: savingsRate == null
+                        ? scheme.onSurfaceVariant
+                        : savingsRate < 0
                         ? scheme.error
-                        : scheme.onSurface,
+                        : scheme.primary,
                   ),
                 ),
               ],
@@ -1395,10 +1682,10 @@ class FinanceComparisonLineChart extends StatelessWidget {
             spots: incomeSpots,
             isCurved: true,
             color: scheme.primary,
-            barWidth: 3,
+            barWidth: 2.4,
             isStrokeCapRound: true,
             dotData: FlDotData(
-              show: true,
+              show: false,
               getDotPainter: (spot, percent, barData, index) =>
                   FlDotCirclePainter(
                     radius: 5,
@@ -1416,10 +1703,10 @@ class FinanceComparisonLineChart extends StatelessWidget {
             spots: expenseSpots,
             isCurved: true,
             color: scheme.error,
-            barWidth: 3,
+            barWidth: 2.4,
             isStrokeCapRound: true,
             dotData: FlDotData(
-              show: true,
+              show: false,
               getDotPainter: (spot, percent, barData, index) =>
                   FlDotCirclePainter(
                     radius: 5,
@@ -1502,6 +1789,140 @@ class FinanceComparisonLineChart extends StatelessWidget {
   }
 }
 
+class FinanceBreakdownDonutChart extends StatelessWidget {
+  const FinanceBreakdownDonutChart({
+    super.key,
+    required this.scheme,
+    required this.totalIncome,
+    required this.expenses,
+    required this.remaining,
+    required this.overspent,
+    required this.moneyKept,
+  });
+
+  final ColorScheme scheme;
+  final double totalIncome;
+  final double expenses;
+  final double remaining;
+  final double overspent;
+  final double moneyKept;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasIncome = totalIncome > 0;
+    final sections = <PieChartSectionData>[
+      if (expenses > 0)
+        PieChartSectionData(
+          value: expenses,
+          color: scheme.error,
+          radius: 28,
+          showTitle: false,
+        ),
+      if (remaining > 0)
+        PieChartSectionData(
+          value: remaining,
+          color: scheme.primary,
+          radius: 28,
+          showTitle: false,
+        ),
+      if (overspent > 0)
+        PieChartSectionData(
+          value: overspent,
+          color: scheme.errorContainer,
+          radius: 28,
+          showTitle: false,
+        ),
+      if (!hasIncome && expenses > 0)
+        PieChartSectionData(
+          value: expenses,
+          color: scheme.error,
+          radius: 28,
+          showTitle: false,
+        ),
+    ];
+
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        PieChart(
+          PieChartData(
+            sectionsSpace: 5,
+            centerSpaceRadius: 62,
+            startDegreeOffset: -90,
+            sections: sections.isEmpty
+                ? [
+                    PieChartSectionData(
+                      value: 1,
+                      color: scheme.surfaceContainerHighest,
+                      radius: 28,
+                      showTitle: false,
+                    ),
+                  ]
+                : sections,
+          ),
+        ),
+        Container(
+          width: 124,
+          height: 124,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: scheme.surface.withOpacity(0.98),
+            boxShadow: [
+              BoxShadow(
+                color: scheme.primary.withOpacity(0.08),
+                blurRadius: 18,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                hasIncome
+                    ? moneyKept >= 0
+                          ? 'Left over'
+                          : 'Overspent'
+                    : 'Income',
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                hasIncome ? _currency(moneyKept) : 'None logged',
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: moneyKept < 0 ? scheme.error : scheme.onSurface,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                hasIncome
+                    ? 'Income ${_currency(totalIncome)}'
+                    : 'Add income to see a savings split',
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  height: 1.25,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 // CYCLE INSIGHTS
 class CycleInsights extends StatelessWidget {
   final DateTime selectedMonth;
@@ -1512,6 +1933,11 @@ class CycleInsights extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     final start = _startOfMonth(selectedMonth);
+    final historyStart = DateTime(
+      selectedMonth.year,
+      selectedMonth.month - 12,
+      1,
+    );
     final endExclusive = _startOfNextMonth(selectedMonth);
     final startDay = _ymd(start);
     final endExclusiveDay = _ymd(endExclusive);
@@ -1520,7 +1946,7 @@ class CycleInsights extends StatelessWidget {
       future: Supabase.instance.client
           .from('menstrual_logs')
           .select('day, flow')
-          .gte('day', startDay)
+          .gte('day', _ymd(historyStart))
           .lt('day', endExclusiveDay),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
@@ -1537,9 +1963,15 @@ class CycleInsights extends StatelessWidget {
         final rows = (snapshot.data ?? const <Map<String, dynamic>>[])
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
+        final currentRows = rows.where((r) {
+          final parsed = DateTime.tryParse((r['day'] ?? '').toString());
+          return parsed != null &&
+              parsed.year == selectedMonth.year &&
+              parsed.month == selectedMonth.month;
+        }).toList();
 
         final Map<int, String> cycleMap = {};
-        for (final r in rows) {
+        for (final r in currentRows) {
           final day = _dayInSelectedMonth(r['day'], selectedMonth);
           if (day == null) continue;
           final rawFlow = (r['flow'] ?? '').toString().toLowerCase().trim();
@@ -1554,12 +1986,13 @@ class CycleInsights extends StatelessWidget {
             cycleMap[day] = 'spotting';
           }
         }
+        final cyclePrediction = _buildCyclePrediction(rows);
         _debugMonthQuery(
           label: 'CycleInsights',
           selectedMonth: selectedMonth,
           start: start,
           endExclusive: endExclusive,
-          rows: rows,
+          rows: currentRows,
           rawTimestamp: (row) => row['day'],
           groupedDayKeys: cycleMap.keys.map(
             (day) =>
@@ -1583,6 +2016,17 @@ class CycleInsights extends StatelessWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            BrainBubbleInsightCallout(
+              data: BrainBubbleInsights.cycle(
+                predictedDate: cyclePrediction.predictedStart,
+                avgCycleLength: cyclePrediction.averageCycleLength,
+                lastStartDate: cyclePrediction.lastStart,
+                hasEnoughHistory: cyclePrediction.hasEnoughHistory,
+              ),
+              scheme: scheme,
+              accentColor: Colors.red.shade300,
+            ),
+            const SizedBox(height: 12),
             _SectionHeaderRow(
               title: 'Cycle Tracker',
               subtitle: _monthLabel(selectedMonth),
@@ -1651,6 +2095,121 @@ class CycleInsights extends StatelessWidget {
   }
 }
 
+class _CyclePrediction {
+  const _CyclePrediction({
+    required this.hasEnoughHistory,
+    this.predictedStart,
+    this.averageCycleLength,
+    this.lastStart,
+  });
+
+  final bool hasEnoughHistory;
+  final DateTime? predictedStart;
+  final int? averageCycleLength;
+  final DateTime? lastStart;
+}
+
+_CyclePrediction _buildCyclePrediction(List<Map<String, dynamic>> rows) {
+  final grouped = <DateTime, String>{};
+  for (final row in rows) {
+    final parsed = DateTime.tryParse((row['day'] ?? '').toString())?.toLocal();
+    if (parsed == null) continue;
+    final day = DateTime(parsed.year, parsed.month, parsed.day);
+    final flow = (row['flow'] ?? '').toString().toLowerCase().trim();
+    grouped[day] = _strongerFlow(grouped[day], flow);
+  }
+
+  final sortedDays = grouped.keys.toList()..sort();
+  final starts = <DateTime>[];
+  DateTime? segmentStart;
+  DateTime? firstMeaningfulBleed;
+  DateTime? previousDay;
+
+  void closeSegment() {
+    if (firstMeaningfulBleed != null) {
+      starts.add(firstMeaningfulBleed!);
+    }
+    segmentStart = null;
+    firstMeaningfulBleed = null;
+  }
+
+  for (final day in sortedDays) {
+    if (previousDay == null || day.difference(previousDay!).inDays > 1) {
+      closeSegment();
+      segmentStart = day;
+    }
+    final flow = grouped[day] ?? '';
+    if (_isMeaningfulCycleFlow(flow)) {
+      firstMeaningfulBleed ??= day;
+    } else {
+      segmentStart ??= day;
+    }
+    previousDay = day;
+  }
+  closeSegment();
+
+  if (starts.length < 2) {
+    return _CyclePrediction(
+      hasEnoughHistory: false,
+      lastStart: starts.isNotEmpty ? starts.last : null,
+    );
+  }
+
+  final cycleLengths = <int>[];
+  for (var i = 1; i < starts.length; i++) {
+    final diff = starts[i].difference(starts[i - 1]).inDays;
+    if (diff >= 15 && diff <= 45) {
+      cycleLengths.add(diff);
+    }
+  }
+  if (cycleLengths.length < 2) {
+    return _CyclePrediction(hasEnoughHistory: false, lastStart: starts.last);
+  }
+
+  final recent = cycleLengths.length > 6
+      ? cycleLengths.sublist(cycleLengths.length - 6)
+      : cycleLengths;
+  final avgLength = (recent.reduce((a, b) => a + b) / recent.length).round();
+  final lastStart = starts.last;
+
+  return _CyclePrediction(
+    hasEnoughHistory: true,
+    averageCycleLength: avgLength,
+    lastStart: lastStart,
+    predictedStart: lastStart.add(Duration(days: avgLength)),
+  );
+}
+
+bool _isMeaningfulCycleFlow(String flow) {
+  return flow.contains('heavy') ||
+      flow.contains('medium') ||
+      flow.contains('light');
+}
+
+String _strongerFlow(String? existing, String incoming) {
+  const weights = <String, int>{
+    'spotting': 0,
+    'light': 1,
+    'medium': 2,
+    'heavy': 3,
+  };
+
+  String normalize(String value) {
+    if (value.contains('heavy')) return 'heavy';
+    if (value.contains('medium')) return 'medium';
+    if (value.contains('light')) return 'light';
+    if (value.contains('spot')) return 'spotting';
+    return '';
+  }
+
+  final next = normalize(incoming);
+  final current = normalize(existing ?? '');
+  if ((weights[next] ?? -1) >= (weights[current] ?? -1)) {
+    return next;
+  }
+  return current;
+}
+
 // MOOD INSIGHTS
 class MoodInsights extends StatefulWidget {
   final DateTime selectedMonth;
@@ -1662,20 +2221,6 @@ class MoodInsights extends StatefulWidget {
 
 class _MoodInsightsState extends State<MoodInsights> {
   late Future<List<Map<String, dynamic>>> _moodFuture;
-  static const List<String> _moodDropdownOptions = [
-    '😊 Happy',
-    '🤩 Excited',
-    '😎 Confident',
-    '🧘 Calm',
-    '😐 Neutral',
-    '😔 Sad',
-    '😤 Angry',
-    '🤯 Stressed',
-    '🤔 Anxious',
-    '😴 Tired',
-    '🤒 Sick',
-    'Other',
-  ];
 
   @override
   void initState() {
@@ -1695,7 +2240,7 @@ class _MoodInsightsState extends State<MoodInsights> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchMoodRows() async {
-    final start = _ymd(_startOfMonth(widget.selectedMonth));
+    final start = _ymd(_startOfPreviousMonth(widget.selectedMonth));
     final endExclusive = _ymd(_startOfNextMonth(widget.selectedMonth));
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (kDebugMode) {
@@ -1733,35 +2278,15 @@ class _MoodInsightsState extends State<MoodInsights> {
   }
 
   String _canonicalMood(dynamic rawMood) {
-    final input = (rawMood ?? '').toString().trim();
-    if (input.isEmpty) return '';
-    final normalized = input
-        .replaceAll(RegExp(r'^[^\w]+'), '')
-        .toLowerCase()
-        .trim();
-    for (final option in _moodDropdownOptions) {
-      final key = option
-          .replaceAll(RegExp(r'^[^\w]+'), '')
-          .toLowerCase()
-          .trim();
-      if (normalized == key ||
-          normalized.contains(key) ||
-          key.contains(normalized)) {
-        return option;
-      }
-    }
-    return 'Other';
+    return mood_catalog.canonicalMood(rawMood);
   }
 
   String _displayMood(String moodOption) {
-    if (moodOption.isEmpty) return 'Unknown';
-    return moodOption.replaceAll(RegExp(r'^[^\w]+'), '').trim();
+    return mood_catalog.displayMood(moodOption);
   }
 
   String _moodEmoji(String moodOption) {
-    final match = RegExp(r'^[^\w]+').firstMatch(moodOption);
-    if (match == null) return '🙂';
-    return moodOption.substring(0, match.end).trim();
+    return mood_catalog.moodEmoji(moodOption);
   }
 
   Color _moodColor(String moodOption, ColorScheme scheme) {
@@ -1781,6 +2306,18 @@ class _MoodInsightsState extends State<MoodInsights> {
     if (key.contains('sick')) return Colors.purple.withOpacity(0.2);
     if (key.contains('neutral')) return Colors.grey.withOpacity(0.2);
     return scheme.primary.withOpacity(0.15);
+  }
+
+  bool _isLightMood(String moodOption) {
+    return mood_catalog.isPositiveMood(moodOption);
+  }
+
+  bool _isHeavyMood(String moodOption) {
+    return mood_catalog.isNegativeMood(moodOption);
+  }
+
+  bool _isNeutralMood(String moodOption) {
+    return mood_catalog.isNeutralMood(moodOption);
   }
 
   @override
@@ -1841,21 +2378,39 @@ class _MoodInsightsState extends State<MoodInsights> {
 
         final Map<int, String> moodByDay = {};
         final Map<String, int> moodCounts = {};
-        double intensitySum = 0.0;
-        int intensityCount = 0;
+        int currentLightDays = 0;
+        int currentHeavyDays = 0;
+        int currentNeutralDays = 0;
+        int previousLightDays = 0;
+        int previousHeavyDays = 0;
         for (final r in rows) {
-          final day = _dayInSelectedMonth(r['day'], widget.selectedMonth);
-          if (day == null) continue;
           final moodRaw = (r['feeling'] ?? '').toString().trim();
           final mood = _canonicalMood(moodRaw);
-          if (mood.isNotEmpty) {
-            moodByDay[day] = mood;
+          final parsed = r['day'] == null
+              ? null
+              : DateTime.tryParse(r['day'].toString())?.toLocal();
+          final isCurrentMonth =
+              parsed != null &&
+              parsed.year == widget.selectedMonth.year &&
+              parsed.month == widget.selectedMonth.month;
+          final isPreviousMonth =
+              parsed != null &&
+              parsed.year == _startOfPreviousMonth(widget.selectedMonth).year &&
+              parsed.month == _startOfPreviousMonth(widget.selectedMonth).month;
+          if (mood.isNotEmpty && isCurrentMonth) {
+            final day = _dayInSelectedMonth(r['day'], widget.selectedMonth);
+            if (day != null) {
+              moodByDay[day] = mood;
+            }
             moodCounts[mood] = (moodCounts[mood] ?? 0) + 1;
           }
-          final intensity = (r['intensity'] as num?)?.toDouble();
-          if (intensity != null && intensity > 0) {
-            intensitySum += intensity;
-            intensityCount += 1;
+          if (isCurrentMonth) {
+            if (_isLightMood(mood)) currentLightDays++;
+            if (_isHeavyMood(mood)) currentHeavyDays++;
+            if (_isNeutralMood(mood)) currentNeutralDays++;
+          } else if (isPreviousMonth) {
+            if (_isLightMood(mood)) previousLightDays++;
+            if (_isHeavyMood(mood)) previousHeavyDays++;
           }
         }
         if (kDebugMode) {
@@ -1870,16 +2425,43 @@ class _MoodInsightsState extends State<MoodInsights> {
           );
         }
 
-        final double avgMood = intensityCount > 0
-            ? intensitySum / intensityCount
-            : 0.0;
         final int daysLogged = moodByDay.length;
         final sortedMoodCounts = moodCounts.entries.toList()
           ..sort((a, b) => b.value.compareTo(a.value));
+        final dominantMood = sortedMoodCounts.isNotEmpty
+            ? _displayMood(sortedMoodCounts.first.key)
+            : null;
+        final dominantMoodEmoji = sortedMoodCounts.isNotEmpty
+            ? _moodEmoji(sortedMoodCounts.first.key)
+            : null;
+        final currentEntriesCount = rows.where((r) {
+          final parsed = r['day'] == null
+              ? null
+              : DateTime.tryParse(r['day'].toString())?.toLocal();
+          return parsed != null &&
+              parsed.year == widget.selectedMonth.year &&
+              parsed.month == widget.selectedMonth.month;
+        }).length;
+        final insight = BrainBubbleInsights.mood(
+          currentLightDays: currentLightDays,
+          currentHeavyDays: currentHeavyDays,
+          currentNeutralDays: currentNeutralDays,
+          previousLightDays: previousLightDays,
+          previousHeavyDays: previousHeavyDays,
+          entriesCount: currentEntriesCount,
+          dominantMood: dominantMood,
+          dominantMoodEmoji: dominantMoodEmoji,
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            BrainBubbleInsightCallout(
+              data: insight,
+              scheme: scheme,
+              accentColor: Colors.orange,
+            ),
+            const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1902,7 +2484,7 @@ class _MoodInsightsState extends State<MoodInsights> {
                     border: Border.all(color: Colors.orange.withOpacity(0.2)),
                   ),
                   child: Text(
-                    '${avgMood.toStringAsFixed(1)}/10',
+                    '$daysLogged check-ins',
                     style: const TextStyle(
                       color: Colors.orange,
                       fontSize: 13,
@@ -1953,7 +2535,7 @@ class _MoodInsightsState extends State<MoodInsights> {
                 border: Border.all(color: Colors.orange.withOpacity(0.2)),
               ),
               child: Text(
-                '$daysLogged days logged • Average intensity: ${avgMood.toStringAsFixed(1)}/10',
+                '$daysLogged check-ins this month • noticing what showed up, gently',
                 style: const TextStyle(
                   color: Colors.orange,
                   fontSize: 11,
@@ -2072,7 +2654,7 @@ class MeditationInsights extends StatelessWidget {
       future: Supabase.instance.client
           .from('meditation_logs')
           .select('day, duration_minutes')
-          .gte('day', _ymd(_startOfMonth(selectedMonth)))
+          .gte('day', _ymd(_startOfPreviousMonth(selectedMonth)))
           .lt('day', _ymd(_startOfNextMonth(selectedMonth))),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
@@ -2084,16 +2666,33 @@ class MeditationInsights extends StatelessWidget {
         final Map<int, double> medMap = {};
         int meditationDays = 0;
         double totalMeditationMins = 0;
+        int previousMeditationDays = 0;
+        DateTime? calmestDate;
 
         for (final r in rows) {
-          final day = _dayInSelectedMonth(r['day'], selectedMonth);
-          if (day == null) continue;
+          final parsed = DateTime.tryParse(
+            (r['day'] ?? '').toString(),
+          )?.toLocal();
+          if (parsed == null) continue;
           final mins = (r['duration_minutes'] as num?)?.toDouble() ?? 0.0;
-          if (mins > 0) {
-            meditationDays++;
-            totalMeditationMins += mins;
+          if (parsed.year == selectedMonth.year &&
+              parsed.month == selectedMonth.month) {
+            final day = _dayInSelectedMonth(r['day'], selectedMonth);
+            if (day == null) continue;
+            if (mins > 0) {
+              meditationDays++;
+              totalMeditationMins += mins;
+              if (calmestDate == null ||
+                  mins > (medMap[calmestDate!.day] ?? -1)) {
+                calmestDate = parsed;
+              }
+            }
+            medMap[day] = mins;
+          } else if (parsed.year == _startOfPreviousMonth(selectedMonth).year &&
+              parsed.month == _startOfPreviousMonth(selectedMonth).month &&
+              mins > 0) {
+            previousMeditationDays++;
           }
-          medMap[day] = mins;
         }
         _debugMonthQuery(
           label: 'MeditationInsights',
@@ -2111,10 +2710,22 @@ class MeditationInsights extends StatelessWidget {
         final avgMeditationMins = meditationDays > 0
             ? totalMeditationMins / meditationDays
             : 0.0;
+        final insight = BrainBubbleInsights.meditation(
+          currentDays: meditationDays,
+          previousDays: previousMeditationDays,
+          totalMinutes: totalMeditationMins,
+          calmestDate: calmestDate,
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            BrainBubbleInsightCallout(
+              data: insight,
+              scheme: scheme,
+              accentColor: scheme.primary,
+            ),
+            const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -2158,7 +2769,7 @@ class MeditationInsights extends StatelessWidget {
                 border: Border.all(color: scheme.primary.withOpacity(0.2)),
               ),
               child: Text(
-                '$meditationDays days • Total: ${totalMeditationMins.toStringAsFixed(0)}m • Average: ${avgMeditationMins.toStringAsFixed(0)}m/day',
+                '$meditationDays days of stillness • ${totalMeditationMins.toStringAsFixed(0)} quiet minutes this month',
                 style: TextStyle(
                   color: scheme.primary,
                   fontSize: 11,
@@ -2811,8 +3422,9 @@ class WorkoutInsights extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final start = _startOfMonth(selectedMonth);
+    final previousStart = _startOfPreviousMonth(selectedMonth);
     final endExclusive = _startOfNextMonth(selectedMonth);
-    final startDay = _ymd(start);
+    final startDay = _ymd(previousStart);
     final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<Map<String, dynamic>>(
@@ -2837,11 +3449,24 @@ class WorkoutInsights extends StatelessWidget {
         final lastWeight = data['lastWeight'] as String?;
 
         final Map<int, String> workoutMap = {};
+        int previousWorkoutDays = 0;
+        DateTime? strongestDay;
         for (final r in rows) {
-          final day = _dayInSelectedMonth(r['day'], selectedMonth);
-          if (day == null) continue;
+          final parsed = DateTime.tryParse(
+            (r['day'] ?? '').toString(),
+          )?.toLocal();
+          if (parsed == null) continue;
           final exercise = (r['exercise'] ?? '').toString().toLowerCase();
-          workoutMap[day] = exercise;
+          if (parsed.year == selectedMonth.year &&
+              parsed.month == selectedMonth.month) {
+            final day = _dayInSelectedMonth(r['day'], selectedMonth);
+            if (day == null) continue;
+            workoutMap[day] = exercise;
+            strongestDay ??= parsed;
+          } else if (parsed.year == previousStart.year &&
+              parsed.month == previousStart.month) {
+            previousWorkoutDays++;
+          }
         }
         _debugMonthQuery(
           label: 'WorkoutInsights',
@@ -2857,10 +3482,21 @@ class WorkoutInsights extends StatelessWidget {
         );
 
         final int daysLogged = workoutMap.length;
+        final insight = BrainBubbleInsights.workout(
+          currentDays: daysLogged,
+          previousDays: previousWorkoutDays,
+          strongestDay: strongestDay,
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            BrainBubbleInsightCallout(
+              data: insight,
+              scheme: scheme,
+              accentColor: scheme.primary,
+            ),
+            const SizedBox(height: 12),
             _SectionHeaderRow(
               title: 'Workout Calendar',
               subtitle: _monthLabel(selectedMonth),
@@ -2900,7 +3536,7 @@ class WorkoutInsights extends StatelessWidget {
                 border: Border.all(color: scheme.primary.withOpacity(0.2)),
               ),
               child: Text(
-                '$daysLogged days with workouts • Keep pushing!',
+                '$daysLogged days with movement • Your routine is taking shape gently',
                 style: TextStyle(
                   color: scheme.primary,
                   fontSize: 11,
@@ -2994,8 +3630,9 @@ class SocialOutingsInsights extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     final start = _startOfMonth(selectedMonth);
+    final previousStart = _startOfPreviousMonth(selectedMonth);
     final endExclusive = _startOfNextMonth(selectedMonth);
-    final startDay = _ymd(start);
+    final startDay = _ymd(previousStart);
     final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
@@ -3111,8 +3748,9 @@ class FastingInsights extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     final start = _startOfMonth(selectedMonth);
+    final previousStart = _startOfPreviousMonth(selectedMonth);
     final endExclusive = _startOfNextMonth(selectedMonth);
-    final startDay = _ymd(start);
+    final startDay = _ymd(previousStart);
     final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
@@ -3139,12 +3777,28 @@ class FastingInsights extends StatelessWidget {
 
         final Map<int, double> fastingMap = {};
         double totalHours = 0;
+        final previousDays = <int>{};
+        double? longestFast;
         for (final r in rows) {
-          final day = _dayInSelectedMonth(r['day'], selectedMonth);
-          if (day == null) continue;
+          final parsed = DateTime.tryParse(
+            (r['day'] ?? '').toString(),
+          )?.toLocal();
+          if (parsed == null) continue;
           final hours = (r['duration_hours'] as num?)?.toDouble() ?? 0.0;
-          fastingMap[day] = hours;
-          totalHours += hours;
+          if (parsed.year == selectedMonth.year &&
+              parsed.month == selectedMonth.month) {
+            final day = _dayInSelectedMonth(r['day'], selectedMonth);
+            if (day == null) continue;
+            fastingMap[day] = hours;
+            totalHours += hours;
+            if (hours > 0 && (longestFast == null || hours > longestFast!)) {
+              longestFast = hours;
+            }
+          } else if (parsed.year == previousStart.year &&
+              parsed.month == previousStart.month &&
+              hours > 0) {
+            previousDays.add(parsed.day);
+          }
         }
         _debugMonthQuery(
           label: 'FastingInsights',
@@ -3161,10 +3815,21 @@ class FastingInsights extends StatelessWidget {
 
         final int daysLogged = fastingMap.length;
         final double avgHours = daysLogged > 0 ? totalHours / daysLogged : 0;
+        final insight = BrainBubbleInsights.fasting(
+          currentDays: daysLogged,
+          previousDays: previousDays.length,
+          longestFastHours: longestFast,
+        );
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            BrainBubbleInsightCallout(
+              data: insight,
+              scheme: scheme,
+              accentColor: Colors.blue,
+            ),
+            const SizedBox(height: 12),
             _SectionHeaderRow(
               title: 'Fasting Tracker',
               subtitle: _monthLabel(selectedMonth),
@@ -3188,7 +3853,7 @@ class FastingInsights extends StatelessWidget {
                 border: Border.all(color: Colors.blue.withOpacity(0.2)),
               ),
               child: Text(
-                '$daysLogged days fasted • Total: ${totalHours.toStringAsFixed(0)} hrs',
+                '$daysLogged steady days • ${totalHours.toStringAsFixed(0)} hours in all',
                 style: const TextStyle(
                   color: Colors.blue,
                   fontSize: 11,
@@ -3479,8 +4144,9 @@ class WaterInsights extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final bottomInset = MediaQuery.of(context).padding.bottom;
     final start = _startOfMonth(selectedMonth);
+    final previousStart = _startOfPreviousMonth(selectedMonth);
     final endExclusive = _startOfNextMonth(selectedMonth);
-    final startDay = _ymd(start);
+    final startDay = _ymd(previousStart);
     final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<Map<String, dynamic>>(
@@ -3507,13 +4173,22 @@ class WaterInsights extends StatelessWidget {
         final dailyGoalStatus =
             (data['goalStatus'] as Map<int, bool>?) ?? <int, bool>{};
         final goalsReached = (data['goalsReached'] as int?) ?? 0;
+        final previousGoalsReached =
+            (data['previousGoalsReached'] as int?) ?? 0;
         final totalLiters = (data['totalLiters'] as double?) ?? 0.0;
+        final strongestDay = data['strongestDay'] as DateTime?;
 
         final daysLogged = dailyWater.length;
         final avgDaily = daysLogged > 0 ? totalLiters / daysLogged : 0.0;
         final maxDay = dailyWater.values.isEmpty
             ? 1.0
             : dailyWater.values.reduce((a, b) => a > b ? a : b);
+        final insight = BrainBubbleInsights.water(
+          currentGoalDays: goalsReached,
+          previousGoalDays: previousGoalsReached,
+          daysLogged: daysLogged,
+          strongestDay: strongestDay,
+        );
 
         return LayoutBuilder(
           builder: (context, constraints) {
@@ -3527,6 +4202,12 @@ class WaterInsights extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                BrainBubbleInsightCallout(
+                  data: insight,
+                  scheme: scheme,
+                  accentColor: Colors.blue.shade400,
+                ),
+                const SizedBox(height: 12),
                 _SectionHeaderRow(
                   title: 'Water Intake',
                   subtitle: _monthLabel(selectedMonth),
@@ -3544,7 +4225,7 @@ class WaterInsights extends StatelessWidget {
                   children: [
                     Expanded(
                       child: _StatCard(
-                        label: 'Days Goal Reached',
+                        label: 'Goal Days',
                         value: '$goalsReached',
                         icon: Icons.local_drink,
                         scheme: scheme,
@@ -3596,7 +4277,7 @@ class WaterInsights extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Success Rate',
+                                'Hydration Rhythm',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -3721,22 +4402,38 @@ class WaterInsights extends StatelessWidget {
       final Map<int, bool> dailyGoalStatus = {};
       double totalLiters = 0.0;
       int goalsReached = 0;
+      int previousGoalsReached = 0;
+      DateTime? strongestDay;
+      double strongestLiters = -1;
 
       for (final row in rows) {
-        final day = _dayInSelectedMonth(row['day'], selectedMonth);
-        if (day == null) continue;
+        final parsed = DateTime.tryParse(
+          (row['day'] ?? '').toString(),
+        )?.toLocal();
+        if (parsed == null) continue;
         final amount = (row['amount'] as num?)?.toDouble() ?? 0.0;
         final unit = (row['unit'] as String?)?.toLowerCase() ?? 'ml';
         final goalReached = (row['goal_reached'] as bool?) ?? false;
 
         final liters = _convertToLiters(amount, unit);
-
-        dailyWater[day] = (dailyWater[day] ?? 0.0) + liters;
-        totalLiters += liters;
-
-        if (goalReached) {
-          dailyGoalStatus[day] = true;
-          goalsReached++;
+        if (parsed.year == selectedMonth.year &&
+            parsed.month == selectedMonth.month) {
+          final day = _dayInSelectedMonth(row['day'], selectedMonth);
+          if (day == null) continue;
+          dailyWater[day] = (dailyWater[day] ?? 0.0) + liters;
+          totalLiters += liters;
+          if (dailyWater[day]! > strongestLiters) {
+            strongestLiters = dailyWater[day]!;
+            strongestDay = parsed;
+          }
+          if (goalReached) {
+            dailyGoalStatus[day] = true;
+            goalsReached++;
+          }
+        } else if (parsed.year == _startOfPreviousMonth(selectedMonth).year &&
+            parsed.month == _startOfPreviousMonth(selectedMonth).month &&
+            goalReached) {
+          previousGoalsReached++;
         }
       }
       _debugMonthQuery(
@@ -3762,6 +4459,8 @@ class WaterInsights extends StatelessWidget {
         'goalStatus': dailyGoalStatus,
         'totalLiters': totalLiters,
         'goalsReached': goalsReached,
+        'previousGoalsReached': previousGoalsReached,
+        'strongestDay': strongestDay,
       };
     } catch (e) {
       debugPrint('Error fetching water data: $e');
@@ -3770,6 +4469,8 @@ class WaterInsights extends StatelessWidget {
         'goalStatus': <int, bool>{},
         'totalLiters': 0.0,
         'goalsReached': 0,
+        'previousGoalsReached': 0,
+        'strongestDay': null,
       };
     }
   }

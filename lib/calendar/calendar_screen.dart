@@ -6,8 +6,10 @@ import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:mind_buddy/common/money_format.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:table_calendar/table_calendar.dart';
+import 'package:mind_buddy/services/subscription_plan_catalog.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -61,11 +63,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
             onPressed: () => _calendarKey.currentState?._showMonthYearPicker(),
           ),
           MbGlowIconButton(
-            icon: Icons.help_outline,
-            tooltip: 'Guide',
-            onPressed: () => _calendarKey.currentState?.showGuide(force: true),
-          ),
-          MbGlowIconButton(
             key: _filterButtonKey,
             icon: Icons.filter_alt_rounded,
             tooltip: 'Filters',
@@ -108,6 +105,12 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
     'Sleep',
     'Mood',
     'Menstrual Cycle',
+    'Fast',
+    'Meditation',
+    'Skincare',
+    'Social',
+    'Study',
+    'Workout',
     'Expenses',
     'Income',
     'Bills',
@@ -139,6 +142,20 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
   final GlobalKey _completeCircleButtonKey = GlobalKey();
   final GlobalKey _editButtonKey = GlobalKey();
   final GlobalKey _deleteButtonKey = GlobalKey();
+
+  String _expenseItemServiceLabel(Map<String, dynamic> item) {
+    for (final key in <String>[
+      'item_service',
+      'title',
+      'item',
+      'service',
+      'notes',
+    ]) {
+      final value = item[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return '-';
+  }
 
   @override
   void initState() {
@@ -180,8 +197,15 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
           .maybeSingle();
 
       if (data != null && data['visible_filters'] != null) {
+        final savedFilters = List<String>.from(data['visible_filters']);
+        final normalizedFilters = <String>[
+          for (final filter in _allPossibleTemplates)
+            if (savedFilters.contains(filter)) filter,
+          for (final filter in _allPossibleTemplates)
+            if (!savedFilters.contains(filter)) filter,
+        ];
         setState(() {
-          _currentFilters = List<String>.from(data['visible_filters']);
+          _currentFilters = normalizedFilters;
         });
       } else {
         setState(() => _currentFilters = List.from(_allPossibleTemplates));
@@ -361,6 +385,18 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
         return 'mood_logs';
       case 'Menstrual Cycle':
         return 'menstrual_logs';
+      case 'Fast':
+        return 'fast_logs';
+      case 'Meditation':
+        return 'meditation_logs';
+      case 'Skincare':
+        return 'skin_care_logs';
+      case 'Social':
+        return 'social_logs';
+      case 'Study':
+        return 'study_logs';
+      case 'Workout':
+        return 'workout_logs';
       case 'Expenses':
         return 'expense_logs';
       case 'Income':
@@ -444,7 +480,6 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
             .map((r) => r['day'].toString().substring(0, 10))
             .toSet()
             .cast<String>();
-
         if (!mounted) return;
         setState(() => _activeDays.addAll(next));
       }
@@ -681,7 +716,6 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
             .not('habit_name', 'is', null);
 
         final result = List<Map<String, dynamic>>.from(rows);
-
         result.sort((a, b) {
           final an = (a['habit_name'] ?? '').toString();
           final bn = (b['habit_name'] ?? '').toString();
@@ -704,7 +738,6 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
             .order('id', ascending: false);
 
         final data = List<Map<String, dynamic>>.from(rows);
-
         if (!mounted) return;
         setState(() => _displayList = data);
         return;
@@ -1657,6 +1690,81 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
         trailing = (item['symptoms'] ?? '').toString();
         break;
 
+      case 'Fast':
+        {
+          final hours = item['duration_hours'];
+          final feeling = (item['feeling'] ?? '').toString().trim();
+          title = hours == null ? 'Fast logged' : '$hours hours fasted';
+          trailing = feeling.isEmpty ? '' : feeling;
+          break;
+        }
+
+      case 'Meditation':
+        {
+          final minutesRaw = item['duration_minutes'];
+          final technique = (item['technique'] ?? '').toString().trim();
+          String durationLabel = 'Meditation logged';
+          if (minutesRaw != null) {
+            final minutes = minutesRaw is num
+                ? minutesRaw.toDouble()
+                : double.tryParse(minutesRaw.toString());
+            if (minutes != null) {
+              durationLabel =
+                  '${minutes.toStringAsFixed(minutes % 1 == 0 ? 0 : 1)} min meditation';
+            }
+          }
+          title = durationLabel;
+          trailing = technique.isEmpty ? '' : technique;
+          break;
+        }
+
+      case 'Skincare':
+        {
+          final routine = (item['routine_type'] ?? '').toString().trim();
+          final condition = (item['skin_condition'] ?? '').toString().trim();
+          title = routine.isEmpty ? 'Skincare logged' : routine;
+          trailing = condition;
+          break;
+        }
+
+      case 'Social':
+        {
+          final personEvent = (item['person_event'] ?? item['people'] ?? '')
+              .toString()
+              .trim();
+          final activity = (item['activity_type'] ?? '').toString().trim();
+          title = personEvent.isEmpty ? 'Social time logged' : personEvent;
+          trailing = activity;
+          break;
+        }
+
+      case 'Study':
+        {
+          final subject = (item['subject'] ?? '').toString().trim();
+          final rating = item['focus_rating'];
+          title = subject.isEmpty ? 'Study session logged' : subject;
+          trailing = rating == null ? '' : 'Focus: $rating';
+          break;
+        }
+
+      case 'Workout':
+        {
+          final exercise = (item['exercise'] ?? '').toString().trim();
+          final sets = item['sets']?.toString() ?? '';
+          final reps = item['reps']?.toString() ?? '';
+          title = exercise.isEmpty ? 'Workout logged' : exercise;
+          if (sets.isNotEmpty && reps.isNotEmpty) {
+            trailing = '$sets sets x $reps reps';
+          } else if (sets.isNotEmpty) {
+            trailing = '$sets sets';
+          } else if (reps.isNotEmpty) {
+            trailing = '$reps reps';
+          } else {
+            trailing = '';
+          }
+          break;
+        }
+
       case 'Tasks':
         title = (item['task'] ?? item['task_name'] ?? item['title'] ?? 'Task')
             .toString()
@@ -1820,8 +1928,8 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
 
       case 'Expenses':
         {
-          final category = (item['category'] ?? item['title'] ?? 'Expense')
-              .toString();
+          final itemService = _expenseItemServiceLabel(item);
+          final category = (item['category'] ?? 'Expense').toString().trim();
 
           final num? valueNum =
               item['cost'] as num? ??
@@ -1830,10 +1938,13 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
 
           final currency = (item['currency'] ?? '£').toString();
 
-          title = category;
-          trailing = valueNum == null
+          title = itemService != '-' ? itemService : category;
+          final amountText = valueNum == null
               ? ''
-              : '$currency${valueNum.toStringAsFixed(2)}';
+              : formatCurrencyAmount(valueNum, currency);
+          trailing = category.isEmpty || category == title
+              ? amountText
+              : '$category • $amountText';
           break;
         }
 
@@ -1852,7 +1963,7 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
           title = category;
           trailing = valueNum == null
               ? ''
-              : '$currency${valueNum.toStringAsFixed(2)}';
+              : formatCurrencyAmount(valueNum, currency);
           break;
         }
 
@@ -1888,7 +1999,12 @@ class _CalendarBodyState extends ConsumerState<_CalendarBody> {
 
       case 'Bills':
         title = (item['category'] ?? item['title'] ?? 'Finance').toString();
-        trailing = item['amount'] != null ? '£${item['amount']}' : '';
+        trailing = item['amount'] != null
+            ? formatCurrencyAmount(
+                item['amount'],
+                (item['currency'] ?? 'GBP').toString(),
+              )
+            : '';
         break;
 
       case 'Restaurants':
@@ -2121,17 +2237,14 @@ class _TrialBanner extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'FREE MODE uses 24-hour preview mode for templates. Preview data disappears after 24 hours.',
+                SubscriptionPlanCatalog.previewModeHelpText,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
             const SizedBox(width: 8),
             TextButton(onPressed: onSkip, child: const Text('Skip for now')),
             const SizedBox(width: 6),
-            FilledButton(
-              onPressed: onUpgrade,
-              child: const Text('View modes'),
-            ),
+            FilledButton(onPressed: onUpgrade, child: const Text('View modes')),
           ],
         ),
       ),

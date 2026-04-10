@@ -1,5 +1,3 @@
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -9,13 +7,16 @@ import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../features/settings/settings_model.dart';
-import 'notification_catalog.dart';
+import 'daily_quote_service.dart';
 
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse response) async {
   if (response.actionId == 'stop_pomodoro') {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('pomodoro_stop_requested', true);
+  } else if (response.actionId == 'pause_stopwatch') {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('stopwatch_pause_requested', true);
   }
 }
 
@@ -43,6 +44,11 @@ class NotificationService {
           actions: [DarwinNotificationAction.plain('stop_pomodoro', 'Stop')],
           options: {DarwinNotificationCategoryOption.customDismissAction},
         ),
+        DarwinNotificationCategory(
+          'stopwatch',
+          actions: [DarwinNotificationAction.plain('pause_stopwatch', 'Pause')],
+          options: {DarwinNotificationCategoryOption.customDismissAction},
+        ),
       ],
     );
 
@@ -55,6 +61,11 @@ class NotificationService {
           await cancelPomodoroFinishedNotification();
           final prefs = await SharedPreferences.getInstance();
           await prefs.setBool('pomodoro_stop_requested', true);
+        } else if (response.actionId == 'pause_stopwatch') {
+          await cancelStopwatchStatusNotification();
+          await cancelStopwatchReminderNotification();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('stopwatch_pause_requested', true);
         }
       },
       onDidReceiveBackgroundNotificationResponse: notificationTapBackground,
@@ -77,7 +88,8 @@ class NotificationService {
     await init();
     await _plugin.cancelAll();
 
-    await _scheduleCategoryNotifications(settings);
+    await _scheduleHabitNotifications(settings);
+    await _scheduleDailyQuoteNotifications(settings);
 
     if (settings.calendarRemindersEnabled) {
       await _scheduleCalendarReminders(settings);
@@ -184,37 +196,93 @@ class NotificationService {
     await _plugin.cancel(900001);
   }
 
-  Future<void> _scheduleCategoryNotifications(SettingsModel settings) async {
-    final days = settings.notificationDays;
-    if (days.isEmpty) return;
+  Future<void> showStopwatchStatusNotification() async {
+    await init();
+    const android = AndroidNotificationDetails(
+      'mind_buddy_stopwatch_status',
+      'Stopwatch (Status)',
+      channelDescription: 'Stopwatch status',
+      importance: Importance.low,
+      priority: Priority.low,
+      ongoing: true,
+      onlyAlertOnce: true,
+      playSound: false,
+      actions: [
+        AndroidNotificationAction(
+          'pause_stopwatch',
+          'Pause',
+          showsUserInterface: false,
+          cancelNotification: false,
+        ),
+      ],
+    );
+    const ios = DarwinNotificationDetails(
+      presentAlert: true,
+      presentSound: false,
+      categoryIdentifier: 'stopwatch',
+    );
+    await _plugin.show(
+      900010,
+      'Stopwatch running',
+      'Your stopwatch is running quietly in the background.',
+      const NotificationDetails(android: android, iOS: ios),
+    );
+  }
 
-    final enabledCategories = notificationCategories
-        .where(
-          (category) => settings.notificationCategories[category.id] == true,
-        )
-        .toList();
+  Future<void> showStopwatchReminderNotification({
+    required Duration elapsed,
+    required bool hapticsEnabled,
+    required bool soundsEnabled,
+  }) async {
+    await init();
+    await _plugin.show(
+      900011,
+      'Stopwatch still running',
+      '${_formatDurationLabel(elapsed)} elapsed',
+      _defaultDetails(
+        hapticsEnabled: hapticsEnabled,
+        soundsEnabled: soundsEnabled,
+      ),
+    );
+  }
 
-    if (enabledCategories.isEmpty) return;
+  Future<void> cancelStopwatchStatusNotification() async {
+    await init();
+    await _plugin.cancel(900010);
+  }
 
-    final time = _parseTime(settings.notificationTime);
-    if (time == null) return;
+  Future<void> cancelStopwatchReminderNotification() async {
+    await init();
+    await _plugin.cancel(900011);
+  }
 
-    for (final day in days) {
-      final weekday = _weekdayFromKey(day);
-      if (weekday == null) continue;
+  String _formatDurationLabel(Duration duration) {
+    final hours = duration.inHours.toString().padLeft(2, '0');
+    final minutes = (duration.inMinutes % 60).toString().padLeft(2, '0');
+    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+    return '$hours:$minutes:$seconds';
+  }
 
-      final scheduled = _nextInstanceOfWeekdayTime(weekday, time);
-      final category =
-          enabledCategories[(weekday - 1) % enabledCategories.length];
-      final message = _pickMessage(category, scheduled);
-      final body = _withSubtitle(message, category.subtitle, scheduled);
+  Future<void> _scheduleDailyQuoteNotifications(SettingsModel settings) async {
+    final quoteSettings = await DailyQuoteService.load();
+    final quotes = quoteSettings.allQuotes;
+    if (quotes.isEmpty || quoteSettings.notificationTimes.isEmpty) {
+      return;
+    }
 
-      final id = _categoryNotificationId(category.id, weekday);
-
+    for (var index = 0; index < quoteSettings.notificationTimes.length; index++) {
+      final time = _parseTime(quoteSettings.notificationTimes[index]);
+      if (time == null) continue;
+      final scheduled = _nextInstanceOfTime(time);
+      final quote = _pickDailyQuote(
+        quotes: quotes,
+        scheduled: scheduled,
+        slotIndex: index,
+      );
       await _plugin.zonedSchedule(
-        id,
-        category.title,
-        body,
+        _dailyQuoteNotificationId(index),
+        'Quote bubble',
+        quote,
         scheduled,
         _defaultDetails(
           hapticsEnabled: settings.hapticsEnabled,
@@ -223,10 +291,89 @@ class NotificationService {
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,
-        matchDateTimeComponents: settings.notificationRepeat
-            ? DateTimeComponents.dayOfWeekAndTime
-            : null,
+        matchDateTimeComponents: DateTimeComponents.time,
       );
+    }
+  }
+
+  Future<void> _scheduleHabitNotifications(SettingsModel settings) async {
+    final supabase = Supabase.instance.client;
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+    final rows = await supabase
+        .from('user_habits')
+        .select('id, name')
+        .eq('user_id', user.id)
+        .eq('is_active', true)
+        .order('sort_order');
+
+    for (final raw in rows as List) {
+      final habit = Map<String, dynamic>.from(raw as Map);
+      final habitId = (habit['id'] ?? '').toString().trim();
+      final habitName = (habit['name'] ?? '').toString().trim();
+      if (habitId.isEmpty || habitName.isEmpty) continue;
+
+      final setting = settings.notificationSpaceSettings['habit:$habitId'];
+      if (setting == null || !setting.enabled) continue;
+      if (setting.frequency == 'remember') continue;
+
+      final time = _parseTime(setting.time ?? '09:00');
+      if (time == null) continue;
+
+      const title = 'Habit Tracker';
+      final body = switch (setting.style) {
+        'simple' => habitName,
+        'quiet' => '$habitName\nHabit reminder',
+        _ => 'Gentle nudge for $habitName\nHabit Tracker',
+      };
+
+      if (setting.frequency == 'monthly') {
+        await _plugin.zonedSchedule(
+          _habitNotificationId(habitId, 'monthly'),
+          title,
+          body,
+          _nextInstanceOfMonthDayTime(setting.dayOfMonth, time),
+          _defaultDetails(
+            hapticsEnabled: settings.hapticsEnabled,
+            soundsEnabled: settings.soundsEnabled,
+          ),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+          matchDateTimeComponents: DateTimeComponents.dayOfMonthAndTime,
+        );
+        continue;
+      }
+
+      final weekdays = switch (setting.frequency) {
+        'weekly' => setting.days.isEmpty ? <String>['mon'] : setting.days,
+        'certain' => setting.days.isEmpty ? <String>['mon'] : setting.days,
+        'most' =>
+          setting.skipWeekends
+              ? <String>['mon', 'tue', 'wed', 'thu', 'fri']
+              : <String>['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
+        _ => <String>[],
+      };
+
+      for (final day in weekdays) {
+        final weekday = _weekdayFromKey(day);
+        if (weekday == null) continue;
+        await _plugin.zonedSchedule(
+          _habitNotificationId(habitId, day),
+          title,
+          body,
+          _nextInstanceOfWeekdayTime(weekday, time),
+          _defaultDetails(
+            hapticsEnabled: settings.hapticsEnabled,
+            soundsEnabled: settings.soundsEnabled,
+          ),
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+          matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+        );
+      }
     }
   }
 
@@ -419,24 +566,6 @@ class NotificationService {
     return base + (y * 1000000) + (m * 10000) + (d * 100) + hhmm;
   }
 
-  DateTime? _parseReminderDate(Map<String, dynamic> reminder) {
-    if (reminder['datetime'] != null) {
-      return DateTime.tryParse(reminder['datetime'].toString());
-    }
-
-    final day = reminder['day']?.toString();
-    if (day == null || day.isEmpty) return null;
-    final time = reminder['time']?.toString() ?? '09:00';
-    final parts = time.split(':');
-    if (parts.length < 2) return DateTime.tryParse(day);
-
-    final hour = int.tryParse(parts[0]) ?? 9;
-    final minute = int.tryParse(parts[1]) ?? 0;
-    final date = DateTime.tryParse(day);
-    if (date == null) return null;
-    return DateTime(date.year, date.month, date.day, hour, minute);
-  }
-
   tz.TZDateTime _nextInstanceOfWeekdayTime(int weekday, TimeOfDay time) {
     final now = tz.TZDateTime.now(tz.local);
     tz.TZDateTime scheduled = tz.TZDateTime(
@@ -516,24 +645,8 @@ class NotificationService {
     return TimeOfDay(hour: hour, minute: minute);
   }
 
-  String _pickMessage(NotificationCategory category, DateTime scheduled) {
-    final isMorning = scheduled.hour < 12;
-    final list = isMorning
-        ? category.morningMessages
-        : category.eveningMessages;
-    if (list.isEmpty) return category.description;
-    final index = max(0, scheduled.day % list.length);
-    return list[index];
-  }
-
-  String _withSubtitle(String message, String subtitle, DateTime scheduled) {
-    final addSoftClose = scheduled.day % 4 == 0;
-    final suffix = addSoftClose ? '\nOr ignore this — that is okay too.' : '';
-    return '$message\n$subtitle$suffix';
-  }
-
-  int _categoryNotificationId(String categoryId, int weekday) {
-    return categoryId.hashCode.abs() % 100000 + weekday;
+  int _habitNotificationId(String habitId, String suffix) {
+    return 300000 + ('habit:$habitId:$suffix').hashCode.abs() % 500000;
   }
 
   int _reminderNotificationId(dynamic id) {
@@ -542,10 +655,29 @@ class NotificationService {
     return 200000 + id.hashCode.abs() % 80000;
   }
 
+  int _dailyQuoteNotificationId(int index) {
+    return 700000 + index;
+  }
+
   String _formatDate(DateTime date) {
     return '${date.year.toString().padLeft(4, '0')}-'
         '${date.month.toString().padLeft(2, '0')}-'
         '${date.day.toString().padLeft(2, '0')}';
+  }
+
+  String _pickDailyQuote({
+    required List<String> quotes,
+    required DateTime scheduled,
+    required int slotIndex,
+  }) {
+    final seed = (scheduled.year * 10000) +
+        (scheduled.month * 100) +
+        scheduled.day +
+        (slotIndex * 17) +
+        (scheduled.hour * 7) +
+        scheduled.minute;
+    final index = seed.abs() % quotes.length;
+    return quotes[index];
   }
 
   int? _weekdayFromKey(String key) {

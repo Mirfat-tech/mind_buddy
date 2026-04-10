@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:go_router/go_router.dart';
@@ -9,9 +6,12 @@ import 'package:intl/intl.dart';
 
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/features/journal/journal_canvas_layer.dart';
 import 'package:mind_buddy/features/journal/quill_embeds.dart';
 import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
+import 'package:mind_buddy/services/journal_access_service.dart';
+import 'package:mind_buddy/services/journal_document_codec.dart';
 
 class JournalShareViewScreen extends StatefulWidget {
   const JournalShareViewScreen({super.key, required this.shareId});
@@ -38,19 +38,34 @@ class _JournalShareViewScreenState extends State<JournalShareViewScreen> {
         .eq('share_id', widget.shareId)
         .eq('is_shared', true)
         .maybeSingle();
-    return row == null ? null : Map<String, dynamic>.from(row as Map);
-  }
-
-  quill.Document _parseDoc(String raw) {
-    try {
-      final jsonData = jsonDecode(raw);
-      if (jsonData is List) {
-        return quill.Document.fromJson(
-          jsonData.map((e) => Map<String, dynamic>.from(e as Map)).toList(),
-        );
+    final data = row == null ? null : Map<String, dynamic>.from(row as Map);
+    if (data != null) {
+      final entryId = data['id']?.toString();
+      if (entryId == null || entryId.isEmpty) {
+        return null;
       }
-    } catch (_) {}
-    return quill.Document()..insert(0, raw);
+      final allowed = await JournalAccessService.canAccessEntry(entryId);
+      if (!allowed) {
+        return null;
+      }
+      try {
+        data['text'] = await JournalAccessService.hydrateMediaSignedUrls(
+          entryId: entryId,
+          rawText: data['text']?.toString() ?? '',
+        );
+      } catch (_) {}
+      final path = data['doodle_storage_path']?.toString();
+      final updatedRaw = data['doodle_updated_at']?.toString();
+      final updatedAt = updatedRaw == null
+          ? null
+          : DateTime.tryParse(updatedRaw);
+      data['doodle_preview_url'] = await JournalAccessService.resolveDoodleUrl(
+        entryId: entryId,
+        storagePath: path,
+        updatedAt: updatedAt,
+      );
+    }
+    return data;
   }
 
   @override
@@ -76,17 +91,19 @@ class _JournalShareViewScreenState extends State<JournalShareViewScreen> {
           }
 
           final row = snap.data!;
-          final title =
-              (row['title'] as String?)?.trim().isNotEmpty == true
-                  ? row['title'] as String
-                  : 'Untitled entry';
+          final title = (row['title'] as String?)?.trim().isNotEmpty == true
+              ? row['title'] as String
+              : 'Untitled entry';
           final createdAtRaw = row['created_at']?.toString();
           final createdAt = createdAtRaw != null
-              ? DateFormat('MMM d, yyyy • h:mm a')
-                  .format(DateTime.parse(createdAtRaw).toLocal())
+              ? DateFormat(
+                  'MMM d, yyyy • h:mm a',
+                ).format(DateTime.parse(createdAtRaw).toLocal())
               : null;
           final raw = row['text']?.toString() ?? '';
-          final doc = _parseDoc(raw);
+          final doodleUrl = row['doodle_preview_url']?.toString();
+          final content = JournalDocumentCodec.decodeContent(raw);
+          final doc = content.document;
           final controller = quill.QuillController(
             document: doc,
             selection: const TextSelection.collapsed(offset: 0),
@@ -95,6 +112,7 @@ class _JournalShareViewScreenState extends State<JournalShareViewScreen> {
           final media = extractMediaFromDelta(
             controller.document.toDelta().toJson(),
           );
+          final editorStyles = JournalDocumentCodec.buildEditorStyles(context);
 
           return Padding(
             padding: const EdgeInsets.all(16),
@@ -122,20 +140,47 @@ class _JournalShareViewScreenState extends State<JournalShareViewScreen> {
                       ),
                     const SizedBox(height: 10),
                     Expanded(
-                      child: Container(
-                        color: Theme.of(context).scaffoldBackgroundColor,
-                        child: quill.QuillEditor.basic(
-                          controller: controller,
-                          config: const quill.QuillEditorConfig(
-                            expands: true,
-                            padding: EdgeInsets.all(12),
-                            autoFocus: false,
-                            embedBuilders: [
-                              LocalImageEmbedBuilder(),
-                              LocalVideoEmbedBuilder(),
-                            ],
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Container(
+                            color: Theme.of(context).scaffoldBackgroundColor,
                           ),
-                        ),
+                          if (doodleUrl != null && doodleUrl.isNotEmpty)
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Image.network(
+                                  doodleUrl,
+                                  fit: BoxFit.fill,
+                                  errorBuilder: (_, __, ___) =>
+                                      const SizedBox.shrink(),
+                                ),
+                              ),
+                            ),
+                          quill.QuillEditor.basic(
+                            controller: controller,
+                            config: quill.QuillEditorConfig(
+                              expands: true,
+                              padding: EdgeInsets.all(12),
+                              autoFocus: false,
+                              customStyles: editorStyles,
+                              embedBuilders: [
+                                LocalImageEmbedBuilder(),
+                                LocalVideoEmbedBuilder(),
+                              ],
+                            ),
+                          ),
+                          if (content.canvasObjects.isNotEmpty)
+                            Positioned.fill(
+                              child: JournalCanvasLayer(
+                                objects: content.canvasObjects,
+                                selectedObjectId: null,
+                                onSelectObject: (_) {},
+                                onUpdateObject: (_) {},
+                                onDeleteObject: (_) {},
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     _MediaPreviewStrip(
@@ -191,10 +236,7 @@ class _GlowPanel extends StatelessWidget {
 }
 
 class _MediaPreviewStrip extends StatelessWidget {
-  const _MediaPreviewStrip({
-    required this.items,
-    required this.onTap,
-  });
+  const _MediaPreviewStrip({required this.items, required this.onTap});
 
   final List<JournalMediaItem> items;
   final ValueChanged<int> onTap;
@@ -212,17 +254,9 @@ class _MediaPreviewStrip extends StatelessWidget {
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
           final item = items[i];
-          final file = resolveMediaFile(item);
-          final url = item.url ?? item.path ?? '';
           final thumb = item.type == 'video'
-              ? _VideoThumb(
-                  file: file,
-                  url: url,
-                )
-              : _ImageThumb(
-                  file: file,
-                  url: url,
-                );
+              ? _VideoThumb(item: item)
+              : _ImageThumb(item: item);
           return GestureDetector(
             onTap: () => onTap(i),
             child: ClipRRect(
@@ -237,40 +271,74 @@ class _MediaPreviewStrip extends StatelessWidget {
 }
 
 class _ImageThumb extends StatelessWidget {
-  const _ImageThumb({required this.file, required this.url});
+  const _ImageThumb({required this.item});
 
-  final File? file;
-  final String url;
+  final JournalMediaItem item;
 
   @override
   Widget build(BuildContext context) {
-    if (file != null) {
-      return Image.file(file!, fit: BoxFit.cover);
-    }
-    return Image.network(url, fit: BoxFit.cover);
+    return FutureBuilder<ResolvedJournalMedia>(
+      future: resolveJournalMedia(item, debugContext: 'share_view_image_thumb'),
+      builder: (context, snap) {
+        final resolved = snap.data;
+        if (resolved?.file != null) {
+          return Image.file(resolved!.file!, fit: BoxFit.cover);
+        }
+        if (resolved?.url != null && resolved!.url!.isNotEmpty) {
+          return Image.network(
+            resolved.url!,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => _thumbFallback('Photo'),
+          );
+        }
+        if (snap.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+        }
+        return _thumbFallback('Photo');
+      },
+    );
   }
 }
 
 class _VideoThumb extends StatelessWidget {
-  const _VideoThumb({required this.file, required this.url});
+  const _VideoThumb({required this.item});
 
-  final File? file;
-  final String url;
+  final JournalMediaItem item;
 
   @override
   Widget build(BuildContext context) {
-    final child = file != null
-        ? Image.file(file!, fit: BoxFit.cover)
-        : Image.network(url, fit: BoxFit.cover);
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Positioned.fill(child: child),
-        Container(
-          color: Colors.black26,
-        ),
-        const Icon(Icons.play_circle, color: Colors.white, size: 32),
-      ],
+    return FutureBuilder<ResolvedJournalMedia>(
+      future: resolveJournalMedia(item, debugContext: 'share_view_video_thumb'),
+      builder: (context, snap) {
+        final resolved = snap.data;
+        final child = resolved?.file != null
+            ? Image.file(resolved!.file!, fit: BoxFit.cover)
+            : (resolved?.url != null && resolved!.url!.isNotEmpty)
+            ? Image.network(
+                resolved.url!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _thumbFallback('Video'),
+              )
+            : snap.connectionState != ConnectionState.done
+            ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+            : _thumbFallback('Video');
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned.fill(child: child),
+            Container(color: Colors.black26),
+            const Icon(Icons.play_circle, color: Colors.white, size: 32),
+          ],
+        );
+      },
     );
   }
+}
+
+Widget _thumbFallback(String label) {
+  return Container(
+    color: Colors.black12,
+    alignment: Alignment.center,
+    child: Text('$label unavailable'),
+  );
 }

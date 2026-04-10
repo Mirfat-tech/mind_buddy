@@ -40,20 +40,34 @@ class _OnboardingExpressionScreenState
         _selected.add(value);
       }
     });
+    debugPrint(
+      '[OnboardingExpression] option_tapped value=$value selected=${_selected.contains(value)} current_page=1',
+    );
   }
 
   void _continue() {
+    debugPrint(
+      '[OnboardingExpression] continue_tapped selected=$_selected current_page=1 next=/onboarding/lookback',
+    );
     final controller = ref.read(onboardingControllerProvider.notifier);
     controller.setExpressionStyle(_selected);
     controller.setSkippedPersonalization(false);
     context.go('/onboarding/lookback');
   }
 
-  void _skipQuestion() {
+  Future<void> _skipQuestion() async {
+    debugPrint('[OnboardingExpression] skip_tapped current_page=1');
     final controller = ref.read(onboardingControllerProvider.notifier);
     controller.clearExpressionStyle();
+    controller.clearLookingBack();
     controller.setSkippedPersonalization(true);
-    context.go('/onboarding/lookback');
+    await OnboardingController.setSetupCompleted(true);
+    await CompletionGateRepository.markOnboardingCompleted();
+    debugPrint(
+      '[OnboardingExpression] skip_saved onboarding_completed=true next=/bootstrap',
+    );
+    if (!mounted) return;
+    context.go('/bootstrap');
   }
 
   @override

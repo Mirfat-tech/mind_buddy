@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
@@ -68,13 +67,25 @@ class _ImagePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final file = resolveMediaFile(item);
-    final url = item.url ?? item.path ?? '';
-
-    return Center(
-      child: file != null
-          ? Image.file(file, fit: BoxFit.contain)
-          : Image.network(url, fit: BoxFit.contain),
+    return FutureBuilder<ResolvedJournalMedia>(
+      future: resolveJournalMedia(item, debugContext: 'media_viewer_image'),
+      builder: (context, snap) {
+        final resolved = snap.data;
+        if (resolved?.file != null) {
+          return Center(
+            child: Image.file(resolved!.file!, fit: BoxFit.contain),
+          );
+        }
+        if (resolved?.url != null && resolved!.url!.isNotEmpty) {
+          return Center(
+            child: Image.network(resolved.url!, fit: BoxFit.contain),
+          );
+        }
+        if (snap.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return const Center(child: Text('Image unavailable'));
+      },
     );
   }
 }
@@ -89,31 +100,52 @@ class _VideoPage extends StatefulWidget {
 }
 
 class _VideoPageState extends State<_VideoPage> {
-  late final VideoPlayerController _controller;
+  VideoPlayerController? _controller;
   bool _ready = false;
+  String? _loadError;
 
   @override
   void initState() {
     super.initState();
-    final file = resolveMediaFile(widget.item);
-    _controller = file != null
-        ? VideoPlayerController.file(file)
-        : VideoPlayerController.networkUrl(
-            Uri.parse(widget.item.url ?? widget.item.path ?? ''),
-          );
-    _controller.initialize().then((_) {
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      final resolved = await resolveJournalMedia(
+        widget.item,
+        debugContext: 'media_viewer_video',
+      );
+      final url = resolved.url;
+      if (resolved.file == null && (url == null || url.isEmpty)) {
+        if (mounted) {
+          setState(() => _loadError = 'Video unavailable');
+        }
+        return;
+      }
+      _controller = resolved.file != null
+          ? VideoPlayerController.file(resolved.file!)
+          : VideoPlayerController.networkUrl(Uri.parse(url!));
+      await _controller!.initialize();
       if (mounted) setState(() => _ready = true);
-    });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _loadError = 'Video unavailable');
+      }
+    }
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controller?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_loadError != null) {
+      return Center(child: Text(_loadError!));
+    }
     if (!_ready) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -122,22 +154,22 @@ class _VideoPageState extends State<_VideoPage> {
         alignment: Alignment.center,
         children: [
           AspectRatio(
-            aspectRatio: _controller.value.aspectRatio,
-            child: VideoPlayer(_controller),
+            aspectRatio: _controller!.value.aspectRatio,
+            child: VideoPlayer(_controller!),
           ),
           IconButton(
             iconSize: 64,
             color: Colors.white,
             icon: Icon(
-              _controller.value.isPlaying
+              _controller!.value.isPlaying
                   ? Icons.pause_circle
                   : Icons.play_circle,
             ),
             onPressed: () {
               setState(() {
-                _controller.value.isPlaying
-                    ? _controller.pause()
-                    : _controller.play();
+                _controller!.value.isPlaying
+                    ? _controller!.pause()
+                    : _controller!.play();
               });
             },
           ),

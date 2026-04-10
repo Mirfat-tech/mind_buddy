@@ -74,6 +74,12 @@ class SettingsController extends ChangeNotifier {
       await NotificationService.instance.rescheduleAll(_settings);
     } catch (_) {}
 
+    try {
+      await GuideManager.setKeepInstructionsVisible(
+        _settings.keepInstructionsEnabled,
+      );
+    } catch (_) {}
+
     _loading = false;
     notifyListeners();
   }
@@ -160,6 +166,14 @@ class SettingsController extends ChangeNotifier {
 
   Future<void> setPomodoroAlertsEnabled(bool enabled) async {
     await update(settings.copyWith(pomodoroAlertsEnabled: enabled));
+  }
+
+  Future<void> setStopwatchAlertsEnabled(bool enabled) async {
+    await update(settings.copyWith(stopwatchAlertsEnabled: enabled));
+  }
+
+  Future<void> setStopwatchReminderMinutes(int minutes) async {
+    await update(settings.copyWith(stopwatchReminderMinutes: minutes));
   }
 
   Future<void> setHapticsEnabled(bool enabled) async {

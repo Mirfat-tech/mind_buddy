@@ -37,6 +37,27 @@ DateTime? _parseLocalDay(dynamic raw) {
   return DateTime(parsed.year, parsed.month, parsed.day);
 }
 
+DateTime? _habitActiveFrom(
+  Map<String, dynamic> row, {
+  DateTime? earliestLoggedDay,
+}) {
+  return _parseLocalDay(
+        row['start_date'] ?? row['active_from'] ?? row['created_at'],
+      ) ??
+      earliestLoggedDay;
+}
+
+DateTime? _habitActiveUntil(Map<String, dynamic> row) {
+  return _parseLocalDay(
+    row['end_date'] ??
+        row['ended_at'] ??
+        row['deleted_at'] ??
+        row['archived_at'] ??
+        row['inactive_at'] ??
+        ((row['is_active'] == false) ? row['updated_at'] : null),
+  );
+}
+
 Future<HabitMonthlyCompletionStats> fetchHabitMonthlyCompletionStats({
   required SupabaseClient supabase,
   required DateTime selectedMonth,
@@ -70,14 +91,41 @@ Future<HabitMonthlyCompletionStats> fetchHabitMonthlyCompletionStats({
 
   final activeRows = await supabase
       .from('user_habits')
-      .select('id, name')
+      .select()
+      .eq('user_id', user.id);
+  final historyRows = await supabase
+      .from('habit_logs')
+      .select('habit_id, day')
       .eq('user_id', user.id)
-      .eq('is_active', true);
+      .lt('day', endExclusiveDay);
+  final earliestLoggedDayByHabit = <String, DateTime>{};
+  for (final raw in (historyRows as List)) {
+    final row = Map<String, dynamic>.from(raw as Map);
+    final hid = (row['habit_id'] ?? '').toString().trim();
+    if (hid.isEmpty) continue;
+    final loggedDay = _parseLocalDay(row['day']);
+    if (loggedDay == null) continue;
+    final existing = earliestLoggedDayByHabit[hid];
+    if (existing == null || loggedDay.isBefore(existing)) {
+      earliestLoggedDayByHabit[hid] = loggedDay;
+    }
+  }
   final activeHabitIds = <String>{};
   for (final raw in (activeRows as List)) {
     final row = Map<String, dynamic>.from(raw as Map);
     final id = (row['id'] ?? '').toString().trim();
     if (id.isEmpty) continue;
+    final activeFrom = _habitActiveFrom(
+      row,
+      earliestLoggedDay: earliestLoggedDayByHabit[id],
+    );
+    final activeUntil = _habitActiveUntil(row);
+    if (activeFrom != null && !activeFrom.isBefore(monthEndExclusive)) {
+      continue;
+    }
+    if (activeUntil != null && activeUntil.isBefore(monthStart)) {
+      continue;
+    }
     activeHabitIds.add(id);
   }
 

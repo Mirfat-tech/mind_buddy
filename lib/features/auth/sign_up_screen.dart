@@ -7,6 +7,7 @@ import 'package:mind_buddy/theme/mindbuddy_background.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
+import 'package:mind_buddy/services/auth_redirect_targets.dart';
 import 'package:mind_buddy/services/oauth_sign_in_coordinator.dart';
 import 'package:mind_buddy/services/startup_user_data_service.dart';
 
@@ -21,6 +22,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
   static const String _underAgeMessage =
       'You must be at least 13 years old to use this app.';
   static const Duration _emailRateLimitCooldown = Duration(minutes: 1);
+  static const String _emailRedirectTo =
+      AuthRedirectTargets.emailVerificationCallback;
 
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _fullName = TextEditingController();
@@ -30,10 +33,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController _dateOfBirth = TextEditingController();
 
   bool _loading = false;
+  bool _checkingEmailAvailability = false;
   bool _confirmAge13Plus = false;
   bool _ageConfirmationError = false;
+  bool _isPasswordVisible = false;
+  bool _isConfirmPasswordVisible = false;
   String? _dobError;
+  String? _emailAvailabilityError;
   DateTime? _selectedDateOfBirth;
+  Timer? _emailAvailabilityTimer;
+  int _emailCheckRequestId = 0;
 
   Future<void> _upsertAndRefreshProfile({
     required String userId,
@@ -65,6 +74,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   @override
   void dispose() {
     _rateLimitTimer?.cancel();
+    _emailAvailabilityTimer?.cancel();
     _fullName.dispose();
     _email.dispose();
     _password.dispose();
@@ -102,15 +112,22 @@ class _SignUpScreenState extends State<SignUpScreen> {
     setState(() => _loading = true);
 
     try {
-      final email = _email.text.trim();
+      final email = _normalizedEmail(_email.text);
       final password = _password.text;
       final fullName = _fullName.text.trim();
       final dateOfBirth = _selectedDateOfBirth!;
       final dobIso = _formatDate(dateOfBirth);
+      final emailAvailable = await _ensureEmailIsAvailable(email);
+      if (!emailAvailable) {
+        if (!mounted) return;
+        setState(() => _loading = false);
+        return;
+      }
 
       final res = await Supabase.instance.client.auth.signUp(
         email: email,
         password: password,
+        emailRedirectTo: _emailRedirectTo,
         data: {
           'full_name': fullName,
           'date_of_birth': dobIso,
@@ -159,7 +176,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       if (hasSession) {
         await OnboardingController.setAuthStageCompleted(true);
         if (!mounted) return;
-        context.go('/onboarding/doorway');
+        context.go('/bootstrap');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -206,17 +223,17 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   Duration _parseRateLimitCooldown(String message) {
     final lowered = message.toLowerCase();
-    final minuteMatch = RegExp(r'(\d+)\s*(minute|minutes|min)\b').firstMatch(
-      lowered,
-    );
+    final minuteMatch = RegExp(
+      r'(\d+)\s*(minute|minutes|min)\b',
+    ).firstMatch(lowered);
     if (minuteMatch != null) {
       final minutes = int.tryParse(minuteMatch.group(1) ?? '');
       if (minutes != null && minutes > 0) return Duration(minutes: minutes);
     }
 
-    final secondMatch = RegExp(r'(\d+)\s*(second|seconds|sec|s)\b').firstMatch(
-      lowered,
-    );
+    final secondMatch = RegExp(
+      r'(\d+)\s*(second|seconds|sec|s)\b',
+    ).firstMatch(lowered);
     if (secondMatch != null) {
       final seconds = int.tryParse(secondMatch.group(1) ?? '');
       if (seconds != null && seconds > 0) return Duration(seconds: seconds);
@@ -260,9 +277,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   String? _validateEmail(String? v) {
-    final value = (v ?? '').trim();
+    final value = _normalizedEmail(v);
     if (value.isEmpty) return 'Email is required';
-    if (!value.contains('@')) return 'Enter a valid email';
+    if (!_looksLikeEmail(value)) return 'Enter a valid email';
+    if (_emailAvailabilityError != null) return _emailAvailabilityError;
     return null;
   }
 
@@ -309,6 +327,141 @@ class _SignUpScreenState extends State<SignUpScreen> {
     return '$y-$m-$d';
   }
 
+  String _normalizedEmail(String? value) {
+    return (value ?? '').trim().toLowerCase();
+  }
+
+  bool _looksLikeEmail(String value) {
+    if (value.isEmpty || value.length > 254 || value.contains(' ')) {
+      return false;
+    }
+
+    final parts = value.split('@');
+    if (parts.length != 2) return false;
+
+    final local = parts.first;
+    final domain = parts.last;
+    if (local.isEmpty || domain.isEmpty) return false;
+    if (local.length > 64) return false;
+    if (local.startsWith('.') || local.endsWith('.') || local.contains('..')) {
+      return false;
+    }
+    if (!RegExp(r"^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+$").hasMatch(local)) {
+      return false;
+    }
+
+    final labels = domain.split('.');
+    if (labels.length < 2) return false;
+    final tld = labels.last;
+    if (tld.length < 2 || tld.length > 24) return false;
+    if (!RegExp(r'^[a-z]{2,24}$').hasMatch(tld)) return false;
+    if (_invalidEmailTlds.contains(tld)) return false;
+
+    for (final label in labels) {
+      if (label.isEmpty || label.length > 63) return false;
+      if (label.startsWith('-') || label.endsWith('-')) return false;
+      if (!RegExp(r'^[a-z0-9-]+$').hasMatch(label)) return false;
+    }
+
+    return true;
+  }
+
+  static const Set<String> _invalidEmailTlds = <String>{
+    'cim',
+    'cmm',
+    'cmo',
+    'comm',
+    'con',
+    'coom',
+    'ne',
+    'ner',
+    'ogr',
+    'omc',
+    'orgg',
+    'vom',
+    'xom',
+  };
+
+  void _onEmailChanged(String raw) {
+    _emailAvailabilityTimer?.cancel();
+    final email = _normalizedEmail(raw);
+    if (email != raw) {
+      _email.value = _email.value.copyWith(
+        text: email,
+        selection: TextSelection.collapsed(offset: email.length),
+        composing: TextRange.empty,
+      );
+      return;
+    }
+
+    if (email.isEmpty || !_looksLikeEmail(email)) {
+      if (_emailAvailabilityError != null || _checkingEmailAvailability) {
+        setState(() {
+          _emailAvailabilityError = null;
+          _checkingEmailAvailability = false;
+        });
+      }
+      return;
+    }
+
+    final requestId = ++_emailCheckRequestId;
+    setState(() {
+      _checkingEmailAvailability = true;
+      _emailAvailabilityError = null;
+    });
+    _emailAvailabilityTimer = Timer(const Duration(milliseconds: 350), () {
+      unawaited(_checkEmailAvailability(email, requestId));
+    });
+  }
+
+  Future<void> _checkEmailAvailability(String email, int requestId) async {
+    final available = await _fetchEmailAvailability(email);
+    if (!mounted || requestId != _emailCheckRequestId) return;
+    setState(() {
+      _checkingEmailAvailability = false;
+      _emailAvailabilityError = available == false
+          ? 'This email has already been used. Use a different email.'
+          : null;
+    });
+    _formKey.currentState?.validate();
+  }
+
+  Future<bool?> _fetchEmailAvailability(String email) async {
+    try {
+      final response = await Supabase.instance.client.rpc(
+        'is_email_available_exact',
+        params: {'candidate': email},
+      );
+      if (response is bool) return response;
+      if (response is num) return response != 0;
+      if (response is String) {
+        final lowered = response.toLowerCase().trim();
+        if (lowered == 'true' || lowered == 't' || lowered == '1') return true;
+        if (lowered == 'false' || lowered == 'f' || lowered == '0') {
+          return false;
+        }
+      }
+    } catch (_) {
+      // Keep sign-up usable if the RPC is not deployed yet.
+    }
+    return null;
+  }
+
+  Future<bool> _ensureEmailIsAvailable(String email) async {
+    if (!_looksLikeEmail(email)) return false;
+    final available = await _fetchEmailAvailability(email);
+    if (available == false) {
+      setState(() {
+        _emailAvailabilityError =
+            'This email has already been used. Use a different email.';
+        _checkingEmailAvailability = false;
+      });
+      _formKey.currentState?.validate();
+      return false;
+    }
+    return true;
+  }
+
   Future<void> _pickDateOfBirth() async {
     final now = DateTime.now();
     final maxDate = DateTime(now.year - 13, now.month, now.day);
@@ -332,6 +485,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final accentColor = Theme.of(context).colorScheme.primary;
     return MindBuddyBackground(
       child: Scaffold(
         backgroundColor: Colors.transparent,
@@ -376,22 +530,70 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   TextFormField(
                     controller: _email,
                     keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(labelText: 'Email'),
+                    autofillHints: const [AutofillHints.email],
+                    onChanged: _onEmailChanged,
+                    decoration: InputDecoration(
+                      labelText: 'Email',
+                      helperText: _checkingEmailAvailability
+                          ? 'Checking email...'
+                          : null,
+                      suffixIcon: _checkingEmailAvailability
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                            )
+                          : null,
+                    ),
                     validator: _validateEmail,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _password,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Password'),
+                    obscureText: !_isPasswordVisible,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _isPasswordVisible = !_isPasswordVisible;
+                          });
+                        },
+                        icon: Icon(
+                          _isPasswordVisible
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                          color: accentColor,
+                        ),
+                      ),
+                    ),
                     validator: _validatePassword,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: _confirm,
-                    obscureText: true,
-                    decoration: const InputDecoration(
+                    obscureText: !_isConfirmPasswordVisible,
+                    decoration: InputDecoration(
                       labelText: 'Confirm password',
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _isConfirmPasswordVisible =
+                                !_isConfirmPasswordVisible;
+                          });
+                        },
+                        icon: Icon(
+                          _isConfirmPasswordVisible
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                          color: accentColor,
+                        ),
+                      ),
                     ),
                     validator: _validateConfirm,
                   ),

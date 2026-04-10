@@ -22,7 +22,7 @@ class InsightsGateScreen extends StatelessWidget {
         }
 
         final info = snap.data;
-        if (info != null && info.isFull) {
+        if (info != null && info.supportsInsights) {
           return const InsightsScreen();
         }
 
@@ -45,20 +45,19 @@ class InsightsGateScreen extends StatelessWidget {
                   const Icon(Icons.lock_outline, size: 48),
                   const SizedBox(height: 12),
                   Text(
-                    'Insights are available in FULL SUPPORT MODE',
+                    'Insights are available in PLUS SUPPORT MODE',
                     style: Theme.of(context).textTheme.titleMedium,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'PLUS SUPPORT MODE includes memory, but advanced insights for templates and habits are in FULL SUPPORT MODE.',
+                    'Upgrade to Plus Support Mode to unlock insights for templates and habits.',
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
                   FilledButton(
                     onPressed: () {
-                      final user =
-                          Supabase.instance.client.auth.currentUser;
+                      final user = Supabase.instance.client.auth.currentUser;
                       if (user == null) {
                         context.go('/signin?from=/subscription');
                       } else {
