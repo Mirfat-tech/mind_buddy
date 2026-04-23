@@ -1,22 +1,27 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'settings_model.dart';
 import 'settings_repository.dart';
 import '../../paper/paper_styles.dart';
 import '../../services/notification_service.dart';
 import '../../services/notification_catalog.dart';
+import '../../services/subscription_limits.dart';
 import '../../guides/guide_manager.dart';
 import '../habits/habit_home_widget_service.dart';
 
 final initialSettingsProvider = Provider<SettingsModel?>((ref) => null);
 
+final settingsRepositoryProvider = Provider<SettingsRepository>((ref) {
+  throw UnimplementedError(
+    'SettingsRepository must be overridden at bootstrap.',
+  );
+});
+
 final settingsControllerProvider = ChangeNotifierProvider<SettingsController>((
   ref,
 ) {
-  final supabase = Supabase.instance.client;
-  final repo = SettingsRepository(supabase);
+  final repo = ref.watch(settingsRepositoryProvider);
   final initial = ref.watch(initialSettingsProvider);
   return SettingsController(repo, initialSettings: initial);
 });
@@ -24,7 +29,9 @@ final settingsControllerProvider = ChangeNotifierProvider<SettingsController>((
 class SettingsController extends ChangeNotifier {
   SettingsController(this._repo, {SettingsModel? initialSettings})
     : _settings = initialSettings ?? SettingsModel.defaults(),
-      _loading = initialSettings == null;
+      _loading = initialSettings == null {
+    setCustomPaperStyles(_settings.customThemes);
+  }
 
   final SettingsRepository _repo;
 
@@ -41,33 +48,13 @@ class SettingsController extends ChangeNotifier {
     _loadError = null;
     notifyListeners();
 
-    SettingsModel? local;
-    SettingsModel? remote;
     try {
-      local = await _repo.loadLocal();
-      remote = await _repo.fetchRemote();
+      final initialized = await _repo.initialize();
+      _settings = initialized;
+      setCustomPaperStyles(_settings.customThemes);
+      await ensureThemeAccessForCurrentPlan();
     } catch (_) {
       _loadError = 'Unable to sync settings right now.';
-    }
-
-    if (local != null) {
-      _settings = local;
-    }
-
-    if (remote != null) {
-      final newer = _pickNewest(local, remote);
-      _settings = newer;
-      await _repo.saveLocal(_settings);
-    } else if (local != null) {
-      await _repo.upsertRemote(local);
-    }
-
-    // Ensure splash/bootstrap always has a concrete, valid theme.
-    final themeId = (_settings.themeId ?? '').trim();
-    if (!isValidPaperStyleId(themeId)) {
-      _settings = _settings.copyWith(themeId: kDefaultThemeId);
-      await _repo.saveLocal(_settings);
-      await _repo.upsertRemote(_settings);
     }
 
     try {
@@ -92,6 +79,58 @@ class SettingsController extends ChangeNotifier {
 
   Future<void> setTheme(String id) async {
     await update(settings.copyWith(themeId: id));
+    await HabitHomeWidgetService.syncTodaySnapshot();
+  }
+
+  Future<void> addCustomTheme(
+    PaperStyle theme, {
+    bool selectAfterSave = true,
+  }) async {
+    final nextThemes = <PaperStyle>[...settings.customThemes, theme];
+    await update(
+      settings.copyWith(
+        customThemes: nextThemes,
+        themeId: selectAfterSave ? theme.id : settings.themeId,
+      ),
+    );
+    await HabitHomeWidgetService.syncTodaySnapshot();
+  }
+
+  Future<bool> removeCustomTheme(String themeId) async {
+    final existing = settings.customThemes.any((theme) => theme.id == themeId);
+    if (!existing) return false;
+
+    final nextThemes = settings.customThemes
+        .where((theme) => theme.id != themeId)
+        .toList(growable: false);
+    final nextThemeId = settings.themeId == themeId
+        ? kDefaultThemeId
+        : settings.themeId;
+
+    await update(
+      settings.copyWith(customThemes: nextThemes, themeId: nextThemeId),
+    );
+    await HabitHomeWidgetService.syncTodaySnapshot();
+    return true;
+  }
+
+  Future<void> restoreCustomTheme(
+    PaperStyle theme, {
+    int? index,
+    bool reselect = false,
+  }) async {
+    final nextThemes = <PaperStyle>[...settings.customThemes];
+    final targetIndex = index == null
+        ? nextThemes.length
+        : index.clamp(0, nextThemes.length);
+    nextThemes.insert(targetIndex, theme);
+
+    await update(
+      settings.copyWith(
+        customThemes: nextThemes,
+        themeId: reselect ? theme.id : settings.themeId,
+      ),
+    );
     await HabitHomeWidgetService.syncTodaySnapshot();
   }
 
@@ -160,10 +199,6 @@ class SettingsController extends ChangeNotifier {
     await update(settings.copyWith(notificationCategories: next));
   }
 
-  Future<void> setCalendarRemindersEnabled(bool enabled) async {
-    await update(settings.copyWith(calendarRemindersEnabled: enabled));
-  }
-
   Future<void> setPomodoroAlertsEnabled(bool enabled) async {
     await update(settings.copyWith(pomodoroAlertsEnabled: enabled));
   }
@@ -190,19 +225,30 @@ class SettingsController extends ChangeNotifier {
   }
 
   Future<void> update(SettingsModel next) async {
-    final now = DateTime.now().toIso8601String();
-    _settings = next.copyWith(updatedAt: now);
+    _settings = await _repo.saveLocalFirst(next);
+    setCustomPaperStyles(_settings.customThemes);
     notifyListeners();
 
-    await _repo.saveLocal(_settings);
-    await _repo.upsertRemote(_settings);
     await NotificationService.instance.rescheduleAll(_settings);
   }
 
-  SettingsModel _pickNewest(SettingsModel? local, SettingsModel remote) {
-    if (local == null) return remote;
-    return local.updatedAtDateTime.isAfter(remote.updatedAtDateTime)
-        ? local
-        : remote;
+  Future<void> ensureThemeAccessForCurrentPlan() async {
+    final subscription = await SubscriptionLimits.fetchForCurrentUser();
+    if (subscription.isPlus) return;
+
+    final currentStyle = styleById(_settings.themeId);
+    final safeThemeId = isThemeAccessibleForFree(currentStyle)
+        ? currentStyle.id
+        : kFreeFallbackThemeId;
+
+    if (safeThemeId == _settings.themeId) {
+      return;
+    }
+
+    _settings = await _repo.saveLocalFirst(
+      _settings.copyWith(themeId: safeThemeId),
+    );
+    setCustomPaperStyles(_settings.customThemes);
+    notifyListeners();
   }
 }

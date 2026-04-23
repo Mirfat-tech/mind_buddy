@@ -8,6 +8,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'app.dart';
+import 'core/database/app_database.dart';
+import 'core/database/database_providers.dart';
 import 'router.dart';
 import 'features/auth/device_session_service.dart';
 import 'features/settings/settings_provider.dart';
@@ -54,15 +56,24 @@ Future<void> main() async {
   await HomeWidget.setAppGroupId(HabitHomeWidgetService.iOSAppGroupId);
   await HomeWidget.registerInteractivityCallback(_widgetInteractivityCallback);
   await HabitHomeWidgetService.flushPendingWidgetToggles();
-  final settingsRepo = SettingsRepository(Supabase.instance.client);
-  final SettingsModel? cachedSettings = await settingsRepo.loadLocal();
+  final appDatabase = AppDatabase.shared();
+  final settingsRepo = SettingsRepository.live(
+    database: appDatabase,
+    supabase: Supabase.instance.client,
+  );
+  SettingsRepository.registerActive(settingsRepo);
+  final SettingsModel? cachedSettings = await settingsRepo.loadCached();
 
   // ✅ create router AFTER Supabase is initialized
   final appRouter = createRouter();
   //await dotenv.load();
   runApp(
     ProviderScope(
-      overrides: [initialSettingsProvider.overrideWithValue(cachedSettings)],
+      overrides: [
+        appDatabaseProvider.overrideWithValue(appDatabase),
+        settingsRepositoryProvider.overrideWithValue(settingsRepo),
+        initialSettingsProvider.overrideWithValue(cachedSettings),
+      ],
       child: _Bootstrap(router: appRouter),
     ),
   );

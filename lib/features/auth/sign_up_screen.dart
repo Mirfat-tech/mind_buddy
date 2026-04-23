@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:mind_buddy/theme/mindbuddy_background.dart';
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_experience_session.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/services/auth_redirect_targets.dart';
 import 'package:mind_buddy/services/oauth_sign_in_coordinator.dart';
@@ -174,6 +175,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
       if (!mounted) return;
       if (hasSession) {
+        final completedFeatureExperience =
+            OnboardingExperienceSession.consumeFeatureExperienceCompleted();
+        if (completedFeatureExperience) {
+          await CompletionGateRepository.markOnboardingCompleted();
+        }
         await OnboardingController.setAuthStageCompleted(true);
         if (!mounted) return;
         context.go('/bootstrap');

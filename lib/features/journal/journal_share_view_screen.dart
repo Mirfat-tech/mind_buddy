@@ -76,8 +76,7 @@ class _JournalShareViewScreenState extends State<JournalShareViewScreen> {
         title: const Text('Shared Journal'),
         centerTitle: true,
         leading: MbGlowBackButton(
-          onPressed: () =>
-              context.canPop() ? context.pop() : context.go('/home'),
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
         ),
       ),
       body: FutureBuilder<Map<String, dynamic>?>(

@@ -1,5 +1,6 @@
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:mind_buddy/services/journal_encryption_service.dart';
@@ -18,6 +19,9 @@ class JournalRepository {
   static const String _sharesTable = 'journal_shares';
   bool? _supportsEncryptionSchemaCache;
   bool? _supportsSharedCopySchemaCache;
+
+  bool _isLocalPrivateJournalId(String journalId) =>
+      journalId.startsWith('journal-');
 
   Future<List<Map<String, dynamic>>> fetchOwnedJournals() async {
     await _encryption.handleAuthScopeChanged();
@@ -147,6 +151,12 @@ class JournalRepository {
   }
 
   Future<Map<String, dynamic>?> fetchJournalForEditor(String journalId) async {
+    if (_isLocalPrivateJournalId(journalId)) {
+      debugPrint(
+        'JOURNAL_REMOTE_CALL_BLOCKED reason=private_flow method=fetchJournalForEditor id=$journalId',
+      );
+      return null;
+    }
     await _encryption.handleAuthScopeChanged();
     _log('entry_open_attempt', {
       'context': 'editor_fetch',

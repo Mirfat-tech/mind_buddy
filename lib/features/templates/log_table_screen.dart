@@ -13,9 +13,32 @@ import 'package:mind_buddy/common/month_navigator.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/common/input_sanitizer.dart';
 import 'package:mind_buddy/common/money_format.dart';
+import 'package:mind_buddy/features/bills/bills_repository.dart';
+import 'package:mind_buddy/features/books/books_repository.dart';
+import 'package:mind_buddy/features/cycle/cycle_repository.dart';
+import 'package:mind_buddy/features/expenses/expenses_repository.dart';
+import 'package:mind_buddy/features/fast/fast_repository.dart';
+import 'package:mind_buddy/features/income/income_repository.dart';
+import 'package:mind_buddy/features/meditation/meditation_repository.dart';
+import 'package:mind_buddy/features/movies/movies_repository.dart';
 import 'package:mind_buddy/features/mood/mood_catalog.dart';
+import 'package:mind_buddy/features/mood/mood_repository.dart';
+import 'package:mind_buddy/features/places/places_repository.dart';
+import 'package:mind_buddy/features/restaurants/restaurants_repository.dart';
+import 'package:mind_buddy/features/skin_care/skin_care_repository.dart';
+import 'package:mind_buddy/features/social/social_repository.dart';
+import 'package:mind_buddy/features/study/study_repository.dart';
+import 'package:mind_buddy/features/tasks/tasks_repository.dart';
+import 'package:mind_buddy/features/tv_logs/tv_logs_repository.dart';
+import 'package:mind_buddy/features/wishlist/wishlist_repository.dart';
+import 'package:mind_buddy/features/workout/workout_repository.dart';
+import 'package:mind_buddy/features/sleep/sleep_repository.dart';
+import 'package:mind_buddy/features/water/water_repository.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
-import 'package:mind_buddy/features/templates/template_preview_store.dart';
+import 'package:mind_buddy/features/templates/built_in_log_templates.dart';
+import 'package:mind_buddy/features/templates/template_reminder_support.dart';
+import 'package:mind_buddy/features/templates/data/repository/template_logs_repository.dart';
+import 'package:mind_buddy/features/templates/data/template_local_first_support.dart';
 
 final logTableMonthProvider = StateProvider.family<DateTime, String>((
   ref,
@@ -74,6 +97,53 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
   final GlobalKey _logTableContainerKey = GlobalKey();
   final GlobalKey _dateCellKey = GlobalKey();
   final GlobalKey _logRowItemKey = GlobalKey();
+  String? _reminderShortcutSpaceId;
+
+  bool get _usesLocalFirstTemplate =>
+      isLocalFirstTemplateKey(widget.templateKey) ||
+      _usesCustomTemplateLocalFirst;
+  bool get _usesCustomTemplateLocalFirst =>
+      widget.templateId.trim().startsWith('custom:');
+  bool get _usesMoodRepository =>
+      widget.templateKey.trim().toLowerCase() == 'mood';
+  bool get _usesCycleRepository =>
+      widget.templateKey.trim().toLowerCase() == 'cycle';
+  bool get _usesExpensesRepository =>
+      widget.templateKey.trim().toLowerCase() == 'expenses';
+  bool get _usesFastRepository =>
+      widget.templateKey.trim().toLowerCase() == 'fast';
+  bool get _usesIncomeRepository =>
+      widget.templateKey.trim().toLowerCase() == 'income';
+  bool get _usesMeditationRepository =>
+      widget.templateKey.trim().toLowerCase() == 'meditation';
+  bool get _usesMoviesRepository =>
+      widget.templateKey.trim().toLowerCase() == 'movies';
+  bool get _usesPlacesRepository =>
+      widget.templateKey.trim().toLowerCase() == 'places';
+  bool get _usesRestaurantsRepository =>
+      widget.templateKey.trim().toLowerCase() == 'restaurants';
+  bool get _usesSkinCareRepository =>
+      widget.templateKey.trim().toLowerCase() == 'skin_care';
+  bool get _usesSocialRepository =>
+      widget.templateKey.trim().toLowerCase() == 'social';
+  bool get _usesStudyRepository =>
+      widget.templateKey.trim().toLowerCase() == 'study';
+  bool get _usesTasksRepository =>
+      widget.templateKey.trim().toLowerCase() == 'tasks';
+  bool get _usesTvLogsRepository =>
+      widget.templateKey.trim().toLowerCase() == 'tv_log';
+  bool get _usesWishlistRepository =>
+      widget.templateKey.trim().toLowerCase() == 'wishlist';
+  bool get _usesWorkoutRepository =>
+      widget.templateKey.trim().toLowerCase() == 'workout';
+  bool get _usesBillsRepository =>
+      widget.templateKey.trim().toLowerCase() == 'bills';
+  bool get _usesBooksRepository =>
+      widget.templateKey.trim().toLowerCase() == 'books';
+  bool get _usesSleepRepository =>
+      widget.templateKey.trim().toLowerCase() == 'sleep';
+  bool get _usesWaterRepository =>
+      widget.templateKey.trim().toLowerCase() == 'water';
 
   Map<String, dynamic> _sanitizePayloadForTemplate(Map<String, dynamic> input) {
     final data = Map<String, dynamic>.from(input);
@@ -127,6 +197,10 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
         return 'water_logs';
       case 'sleep':
         return 'sleep_logs';
+      case 'medication':
+        return 'medication_logs';
+      case 'meals':
+        return 'meals_logs';
       case 'cycle':
         return 'menstrual_logs';
       case 'books':
@@ -177,8 +251,10 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
 
   String _dayKey(DateTime date) => toYyyyMmDd(date);
 
-  String _previewLegacyStorageKey(String userId) {
-    return 'template_preview_entries:$userId:${widget.templateId}';
+  void _logTemplateLoadLocal({required int count}) {
+    debugPrint('TEMPLATE_LOG_LOAD_SOURCE=drift');
+    debugPrint('TEMPLATE_LOG_LOAD_LOCAL count=$count');
+    debugPrint('TEMPLATE_LOG_EMPTY_BUG_CHECK count=$count');
   }
 
   Future<Map<String, dynamic>?> _findExistingDailyLog({
@@ -204,6 +280,7 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
   void initState() {
     super.initState();
     _load();
+    _resolveReminderShortcut();
     _searchController.addListener(() {
       if (mounted) {
         setState(() => _searchQuery = _searchController.text.toLowerCase());
@@ -216,6 +293,66 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     GuideManager.dismissActiveGuideForPage('logTable');
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _resolveReminderShortcut() async {
+    if (_usesMoodRepository ||
+        _usesCycleRepository ||
+        _usesExpensesRepository ||
+        _usesFastRepository ||
+        _usesIncomeRepository ||
+        _usesMeditationRepository ||
+        _usesMoviesRepository ||
+        _usesPlacesRepository ||
+        _usesRestaurantsRepository ||
+        _usesSkinCareRepository ||
+        _usesSocialRepository ||
+        _usesStudyRepository ||
+        _usesTasksRepository ||
+        _usesTvLogsRepository ||
+        _usesWishlistRepository ||
+        _usesCustomTemplateLocalFirst ||
+        _usesWorkoutRepository ||
+        _usesBillsRepository ||
+        _usesBooksRepository ||
+        _usesSleepRepository ||
+        _usesWaterRepository) {
+      return;
+    }
+
+    final builtInTitle = builtInTemplateReminderTitle(widget.templateKey);
+    if (builtInTitle != null) {
+      if (!mounted) return;
+      setState(() {
+        _reminderShortcutSpaceId = templateReminderSpaceId(
+          templateKey: widget.templateKey,
+          isCustom: false,
+        );
+      });
+      return;
+    }
+
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final row = await supabase
+          .from('log_templates_v2')
+          .select('id, user_id')
+          .eq('id', widget.templateId)
+          .maybeSingle();
+      if (row == null) return;
+      final ownerId = (row['user_id'] ?? '').toString();
+      if (ownerId != user.id) return;
+      if (!mounted) return;
+      setState(() {
+        _reminderShortcutSpaceId = templateReminderSpaceId(
+          templateKey: widget.templateKey,
+          templateId: widget.templateId,
+          isCustom: true,
+        );
+      });
+    } catch (_) {}
   }
 
   Future<void> _showGuideIfNeeded({bool force = false}) async {
@@ -267,110 +404,472 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
     setState(() => loading = true);
     final info = await SubscriptionLimits.fetchForCurrentUser();
     _isPending = info.isPending;
+    await _loadLocalFirst();
+  }
 
-    // 1) Always load fields first
-    try {
-      final f = await supabase
-          .from('log_template_fields_v2')
-          .select()
-          .eq('template_id', widget.templateId)
-          .eq('is_hidden', false)
-          .order('sort_order');
-
-      if (mounted) {
-        setState(() => fields = List<Map<String, dynamic>>.from(f));
-      }
-    } catch (err) {
-      debugPrint("Field load error: $err");
+  Future<void> _loadLocalFirst() async {
+    final user = supabase.auth.currentUser;
+    final repository = ref.read(templateLogsRepositoryProvider);
+    final cycleRepository = ref.read(cycleRepositoryProvider);
+    final expensesRepository = ref.read(expensesRepositoryProvider);
+    final fastRepository = ref.read(fastRepositoryProvider);
+    final incomeRepository = ref.read(incomeRepositoryProvider);
+    final meditationRepository = ref.read(meditationRepositoryProvider);
+    final moviesRepository = ref.read(moviesRepositoryProvider);
+    final placesRepository = ref.read(placesRepositoryProvider);
+    final restaurantsRepository = ref.read(restaurantsRepositoryProvider);
+    final skinCareRepository = ref.read(skinCareRepositoryProvider);
+    final socialRepository = ref.read(socialRepositoryProvider);
+    final studyRepository = ref.read(studyRepositoryProvider);
+    final tasksRepository = ref.read(tasksRepositoryProvider);
+    final tvLogsRepository = ref.read(tvLogsRepositoryProvider);
+    final wishlistRepository = ref.read(wishlistRepositoryProvider);
+    final workoutRepository = ref.read(workoutRepositoryProvider);
+    final billsRepository = ref.read(billsRepositoryProvider);
+    final booksRepository = ref.read(booksRepositoryProvider);
+    final moodRepository = ref.read(moodRepositoryProvider);
+    final sleepRepository = ref.read(sleepRepositoryProvider);
+    final waterRepository = ref.read(waterRepositoryProvider);
+    debugPrint(
+      'TEMPLATE_LOG_SCREEN_LOAD_ENTRY templateKey=${widget.templateKey.trim().toLowerCase()} path=LogTableScreen._loadLocalFirst',
+    );
+    if (_usesMoodRepository) {
+      debugPrint(
+        'TEMPLATE_LOG_SCREEN_LOAD_ROUTE templateKey=mood path=feature_repository:moodRepository.loadEntries',
+      );
+      debugPrint(
+        'MOOD_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesCycleRepository) {
+      debugPrint(
+        'CYCLE_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesExpensesRepository) {
+      debugPrint(
+        'EXPENSES_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesFastRepository) {
+      debugPrint(
+        'FAST_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesIncomeRepository) {
+      debugPrint(
+        'INCOME_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesMeditationRepository) {
+      debugPrint(
+        'MEDITATION_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesMoviesRepository) {
+      debugPrint(
+        'MOVIES_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesPlacesRepository) {
+      debugPrint(
+        'PLACES_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesRestaurantsRepository) {
+      debugPrint(
+        'RESTAURANT_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesSkinCareRepository) {
+      debugPrint(
+        'SKINCARE_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesSocialRepository) {
+      debugPrint(
+        'SOCIAL_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesStudyRepository) {
+      debugPrint(
+        'STUDY_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesTasksRepository) {
+      debugPrint(
+        'TASKS_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesTvLogsRepository) {
+      debugPrint(
+        'TVLOGS_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesWishlistRepository) {
+      debugPrint(
+        'WISHLIST_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesWorkoutRepository) {
+      debugPrint(
+        'WORKOUT_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesBillsRepository) {
+      debugPrint(
+        'BILLS_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesBooksRepository) {
+      debugPrint(
+        'BOOKS_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesSleepRepository) {
+      debugPrint(
+        'SLEEP_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesWaterRepository) {
+      debugPrint(
+        'TEMPLATE_LOG_SCREEN_LOAD_ROUTE templateKey=water path=feature_repository:waterRepository.loadEntries',
+      );
+      debugPrint(
+        'WATER_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesCustomTemplateLocalFirst) {
+      debugPrint(
+        'CUSTOM_TEMPLATE_RELOAD_FROM_LOCAL_START screen_load userId=${user?.id ?? 'null'} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else {
+      debugPrint(
+        'TEMPLATE_LOG_SCREEN_LOAD_ROUTE templateKey=${widget.templateKey.trim().toLowerCase()} path=generic_repository:TemplateLogsRepository.loadEntries',
+      );
     }
 
-    // 2) Then try load entries (can fail without breaking the dialog)
-    if (_isPending) {
-      if (mounted) setState(() => entries = []);
-    } else {
-      try {
-        await _migratePreviewEntriesToSupabaseIfNeeded();
-        final currentTable = _getTableName();
-        final e = await supabase
-            .from(currentTable)
-            .select()
-            .eq('user_id', supabase.auth.currentUser!.id)
-            .order('day', ascending: _sortAscending);
-
+    try {
+      if (user != null) {
+        final localFields = _usesMoodRepository
+            ? await moodRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesCycleRepository
+            ? await cycleRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesExpensesRepository
+            ? await expensesRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesFastRepository
+            ? await fastRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesIncomeRepository
+            ? await incomeRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesMeditationRepository
+            ? await meditationRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesMoviesRepository
+            ? await moviesRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesPlacesRepository
+            ? await placesRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesRestaurantsRepository
+            ? await restaurantsRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesSkinCareRepository
+            ? await skinCareRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesSocialRepository
+            ? await socialRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesStudyRepository
+            ? await studyRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesTasksRepository
+            ? await tasksRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesTvLogsRepository
+            ? await tvLogsRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesWishlistRepository
+            ? await wishlistRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesWorkoutRepository
+            ? await workoutRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesBillsRepository
+            ? await billsRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesBooksRepository
+            ? await booksRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesSleepRepository
+            ? await sleepRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : _usesWaterRepository
+            ? await waterRepository.loadFields(
+                templateId: widget.templateId,
+                userId: user.id,
+              )
+            : await repository.loadTemplateFields(
+                templateId: widget.templateId,
+                templateKey: widget.templateKey,
+                userId: user.id,
+              );
         if (mounted) {
-          setState(() => entries = List<Map<String, dynamic>>.from(e));
-          if (currentTable == 'book_logs') {
-            for (final row in entries) {
-              debugPrint('BOOK_LOG ROW: $row');
-            }
-          }
+          setState(() => fields = List<Map<String, dynamic>>.from(localFields));
         }
-      } catch (err) {
-        debugPrint("Entries load error: $err");
-        // keep entries empty, but fields still exist ✅
       }
+    } catch (err) {
+      debugPrint('Local-first field load error: $err');
+    }
+
+    if (mounted && fields.isEmpty) {
+      final builtIn = builtInLogTemplateByKey(widget.templateKey);
+      if (builtIn != null) {
+        setState(
+          () => fields = builtIn.fields
+              .map((field) => Map<String, dynamic>.from(field))
+              .toList(),
+        );
+      }
+    }
+
+    if (_isPending || user == null) {
+      if (_usesMoodRepository) {
+        debugPrint(
+          'MOOD_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesCycleRepository) {
+        debugPrint(
+          'CYCLE_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesExpensesRepository) {
+        debugPrint(
+          'EXPENSES_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesFastRepository) {
+        debugPrint(
+          'FAST_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesIncomeRepository) {
+        debugPrint(
+          'INCOME_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesMeditationRepository) {
+        debugPrint(
+          'MEDITATION_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesMoviesRepository) {
+        debugPrint(
+          'MOVIES_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesPlacesRepository) {
+        debugPrint(
+          'PLACES_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesRestaurantsRepository) {
+        debugPrint(
+          'RESTAURANT_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesSkinCareRepository) {
+        debugPrint(
+          'SKINCARE_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesSocialRepository) {
+        debugPrint(
+          'SOCIAL_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesStudyRepository) {
+        debugPrint(
+          'STUDY_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesTasksRepository) {
+        debugPrint(
+          'TASKS_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesTvLogsRepository) {
+        debugPrint(
+          'TVLOGS_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesWishlistRepository) {
+        debugPrint(
+          'WISHLIST_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesWorkoutRepository) {
+        debugPrint(
+          'WORKOUT_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesBillsRepository) {
+        debugPrint(
+          'BILLS_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesBooksRepository) {
+        debugPrint(
+          'BOOKS_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesSleepRepository) {
+        debugPrint(
+          'SLEEP_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesWaterRepository) {
+        debugPrint(
+          'WATER_RELOAD_FROM_LOCAL_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      } else if (_usesCustomTemplateLocalFirst) {
+        debugPrint(
+          'CUSTOM_TEMPLATE_RELOAD_RESULT count=0 reason=${_isPending ? 'pending' : 'missing_user'}',
+        );
+      }
+      if (mounted) {
+        setState(() {
+          entries = [];
+          loading = false;
+        });
+        _logTemplateLoadLocal(count: 0);
+        _scheduleGuideAutoStart();
+      }
+      return;
+    }
+
+    try {
+      final localEntries = _usesMoodRepository
+          ? await moodRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesCycleRepository
+          ? await cycleRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesExpensesRepository
+          ? await expensesRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesFastRepository
+          ? await fastRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesIncomeRepository
+          ? await incomeRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesMeditationRepository
+          ? await meditationRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesMoviesRepository
+          ? await moviesRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesPlacesRepository
+          ? await placesRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesRestaurantsRepository
+          ? await restaurantsRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesSkinCareRepository
+          ? await skinCareRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesSocialRepository
+          ? await socialRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesStudyRepository
+          ? await studyRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesTasksRepository
+          ? await tasksRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesTvLogsRepository
+          ? await tvLogsRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesWishlistRepository
+          ? await wishlistRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesWorkoutRepository
+          ? await workoutRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesBillsRepository
+          ? await billsRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesBooksRepository
+          ? await booksRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesSleepRepository
+          ? await sleepRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : _usesWaterRepository
+          ? await waterRepository.loadEntries(
+              templateId: widget.templateId,
+              userId: user.id,
+            )
+          : await repository.loadEntries(
+              templateId: widget.templateId,
+              templateKey: widget.templateKey,
+              userId: user.id,
+            );
+      if (mounted) {
+        setState(() => entries = List<Map<String, dynamic>>.from(localEntries));
+        _logTemplateLoadLocal(count: localEntries.length);
+      }
+    } catch (err) {
+      debugPrint('Local-first entry load error: $err');
+      _logTemplateLoadLocal(count: 0);
     }
 
     if (mounted) {
       setState(() => loading = false);
       _scheduleGuideAutoStart();
-    }
-  }
-
-  Future<void> _migratePreviewEntriesToSupabaseIfNeeded() async {
-    final user = supabase.auth.currentUser;
-    if (user == null || _isPending) return;
-
-    final tableName = _getTableName();
-    final previewEntries = await TemplatePreviewStore.loadEntries(
-      userId: user.id,
-      tableName: tableName,
-      legacyStorageKeys: <String>[_previewLegacyStorageKey(user.id)],
-    );
-    if (previewEntries.isEmpty) return;
-
-    try {
-      for (final previewEntry in previewEntries) {
-        final payload = _sanitizePayloadForTemplate(<String, dynamic>{
-          'user_id': user.id,
-          ...previewEntry,
-        });
-        payload.remove('id');
-        payload.remove('_preview_table_name');
-        payload.remove('_preview_saved_at');
-        payload.remove(TemplatePreviewStore.createdAtKey);
-        payload.remove(TemplatePreviewStore.expiresAtKey);
-        payload.remove(TemplatePreviewStore.isPreviewKey);
-
-        final dayKey = (payload['day'] ?? '').toString();
-        if (dayKey.isEmpty) continue;
-
-        if (_enforceUniqueDailyLog(tableName)) {
-          final existing = await _findExistingDailyLog(
-            tableName: tableName,
-            userId: user.id,
-            dayKey: dayKey,
-          );
-          if (existing != null && existing['id'] != null) {
-            await supabase
-                .from(tableName)
-                .update(payload)
-                .eq('id', existing['id']);
-            continue;
-          }
-        }
-
-        await supabase.from(tableName).insert(payload);
-      }
-
-      await TemplatePreviewStore.saveEntries(
-        userId: user.id,
-        tableName: tableName,
-        entries: const <Map<String, dynamic>>[],
-        legacyStorageKeys: <String>[_previewLegacyStorageKey(user.id)],
-      );
-    } catch (error) {
-      debugPrint('Preview migration skipped for $tableName: $error');
     }
   }
 
@@ -432,6 +931,700 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
           context,
           onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
         );
+      }
+      return;
+    }
+
+    if (_usesLocalFirstTemplate) {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+      final repository = ref.read(templateLogsRepositoryProvider);
+      final cycleRepository = ref.read(cycleRepositoryProvider);
+      final expensesRepository = ref.read(expensesRepositoryProvider);
+      final fastRepository = ref.read(fastRepositoryProvider);
+      final incomeRepository = ref.read(incomeRepositoryProvider);
+      final meditationRepository = ref.read(meditationRepositoryProvider);
+      final moviesRepository = ref.read(moviesRepositoryProvider);
+      final placesRepository = ref.read(placesRepositoryProvider);
+      final restaurantsRepository = ref.read(restaurantsRepositoryProvider);
+      final skinCareRepository = ref.read(skinCareRepositoryProvider);
+      final socialRepository = ref.read(socialRepositoryProvider);
+      final studyRepository = ref.read(studyRepositoryProvider);
+      final tasksRepository = ref.read(tasksRepositoryProvider);
+      final tvLogsRepository = ref.read(tvLogsRepositoryProvider);
+      final wishlistRepository = ref.read(wishlistRepositoryProvider);
+      final workoutRepository = ref.read(workoutRepositoryProvider);
+      final billsRepository = ref.read(billsRepositoryProvider);
+      final booksRepository = ref.read(booksRepositoryProvider);
+      final moodRepository = ref.read(moodRepositoryProvider);
+      final sleepRepository = ref.read(sleepRepositoryProvider);
+      final waterRepository = ref.read(waterRepositoryProvider);
+      if (_usesMoodRepository) {
+        debugPrint(
+          'MOOD_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesCycleRepository) {
+        debugPrint(
+          'CYCLE_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesExpensesRepository) {
+        debugPrint(
+          'EXPENSES_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesFastRepository) {
+        debugPrint(
+          'FAST_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesIncomeRepository) {
+        debugPrint(
+          'INCOME_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesMeditationRepository) {
+        debugPrint(
+          'MEDITATION_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesMoviesRepository) {
+        debugPrint(
+          'MOVIES_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesPlacesRepository) {
+        debugPrint(
+          'PLACES_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesRestaurantsRepository) {
+        debugPrint(
+          'RESTAURANT_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesSkinCareRepository) {
+        debugPrint(
+          'SKINCARE_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesSocialRepository) {
+        debugPrint(
+          'SOCIAL_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesStudyRepository) {
+        debugPrint(
+          'STUDY_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesTasksRepository) {
+        debugPrint(
+          'TASKS_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesTvLogsRepository) {
+        debugPrint(
+          'TVLOGS_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesWishlistRepository) {
+        debugPrint(
+          'WISHLIST_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesWorkoutRepository) {
+        debugPrint(
+          'WORKOUT_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesBillsRepository) {
+        debugPrint(
+          'BILLS_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesBooksRepository) {
+        debugPrint(
+          'BOOKS_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesSleepRepository) {
+        debugPrint(
+          'SLEEP_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesWaterRepository) {
+        debugPrint(
+          'WATER_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id}',
+        );
+      } else if (_usesCustomTemplateLocalFirst) {
+        debugPrint(
+          'CUSTOM_TEMPLATE_SAVE_UI_TRIGGERED action=add day=${_dayKey(result.day)} templateId=${widget.templateId} templateKey=${widget.templateKey} userId=${user.id}',
+        );
+      }
+
+      try {
+        final tableName = _getTableName();
+        final dayKey = _dayKey(result.day);
+        final payload = _sanitizePayloadForTemplate(<String, dynamic>{
+          'day': dayKey,
+          ...result.data,
+        });
+
+        if (_enforceUniqueDailyLog(tableName)) {
+          final existing = _usesMoodRepository
+              ? await moodRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesCycleRepository
+              ? await cycleRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesExpensesRepository
+              ? await expensesRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesFastRepository
+              ? await fastRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesIncomeRepository
+              ? await incomeRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesMeditationRepository
+              ? await meditationRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesMoviesRepository
+              ? await moviesRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesPlacesRepository
+              ? await placesRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesRestaurantsRepository
+              ? await restaurantsRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesSkinCareRepository
+              ? await skinCareRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesSocialRepository
+              ? await socialRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesStudyRepository
+              ? await studyRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesTasksRepository
+              ? await tasksRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesTvLogsRepository
+              ? await tvLogsRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesWishlistRepository
+              ? await wishlistRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesWorkoutRepository
+              ? await workoutRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesSleepRepository
+              ? await sleepRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : _usesWaterRepository
+              ? await waterRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: dayKey,
+                )
+              : await repository.findExistingDailyLog(
+                  templateKey: widget.templateKey,
+                  userId: user.id,
+                  day: dayKey,
+                );
+          if (existing != null) {
+            if (_usesMoodRepository) {
+              await moodRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesCycleRepository) {
+              await cycleRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesExpensesRepository) {
+              await expensesRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesFastRepository) {
+              await fastRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesIncomeRepository) {
+              await incomeRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesMeditationRepository) {
+              await meditationRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesMoviesRepository) {
+              await moviesRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesPlacesRepository) {
+              await placesRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesRestaurantsRepository) {
+              await restaurantsRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesSkinCareRepository) {
+              await skinCareRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesSocialRepository) {
+              await socialRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesStudyRepository) {
+              await studyRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesTasksRepository) {
+              await tasksRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesTvLogsRepository) {
+              await tvLogsRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesWishlistRepository) {
+              await wishlistRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesWorkoutRepository) {
+              await workoutRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesSleepRepository) {
+              await sleepRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else if (_usesWaterRepository) {
+              await waterRepository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            } else {
+              await repository.updateEntry(
+                scopeId: user.id,
+                templateId: widget.templateId,
+                templateKey: widget.templateKey,
+                userId: user.id,
+                existingEntry: existing,
+                day: dayKey,
+                data: payload..remove('day'),
+              );
+            }
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'You’ve already logged today — updated your existing entry instead.',
+                  ),
+                ),
+              );
+            }
+            await _reloadLocalFirstEntries();
+            return;
+          }
+        }
+
+        payload.remove('day');
+        if (_usesMoodRepository) {
+          await moodRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesCycleRepository) {
+          await cycleRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesExpensesRepository) {
+          await expensesRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesFastRepository) {
+          await fastRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesIncomeRepository) {
+          await incomeRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesMeditationRepository) {
+          await meditationRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesMoviesRepository) {
+          await moviesRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesPlacesRepository) {
+          await placesRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesRestaurantsRepository) {
+          await restaurantsRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesSkinCareRepository) {
+          await skinCareRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesSocialRepository) {
+          await socialRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesStudyRepository) {
+          await studyRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesTasksRepository) {
+          await tasksRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesTvLogsRepository) {
+          await tvLogsRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesWishlistRepository) {
+          await wishlistRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesWorkoutRepository) {
+          await workoutRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesBillsRepository) {
+          await billsRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesBooksRepository) {
+          await booksRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesSleepRepository) {
+          await sleepRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else if (_usesWaterRepository) {
+          await waterRepository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        } else {
+          await repository.addEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            templateKey: widget.templateKey,
+            userId: user.id,
+            day: dayKey,
+            data: payload,
+          );
+        }
+        await _reloadLocalFirstEntries();
+        if ((_usesMoodRepository ||
+                _usesCycleRepository ||
+                _usesExpensesRepository ||
+                _usesFastRepository ||
+                _usesIncomeRepository ||
+                _usesMeditationRepository ||
+                _usesMoviesRepository ||
+                _usesPlacesRepository ||
+                _usesRestaurantsRepository ||
+                _usesSkinCareRepository ||
+                _usesSocialRepository ||
+                _usesStudyRepository ||
+                _usesTasksRepository ||
+                _usesTvLogsRepository ||
+                _usesWishlistRepository ||
+                _usesWorkoutRepository ||
+                _usesBillsRepository ||
+                _usesBooksRepository ||
+                _usesSleepRepository ||
+                _usesWaterRepository) &&
+            mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _usesMoodRepository
+                    ? 'Mood saved locally'
+                    : _usesCycleRepository
+                    ? 'Cycle saved locally'
+                    : _usesExpensesRepository
+                    ? 'Expenses saved locally'
+                    : _usesFastRepository
+                    ? 'Fast saved locally'
+                    : _usesIncomeRepository
+                    ? 'Income saved locally'
+                    : _usesMeditationRepository
+                    ? 'Meditation saved locally'
+                    : _usesMoviesRepository
+                    ? 'Movies saved locally'
+                    : _usesPlacesRepository
+                    ? 'Places saved locally'
+                    : _usesRestaurantsRepository
+                    ? 'Restaurant saved locally'
+                    : _usesSkinCareRepository
+                    ? 'Skin Care saved locally'
+                    : _usesSocialRepository
+                    ? 'Social saved locally'
+                    : _usesStudyRepository
+                    ? 'Study saved locally'
+                    : _usesTasksRepository
+                    ? 'Tasks saved locally'
+                    : _usesTvLogsRepository
+                    ? 'TV Logs saved locally'
+                    : _usesWishlistRepository
+                    ? 'Wishlist saved locally'
+                    : _usesWorkoutRepository
+                    ? 'Workout saved locally'
+                    : _usesBillsRepository
+                    ? 'Bills saved locally'
+                    : _usesBooksRepository
+                    ? 'Books saved locally'
+                    : _usesSleepRepository
+                    ? 'Sleep saved locally'
+                    : 'Water saved locally',
+              ),
+            ),
+          );
+        }
+      } catch (e) {
+        if (_usesMoodRepository) {
+          debugPrint('MOOD_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesCycleRepository) {
+          debugPrint('CYCLE_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesExpensesRepository) {
+          debugPrint('EXPENSES_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesFastRepository) {
+          debugPrint('FAST_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesIncomeRepository) {
+          debugPrint('INCOME_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesMeditationRepository) {
+          debugPrint('MEDITATION_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesMoviesRepository) {
+          debugPrint('MOVIES_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesPlacesRepository) {
+          debugPrint('PLACES_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesRestaurantsRepository) {
+          debugPrint('RESTAURANT_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesSkinCareRepository) {
+          debugPrint('SKINCARE_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesSocialRepository) {
+          debugPrint('SOCIAL_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesStudyRepository) {
+          debugPrint('STUDY_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesTasksRepository) {
+          debugPrint('TASKS_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesTvLogsRepository) {
+          debugPrint('TVLOGS_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesWishlistRepository) {
+          debugPrint('WISHLIST_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesWorkoutRepository) {
+          debugPrint('WORKOUT_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesBillsRepository) {
+          debugPrint('BILLS_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesBooksRepository) {
+          debugPrint('BOOKS_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesSleepRepository) {
+          debugPrint('SLEEP_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesWaterRepository) {
+          debugPrint('WATER_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        } else if (_usesCustomTemplateLocalFirst) {
+          debugPrint('CUSTOM_TEMPLATE_SAVE_LOCAL_ERROR: ui_add_failed $e');
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Save error: $e')));
+        }
       }
       return;
     }
@@ -505,7 +1698,6 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
         title: 'Edit entry',
         initialDay:
             DateTime.tryParse(entry['day']?.toString() ?? '') ?? DateTime.now(),
-
         initialData: Map<String, dynamic>.from(entry),
         templateKey: widget.templateKey,
       ),
@@ -532,6 +1724,563 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
           context,
           onUpgrade: () => Navigator.of(context).pushNamed('/subscription'),
         );
+      }
+      return;
+    }
+
+    if (_usesLocalFirstTemplate) {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+      final repository = ref.read(templateLogsRepositoryProvider);
+      final cycleRepository = ref.read(cycleRepositoryProvider);
+      final expensesRepository = ref.read(expensesRepositoryProvider);
+      final fastRepository = ref.read(fastRepositoryProvider);
+      final incomeRepository = ref.read(incomeRepositoryProvider);
+      final meditationRepository = ref.read(meditationRepositoryProvider);
+      final moviesRepository = ref.read(moviesRepositoryProvider);
+      final placesRepository = ref.read(placesRepositoryProvider);
+      final restaurantsRepository = ref.read(restaurantsRepositoryProvider);
+      final skinCareRepository = ref.read(skinCareRepositoryProvider);
+      final socialRepository = ref.read(socialRepositoryProvider);
+      final studyRepository = ref.read(studyRepositoryProvider);
+      final tasksRepository = ref.read(tasksRepositoryProvider);
+      final tvLogsRepository = ref.read(tvLogsRepositoryProvider);
+      final wishlistRepository = ref.read(wishlistRepositoryProvider);
+      final workoutRepository = ref.read(workoutRepositoryProvider);
+      final billsRepository = ref.read(billsRepositoryProvider);
+      final booksRepository = ref.read(booksRepositoryProvider);
+      final moodRepository = ref.read(moodRepositoryProvider);
+      final sleepRepository = ref.read(sleepRepositoryProvider);
+      final waterRepository = ref.read(waterRepositoryProvider);
+      if (_usesMoodRepository) {
+        debugPrint(
+          'MOOD_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesCycleRepository) {
+        debugPrint(
+          'CYCLE_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesExpensesRepository) {
+        debugPrint(
+          'EXPENSES_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesFastRepository) {
+        debugPrint(
+          'FAST_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesIncomeRepository) {
+        debugPrint(
+          'INCOME_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesMeditationRepository) {
+        debugPrint(
+          'MEDITATION_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesMoviesRepository) {
+        debugPrint(
+          'MOVIES_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesPlacesRepository) {
+        debugPrint(
+          'PLACES_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesRestaurantsRepository) {
+        debugPrint(
+          'RESTAURANT_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesSkinCareRepository) {
+        debugPrint(
+          'SKINCARE_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesSocialRepository) {
+        debugPrint(
+          'SOCIAL_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesStudyRepository) {
+        debugPrint(
+          'STUDY_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesTasksRepository) {
+        debugPrint(
+          'TASKS_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesTvLogsRepository) {
+        debugPrint(
+          'TVLOGS_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesWishlistRepository) {
+        debugPrint(
+          'WISHLIST_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesWorkoutRepository) {
+        debugPrint(
+          'WORKOUT_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesBillsRepository) {
+        debugPrint(
+          'BILLS_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesBooksRepository) {
+        debugPrint(
+          'BOOKS_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesSleepRepository) {
+        debugPrint(
+          'SLEEP_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesWaterRepository) {
+        debugPrint(
+          'WATER_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} userId=${user.id} entryId=${entry['id']}',
+        );
+      } else if (_usesCustomTemplateLocalFirst) {
+        debugPrint(
+          'CUSTOM_TEMPLATE_SAVE_UI_TRIGGERED action=edit day=${_dayKey(result.day)} templateId=${widget.templateId} templateKey=${widget.templateKey} userId=${user.id} entryId=${entry['id']}',
+        );
+      }
+
+      try {
+        final tableName = _getTableName();
+        final newDayKey = _dayKey(result.day);
+        if (_enforceUniqueDailyLog(tableName)) {
+          final conflict = _usesMoodRepository
+              ? await moodRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesCycleRepository
+              ? await cycleRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesExpensesRepository
+              ? await expensesRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesFastRepository
+              ? await fastRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesIncomeRepository
+              ? await incomeRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesMeditationRepository
+              ? await meditationRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesMoviesRepository
+              ? await moviesRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesPlacesRepository
+              ? await placesRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesRestaurantsRepository
+              ? await restaurantsRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesSkinCareRepository
+              ? await skinCareRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesSocialRepository
+              ? await socialRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesStudyRepository
+              ? await studyRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesTasksRepository
+              ? await tasksRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesTvLogsRepository
+              ? await tvLogsRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesWishlistRepository
+              ? await wishlistRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesWorkoutRepository
+              ? await workoutRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesSleepRepository
+              ? await sleepRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : _usesWaterRepository
+              ? await waterRepository.findExistingDailyLog(
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                )
+              : await repository.findExistingDailyLog(
+                  templateKey: widget.templateKey,
+                  userId: user.id,
+                  day: newDayKey,
+                  excludeId: entry['id']?.toString(),
+                );
+          if (conflict != null) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'A log already exists for that day. Edit the existing entry instead.',
+                  ),
+                ),
+              );
+            }
+            return;
+          }
+        }
+
+        final payload = _sanitizePayloadForTemplate(<String, dynamic>{
+          ...result.data,
+        });
+        if (_usesMoodRepository) {
+          await moodRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesCycleRepository) {
+          await cycleRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesExpensesRepository) {
+          await expensesRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesFastRepository) {
+          await fastRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesIncomeRepository) {
+          await incomeRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesMeditationRepository) {
+          await meditationRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesMoviesRepository) {
+          await moviesRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesPlacesRepository) {
+          await placesRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesRestaurantsRepository) {
+          await restaurantsRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesSkinCareRepository) {
+          await skinCareRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesSocialRepository) {
+          await socialRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesStudyRepository) {
+          await studyRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesTasksRepository) {
+          await tasksRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesTvLogsRepository) {
+          await tvLogsRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesWishlistRepository) {
+          await wishlistRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesWorkoutRepository) {
+          await workoutRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesBillsRepository) {
+          await billsRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesBooksRepository) {
+          await booksRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesSleepRepository) {
+          await sleepRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else if (_usesWaterRepository) {
+          await waterRepository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        } else {
+          await repository.updateEntry(
+            scopeId: user.id,
+            templateId: widget.templateId,
+            templateKey: widget.templateKey,
+            userId: user.id,
+            existingEntry: entry,
+            day: newDayKey,
+            data: payload,
+          );
+        }
+        await _reloadLocalFirstEntries();
+        if ((_usesMoodRepository ||
+                _usesCycleRepository ||
+                _usesExpensesRepository ||
+                _usesFastRepository ||
+                _usesIncomeRepository ||
+                _usesMeditationRepository ||
+                _usesMoviesRepository ||
+                _usesPlacesRepository ||
+                _usesRestaurantsRepository ||
+                _usesSkinCareRepository ||
+                _usesSocialRepository ||
+                _usesStudyRepository ||
+                _usesTasksRepository ||
+                _usesTvLogsRepository ||
+                _usesWishlistRepository ||
+                _usesWorkoutRepository ||
+                _usesBillsRepository ||
+                _usesBooksRepository ||
+                _usesSleepRepository ||
+                _usesWaterRepository) &&
+            mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _usesMoodRepository
+                    ? 'Mood saved locally'
+                    : _usesCycleRepository
+                    ? 'Cycle saved locally'
+                    : _usesExpensesRepository
+                    ? 'Expenses saved locally'
+                    : _usesFastRepository
+                    ? 'Fast saved locally'
+                    : _usesIncomeRepository
+                    ? 'Income saved locally'
+                    : _usesMeditationRepository
+                    ? 'Meditation saved locally'
+                    : _usesMoviesRepository
+                    ? 'Movies saved locally'
+                    : _usesPlacesRepository
+                    ? 'Places saved locally'
+                    : _usesRestaurantsRepository
+                    ? 'Restaurant saved locally'
+                    : _usesSkinCareRepository
+                    ? 'Skin Care saved locally'
+                    : _usesSocialRepository
+                    ? 'Social saved locally'
+                    : _usesStudyRepository
+                    ? 'Study saved locally'
+                    : _usesTasksRepository
+                    ? 'Tasks saved locally'
+                    : _usesTvLogsRepository
+                    ? 'TV Logs saved locally'
+                    : _usesWishlistRepository
+                    ? 'Wishlist saved locally'
+                    : _usesWorkoutRepository
+                    ? 'Workout saved locally'
+                    : _usesBillsRepository
+                    ? 'Bills saved locally'
+                    : _usesBooksRepository
+                    ? 'Books saved locally'
+                    : _usesSleepRepository
+                    ? 'Sleep saved locally'
+                    : 'Water saved locally',
+              ),
+            ),
+          );
+        }
+      } catch (err) {
+        if (_usesMoodRepository) {
+          debugPrint('MOOD_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesCycleRepository) {
+          debugPrint('CYCLE_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesExpensesRepository) {
+          debugPrint('EXPENSES_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesFastRepository) {
+          debugPrint('FAST_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesIncomeRepository) {
+          debugPrint('INCOME_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesMeditationRepository) {
+          debugPrint('MEDITATION_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesMoviesRepository) {
+          debugPrint('MOVIES_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesPlacesRepository) {
+          debugPrint('PLACES_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesRestaurantsRepository) {
+          debugPrint('RESTAURANT_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesSkinCareRepository) {
+          debugPrint('SKINCARE_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesSocialRepository) {
+          debugPrint('SOCIAL_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesStudyRepository) {
+          debugPrint('STUDY_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesTasksRepository) {
+          debugPrint('TASKS_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesTvLogsRepository) {
+          debugPrint('TVLOGS_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesWishlistRepository) {
+          debugPrint('WISHLIST_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesWorkoutRepository) {
+          debugPrint('WORKOUT_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesBillsRepository) {
+          debugPrint('BILLS_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesBooksRepository) {
+          debugPrint('BOOKS_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesSleepRepository) {
+          debugPrint('SLEEP_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesWaterRepository) {
+          debugPrint('WATER_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        } else if (_usesCustomTemplateLocalFirst) {
+          debugPrint('CUSTOM_TEMPLATE_SAVE_LOCAL_ERROR: ui_edit_failed $err');
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Update error: $err')));
+        }
       }
       return;
     }
@@ -624,8 +2373,367 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
         }
         return;
       }
+      if (_usesLocalFirstTemplate) {
+        final user = supabase.auth.currentUser;
+        if (user == null) return;
+        if (_usesMoodRepository) {
+          await ref
+              .read(moodRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesCycleRepository) {
+          await ref
+              .read(cycleRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesExpensesRepository) {
+          await ref
+              .read(expensesRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesFastRepository) {
+          await ref
+              .read(fastRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesIncomeRepository) {
+          await ref
+              .read(incomeRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesMeditationRepository) {
+          await ref
+              .read(meditationRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesMoviesRepository) {
+          await ref
+              .read(moviesRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesPlacesRepository) {
+          await ref
+              .read(placesRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesRestaurantsRepository) {
+          await ref
+              .read(restaurantsRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesSkinCareRepository) {
+          await ref
+              .read(skinCareRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesSocialRepository) {
+          await ref
+              .read(socialRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesStudyRepository) {
+          await ref
+              .read(studyRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesTasksRepository) {
+          await ref
+              .read(tasksRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesTvLogsRepository) {
+          await ref
+              .read(tvLogsRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesWishlistRepository) {
+          await ref
+              .read(wishlistRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesWorkoutRepository) {
+          await ref
+              .read(workoutRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesBillsRepository) {
+          await ref
+              .read(billsRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesBooksRepository) {
+          await ref
+              .read(booksRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesSleepRepository) {
+          await ref
+              .read(sleepRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else if (_usesWaterRepository) {
+          await ref
+              .read(waterRepositoryProvider)
+              .deleteEntry(scopeId: user.id, userId: user.id, entry: entry);
+        } else {
+          await ref
+              .read(templateLogsRepositoryProvider)
+              .deleteEntry(
+                scopeId: user.id,
+                templateKey: widget.templateKey,
+                userId: user.id,
+                entry: entry,
+              );
+        }
+        await _reloadLocalFirstEntries();
+        return;
+      }
       await supabase.from(_getTableName()).delete().eq('id', entry['id']);
       _load();
+    }
+  }
+
+  Future<void> _reloadLocalFirstEntries() async {
+    final user = supabase.auth.currentUser;
+    if (user == null || !_usesLocalFirstTemplate) return;
+    if (_usesMoodRepository) {
+      debugPrint(
+        'MOOD_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesCycleRepository) {
+      debugPrint(
+        'CYCLE_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesExpensesRepository) {
+      debugPrint(
+        'EXPENSES_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesFastRepository) {
+      debugPrint(
+        'FAST_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesIncomeRepository) {
+      debugPrint(
+        'INCOME_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesMeditationRepository) {
+      debugPrint(
+        'MEDITATION_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesMoviesRepository) {
+      debugPrint(
+        'MOVIES_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesPlacesRepository) {
+      debugPrint(
+        'PLACES_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesRestaurantsRepository) {
+      debugPrint(
+        'RESTAURANT_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesSkinCareRepository) {
+      debugPrint(
+        'SKINCARE_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesSocialRepository) {
+      debugPrint(
+        'SOCIAL_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesStudyRepository) {
+      debugPrint(
+        'STUDY_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesTasksRepository) {
+      debugPrint(
+        'TASKS_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesTvLogsRepository) {
+      debugPrint(
+        'TVLOGS_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesWishlistRepository) {
+      debugPrint(
+        'WISHLIST_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesWorkoutRepository) {
+      debugPrint(
+        'WORKOUT_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesBillsRepository) {
+      debugPrint(
+        'BILLS_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesBooksRepository) {
+      debugPrint(
+        'BOOKS_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesSleepRepository) {
+      debugPrint(
+        'SLEEP_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesWaterRepository) {
+      debugPrint(
+        'WATER_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    } else if (_usesCustomTemplateLocalFirst) {
+      debugPrint(
+        'CUSTOM_TEMPLATE_RELOAD_FROM_LOCAL_START screen_reload userId=${user.id} templateKey=${widget.templateKey} templateId=${widget.templateId}',
+      );
+    }
+    final localEntries = _usesMoodRepository
+        ? await ref
+              .read(moodRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesCycleRepository
+        ? await ref
+              .read(cycleRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesExpensesRepository
+        ? await ref
+              .read(expensesRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesFastRepository
+        ? await ref
+              .read(fastRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesIncomeRepository
+        ? await ref
+              .read(incomeRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesMeditationRepository
+        ? await ref
+              .read(meditationRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesMoviesRepository
+        ? await ref
+              .read(moviesRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesPlacesRepository
+        ? await ref
+              .read(placesRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesRestaurantsRepository
+        ? await ref
+              .read(restaurantsRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesSkinCareRepository
+        ? await ref
+              .read(skinCareRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesSocialRepository
+        ? await ref
+              .read(socialRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesStudyRepository
+        ? await ref
+              .read(studyRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesTasksRepository
+        ? await ref
+              .read(tasksRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesTvLogsRepository
+        ? await ref
+              .read(tvLogsRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesWishlistRepository
+        ? await ref
+              .read(wishlistRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesWorkoutRepository
+        ? await ref
+              .read(workoutRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesBillsRepository
+        ? await ref
+              .read(billsRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesBooksRepository
+        ? await ref
+              .read(booksRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesSleepRepository
+        ? await ref
+              .read(sleepRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : _usesWaterRepository
+        ? await ref
+              .read(waterRepositoryProvider)
+              .loadEntries(templateId: widget.templateId, userId: user.id)
+        : await ref
+              .read(templateLogsRepositoryProvider)
+              .loadEntries(
+                templateId: widget.templateId,
+                templateKey: widget.templateKey,
+                userId: user.id,
+              );
+    if (mounted) {
+      setState(() => entries = List<Map<String, dynamic>>.from(localEntries));
+    }
+    if (_usesMoodRepository) {
+      debugPrint(
+        'MOOD_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesCycleRepository) {
+      debugPrint(
+        'CYCLE_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesExpensesRepository) {
+      debugPrint(
+        'EXPENSES_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesFastRepository) {
+      debugPrint(
+        'FAST_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesIncomeRepository) {
+      debugPrint(
+        'INCOME_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesMeditationRepository) {
+      debugPrint(
+        'MEDITATION_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesMoviesRepository) {
+      debugPrint(
+        'MOVIES_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesPlacesRepository) {
+      debugPrint(
+        'PLACES_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesRestaurantsRepository) {
+      debugPrint(
+        'RESTAURANT_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesSkinCareRepository) {
+      debugPrint(
+        'SKINCARE_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesSocialRepository) {
+      debugPrint(
+        'SOCIAL_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesStudyRepository) {
+      debugPrint(
+        'STUDY_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesTasksRepository) {
+      debugPrint(
+        'TASKS_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesTvLogsRepository) {
+      debugPrint(
+        'TVLOGS_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesWishlistRepository) {
+      debugPrint(
+        'WISHLIST_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesWorkoutRepository) {
+      debugPrint(
+        'WORKOUT_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesBillsRepository) {
+      debugPrint(
+        'BILLS_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesBooksRepository) {
+      debugPrint(
+        'BOOKS_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesSleepRepository) {
+      debugPrint(
+        'SLEEP_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesWaterRepository) {
+      debugPrint(
+        'WATER_LIST_READ_FROM_LOCAL count=${localEntries.length} source=screen-reload',
+      );
+    } else if (_usesCustomTemplateLocalFirst) {
+      debugPrint('CUSTOM_TEMPLATE_RELOAD_RESULT count=${localEntries.length}');
     }
   }
 
@@ -797,9 +2905,22 @@ class _LogTableScreenState extends ConsumerState<LogTableScreen> {
         leading: MbGlowBackButton(
           onPressed: () => Navigator.of(context).canPop()
               ? Navigator.pop(context)
-              : context.go('/home'),
+              : context.go('/'),
         ),
         actions: [
+          if (_reminderShortcutSpaceId != null)
+            MbGlowIconButton(
+              icon: Icons.notifications_outlined,
+              onPressed: () => context.push(
+                Uri(
+                  path: '/settings/notifications',
+                  queryParameters: {
+                    'from': 'templates',
+                    'focus': _reminderShortcutSpaceId,
+                  },
+                ).toString(),
+              ),
+            ),
           MbGlowIconButton(
             icon: Icons.calendar_month,
             onPressed: () async {
@@ -1003,7 +3124,10 @@ class _StickyLogTable extends StatelessWidget {
     if (entry.containsKey('source')) {
       return 'income';
     }
-    if (entry.containsKey('currency') && entry.containsKey('is_paid')) {
+    if ((entry.containsKey('currency') && entry.containsKey('is_paid')) ||
+        (entry.containsKey('name') &&
+            entry.containsKey('currency') &&
+            entry.containsKey('amount'))) {
       return 'bills';
     }
     if (entry.containsKey('book_title') || entry.containsKey('author')) {
@@ -1022,6 +3146,12 @@ class _StickyLogTable extends StatelessWidget {
     if (entry.containsKey('duration_minutes') &&
         entry.containsKey('technique')) {
       return 'meditation';
+    }
+    if (entry.containsKey('medication_name') && entry.containsKey('dosage')) {
+      return 'medication';
+    }
+    if (entry.containsKey('meal_name') && entry.containsKey('meal_type')) {
+      return 'meals';
     }
     if (entry.containsKey('feeling') && entry.containsKey('intensity')) {
       return 'mood';
@@ -1073,8 +3203,11 @@ class _StickyLogTable extends StatelessWidget {
       final firstEntry = entries.first;
 
       // Bills: has currency + is_paid
-      if (firstEntry.containsKey('currency') &&
-          firstEntry.containsKey('is_paid')) {
+      if ((firstEntry.containsKey('currency') &&
+              firstEntry.containsKey('is_paid')) ||
+          (firstEntry.containsKey('name') &&
+              firstEntry.containsKey('currency') &&
+              firstEntry.containsKey('amount'))) {
         templateKey = 'bills';
       }
       // Books: has book_title or author
@@ -1109,6 +3242,12 @@ class _StickyLogTable extends StatelessWidget {
       else if (firstEntry.containsKey('duration_minutes') &&
           firstEntry.containsKey('technique')) {
         templateKey = 'meditation';
+      } else if (firstEntry.containsKey('medication_name') &&
+          firstEntry.containsKey('dosage')) {
+        templateKey = 'medication';
+      } else if (firstEntry.containsKey('meal_name') &&
+          firstEntry.containsKey('meal_type')) {
+        templateKey = 'meals';
       }
       // Mood: has feeling + intensity
       else if (firstEntry.containsKey('feeling') &&
@@ -1273,6 +3412,28 @@ class _StickyLogTable extends StatelessWidget {
         const DataColumn(label: Text('DURATION')),
         const DataColumn(label: Text('TECHNIQUE')),
         const DataColumn(label: Text('FOCUS RATING')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    if (templateKey == 'medication') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('MEDICATION')),
+        const DataColumn(label: Text('TIME')),
+        const DataColumn(label: Text('DOSAGE')),
+        const DataColumn(label: Text('STATUS')),
+        const DataColumn(label: Text('NOTES')),
+      ];
+    }
+
+    if (templateKey == 'meals') {
+      return [
+        const DataColumn(label: Text('DATE')),
+        const DataColumn(label: Text('MEAL')),
+        const DataColumn(label: Text('TIME')),
+        const DataColumn(label: Text('MEAL TYPE')),
+        const DataColumn(label: Text('CALORIES')),
         const DataColumn(label: Text('NOTES')),
       ];
     }
@@ -1618,6 +3779,40 @@ class _StickyLogTable extends StatelessWidget {
         DataCell(Text(durStr)),
         DataCell(Text(entry['technique']?.toString() ?? '-')),
         DataCell(Text(formatValue('rating', entry['focus_rating']))),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    if (template == 'medication') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['medication_name']?.toString() ?? '-')),
+        DataCell(Text(entry['time']?.toString() ?? '-')),
+        DataCell(Text(entry['dosage']?.toString() ?? '-')),
+        DataCell(Text(entry['status']?.toString() ?? '-')),
+        DataCell(Text(entry['notes']?.toString() ?? '-')),
+      ];
+    }
+
+    if (template == 'meals') {
+      return [
+        DataCell(
+          Text(
+            fmtEntryDate(entry),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          onTap: () => onEdit(entry),
+        ),
+        DataCell(Text(entry['meal_name']?.toString() ?? '-')),
+        DataCell(Text(entry['time']?.toString() ?? '-')),
+        DataCell(Text(entry['meal_type']?.toString() ?? '-')),
+        DataCell(Text(entry['calories']?.toString() ?? '-')),
         DataCell(Text(entry['notes']?.toString() ?? '-')),
       ];
     }
@@ -2074,50 +4269,79 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
         : Duration.zero;
 
     Duration temp = initial;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
 
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: colorScheme.surface,
+      barrierColor: Colors.black.withValues(alpha: 0.38),
       builder: (_) {
         final bottomInset = MediaQuery.of(context).viewInsets.bottom;
         final maxHeight = MediaQuery.of(context).size.height * 0.52;
         return SafeArea(
-          child: Padding(
-            padding: EdgeInsets.only(bottom: bottomInset),
-            child: SizedBox(
-              height: maxHeight.clamp(240.0, 360.0),
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(24),
+              ),
+            ),
+            child: Padding(
+              padding: EdgeInsets.only(bottom: bottomInset),
+              child: SizedBox(
+                height: maxHeight.clamp(240.0, 360.0),
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Cancel'),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              setState(() => values[key] = temp);
+                              Navigator.pop(context);
+                            },
+                            child: const Text('Done'),
+                          ),
+                        ],
+                      ),
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('Cancel'),
+                    Expanded(
+                      child: CupertinoTheme(
+                        data: CupertinoThemeData(
+                          brightness: theme.brightness,
+                          scaffoldBackgroundColor: colorScheme.surface,
+                          barBackgroundColor: colorScheme.surface,
+                          textTheme: CupertinoTextThemeData(
+                            pickerTextStyle:
+                                (theme.textTheme.titleLarge ??
+                                        const TextStyle(fontSize: 24))
+                                    .copyWith(
+                                      color: colorScheme.onSurface,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                          ),
                         ),
-                        TextButton(
-                          onPressed: () {
-                            setState(() => values[key] = temp);
-                            Navigator.pop(context);
-                          },
-                          child: const Text('Done'),
+                        child: CupertinoTimerPicker(
+                          backgroundColor: colorScheme.surface,
+                          mode: CupertinoTimerPickerMode.ms,
+                          initialTimerDuration: initial,
+                          onTimerDurationChanged: (d) => temp = d,
                         ),
-                      ],
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: CupertinoTimerPicker(
-                      mode: CupertinoTimerPickerMode.ms,
-                      initialTimerDuration: initial,
-                      onTimerDurationChanged: (d) => temp = d,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -2131,24 +4355,6 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     super.initState();
 
     day = widget.initialDay ?? DateTime.now(); // ✅ FIRST
-
-    // Define which types are NOT text-based
-    final specialTypes = ['rating', 'bool', 'dropdown', 'time', 'scale'];
-    final specialKeys = [
-      'products',
-      'skin_condition',
-      'people',
-      'person_event',
-      'study_methods',
-      'hours_slept',
-      'paid',
-      'is_done',
-      'duration_hours',
-      'energy_level',
-      'severity',
-      'intensity',
-      'rating',
-    ];
 
     final numericKeys = [
       'hours_slept',
@@ -2178,6 +4384,11 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
 
       if (key == 'duration_minutes') {
         values[key] = _durationFromMinutes(initVal);
+        continue;
+      }
+
+      if (widget.templateKey.toLowerCase() == 'bills' && key == 'is_paid') {
+        values[key] = initVal == true;
         continue;
       }
 
@@ -2495,6 +4706,9 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                     if (values.containsKey('unit')) {
                       data['unit'] = values['unit'];
                     }
+                    if (tKey == 'bills') {
+                      data['is_paid'] = values['is_paid'] == true;
+                    }
 
                     if (data.containsKey('quality')) {
                       data['quality'] = (data['quality'] as num?)?.toInt() ?? 0;
@@ -2521,7 +4735,6 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                       final notes = data['notes']?.toString().trim() ?? '';
                       data['notes'] = notes.isEmpty ? null : notes;
                     }
-
                     if (data.containsKey('hours_slept')) {
                       if (widget.templateKey.toLowerCase() == 'sleep') {
                         data['hours_slept'] = _computedHoursSlept;
@@ -2572,6 +4785,15 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                     }
 
                     if (invalidIntegerFields.isNotEmpty) {
+                      if (widget.templateKey.toLowerCase() == 'mood') {
+                        debugPrint(
+                          'MOOD_SAVE_LOCAL_ERROR: dialog_invalid_integer_fields ${invalidIntegerFields.toSet().join(', ')}',
+                        );
+                      } else if (widget.templateKey.toLowerCase() == 'cycle') {
+                        debugPrint(
+                          'CYCLE_SAVE_LOCAL_ERROR: dialog_invalid_integer_fields ${invalidIntegerFields.toSet().join(', ')}',
+                        );
+                      }
                       final badFields = invalidIntegerFields.toSet().join(', ');
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -2622,6 +4844,16 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                       }
 
                       if (cycleMoodInvalid.isNotEmpty) {
+                        if (widget.templateKey.toLowerCase() == 'mood') {
+                          debugPrint(
+                            'MOOD_SAVE_LOCAL_ERROR: dialog_cycle_mood_invalid ${cycleMoodInvalid.toSet().join(', ')}',
+                          );
+                        } else if (widget.templateKey.toLowerCase() ==
+                            'cycle') {
+                          debugPrint(
+                            'CYCLE_SAVE_LOCAL_ERROR: dialog_cycle_invalid ${cycleMoodInvalid.toSet().join(', ')}',
+                          );
+                        }
                         final bad = cycleMoodInvalid.toSet().join(', ');
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
@@ -2639,6 +4871,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                       'price',
                       'cost',
                       'estimated_price',
+                      'calories',
                       // 'weight',
                       'weight_kg',
                       'amount_ml',
@@ -2683,6 +4916,83 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                     );
 
                     debugPrint("SAVING (${widget.templateKey}): $data");
+                    if (widget.templateKey.toLowerCase() == 'mood') {
+                      debugPrint(
+                        'MOOD_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'cycle') {
+                      debugPrint(
+                        'CYCLE_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'expenses') {
+                      debugPrint(
+                        'EXPENSES_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'fast') {
+                      debugPrint(
+                        'FAST_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'income') {
+                      debugPrint(
+                        'INCOME_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() ==
+                        'meditation') {
+                      debugPrint(
+                        'MEDITATION_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'movies') {
+                      debugPrint(
+                        'MOVIES_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'places') {
+                      debugPrint(
+                        'PLACES_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() ==
+                        'restaurants') {
+                      debugPrint(
+                        'RESTAURANT_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() ==
+                        'skin_care') {
+                      debugPrint(
+                        'SKINCARE_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'social') {
+                      debugPrint(
+                        'SOCIAL_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'study') {
+                      debugPrint(
+                        'STUDY_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (builtInLogTemplateByKey(widget.templateKey) ==
+                        null) {
+                      debugPrint(
+                        'CUSTOM_TEMPLATE_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} templateKey=${widget.templateKey} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'tasks') {
+                      debugPrint(
+                        'TASKS_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'tv_log') {
+                      debugPrint(
+                        'TVLOGS_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'wishlist') {
+                      debugPrint(
+                        'WISHLIST_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'workout') {
+                      debugPrint(
+                        'WORKOUT_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    } else if (widget.templateKey.toLowerCase() == 'bills') {
+                      debugPrint(
+                        'BILLS_SAVE_UI_TRIGGERED action=dialog_submit day=${day.toIso8601String().substring(0, 10)} data=$data',
+                      );
+                    }
                     Navigator.pop(
                       context,
                       _NewEntryResult(day: day, data: data),
@@ -2774,6 +5084,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
           'study_methods',
           'people',
           'currency',
+          'meal_type',
         ].contains(key)) {
       List<String> options = _getDropdownOptions(key);
       bool isMulti =
@@ -3032,6 +5343,7 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
                   key == 'price' ||
                   key == 'estimated_price' ||
                   key == 'amount_ml' ||
+                  key == 'calories' ||
                   key == 'current_page' ||
                   key == 'sets' ||
                   key == 'reps')
@@ -3146,7 +5458,9 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     }
     // --- 2. STATUS LOGIC ---
     else if (key == 'status') {
-      if (tKey == 'expenses') {
+      if (tKey == 'medication') {
+        options = ['Taken', 'Missed', 'Skipped'];
+      } else if (tKey == 'expenses') {
         options = ['✅ Paid', '⏳ Pending', '🟡 Cleared', '❌ Cancelled'];
       } else if (tKey == 'movies' || tKey == 'tv_log') {
         options = ['⏳ Watchlist', '🍿 Watching', '✅ Finished', '❌ Abandoned'];
@@ -3256,6 +5570,8 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
       ];
     } else if (key == 'unit') {
       options = ['ml', 'oz', 'Glasses', 'Litres'];
+    } else if (key == 'meal_type') {
+      options = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
     } else if (key == 'routine_type') {
       options = [
         '☀️ Morning (AM)',
@@ -3361,6 +5677,9 @@ class _NewEntryDialogState extends State<_NewEntryDialog> {
     }
     if (key == 'pregnancy_test') {
       options = ['Not Done', 'Positive', 'Negative', 'Inconclusive', 'Other'];
+    }
+    if (key == 'status' && tKey == 'medication') {
+      options = ['Taken', 'Missed', 'Skipped'];
     }
 
     // Always ensure 'Other' is at the end and the list is unique

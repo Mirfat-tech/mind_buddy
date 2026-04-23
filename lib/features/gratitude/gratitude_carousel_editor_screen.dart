@@ -18,10 +18,14 @@ class GratitudeCarouselEditorScreen extends StatefulWidget {
     super.key,
     this.entryId,
     this.seededBubbleTexts = const <String>[],
+    this.storage,
+    this.onOpenHistory,
   });
 
   final String? entryId;
   final List<String> seededBubbleTexts;
+  final GratitudeCarouselEntryStorage? storage;
+  final VoidCallback? onOpenHistory;
 
   @override
   State<GratitudeCarouselEditorScreen> createState() =>
@@ -44,6 +48,9 @@ class _GratitudeCarouselEditorScreenState
   int _pageIndex = 0;
   Timer? _draftSaveDebounce;
 
+  GratitudeCarouselEntryStorage get _storage =>
+      widget.storage ?? GratitudeCarouselStorage.instance;
+
   @override
   void initState() {
     super.initState();
@@ -65,7 +72,7 @@ class _GratitudeCarouselEditorScreenState
     GratitudeCarouselEntry entry;
     bool opensInPreview = false;
     if (widget.entryId != null) {
-      final existing = await GratitudeCarouselStorage.getEntry(widget.entryId!);
+      final existing = await _storage.getEntry(widget.entryId!);
       if (existing != null) {
         entry = existing;
         opensInPreview = true;
@@ -74,7 +81,7 @@ class _GratitudeCarouselEditorScreenState
       }
     } else {
       entry = _createDraft(widget.seededBubbleTexts);
-      await GratitudeCarouselStorage.saveEntry(entry);
+      await _storage.saveEntry(entry);
     }
     entry = _normalizeEntry(entry);
     if (!mounted) return;
@@ -118,9 +125,7 @@ class _GratitudeCarouselEditorScreenState
         .join('\n\n');
     if (mediaItems.isEmpty) {
       return entry.copyWith(
-        items: <GratitudeCarouselItem>[
-          _emptyPolaroid(caption: legacyText),
-        ],
+        items: <GratitudeCarouselItem>[_emptyPolaroid(caption: legacyText)],
       );
     }
     if (legacyText.isNotEmpty && mediaItems.first.caption.trim().isEmpty) {
@@ -149,7 +154,9 @@ class _GratitudeCarouselEditorScreenState
     for (final item in items) {
       final existing = _captionControllers[item.id];
       if (existing == null) {
-        _captionControllers[item.id] = TextEditingController(text: item.caption);
+        _captionControllers[item.id] = TextEditingController(
+          text: item.caption,
+        );
       } else if (existing.text != item.caption) {
         existing.value = TextEditingValue(
           text: item.caption,
@@ -185,16 +192,16 @@ class _GratitudeCarouselEditorScreenState
           : _titleController.text.trim(),
       updatedAt: DateTime.now(),
     );
-    await GratitudeCarouselStorage.saveEntry(updated);
+    await _storage.saveEntry(updated);
     if (!mounted) return;
     setState(() {
       _entry = updated;
       _saving = false;
     });
     if (showFeedback) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Gratitude Carousel saved')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Gratitude Carousel saved')));
     }
   }
 
@@ -214,7 +221,9 @@ class _GratitudeCarouselEditorScreenState
     );
     if (selected == null) return;
     _replaceEntry(
-      entry.copyWith(date: DateTime(selected.year, selected.month, selected.day)),
+      entry.copyWith(
+        date: DateTime(selected.year, selected.month, selected.day),
+      ),
     );
   }
 
@@ -354,7 +363,7 @@ class _GratitudeCarouselEditorScreenState
       ),
     );
     if (shouldDelete != true) return;
-    await GratitudeCarouselStorage.deleteEntry(entry.id);
+    await _storage.deleteEntry(entry.id);
     if (!mounted) return;
     context.pop();
   }
@@ -388,14 +397,13 @@ class _GratitudeCarouselEditorScreenState
         actions: [
           IconButton(
             tooltip: 'View memories',
-            onPressed: () => context.push('/gratitude-carousel/history'),
+            onPressed:
+                widget.onOpenHistory ??
+                () => context.push('/gratitude-carousel/history'),
             icon: const Icon(Icons.photo_library_outlined),
           ),
           if (!_loading && !_isEditMode && widget.entryId != null)
-            TextButton(
-              onPressed: _enterEditMode,
-              child: const Text('Edit'),
-            ),
+            TextButton(onPressed: _enterEditMode, child: const Text('Edit')),
           if (_isEditMode)
             IconButton(
               tooltip: 'Save',
@@ -493,7 +501,8 @@ class _GratitudeCarouselEditorScreenState
                                 ),
                               ],
                             ),
-                          if (_isEditMode && entry.seededBubbleTexts.isNotEmpty) ...[
+                          if (_isEditMode &&
+                              entry.seededBubbleTexts.isNotEmpty) ...[
                             const SizedBox(height: 18),
                             Text(
                               'Started from these gratitude bubbles',
@@ -518,7 +527,9 @@ class _GratitudeCarouselEditorScreenState
                                         color: scheme.surface.withValues(
                                           alpha: 0.82,
                                         ),
-                                        borderRadius: BorderRadius.circular(999),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
                                       ),
                                       child: Text(text),
                                     ),
@@ -563,9 +574,9 @@ class _GratitudeCarouselEditorScreenState
                                           onAddVideos: _setVideoForCurrentSlide,
                                           onAddSticker: () => _addSticker(item),
                                           onCaptionChanged: (text) =>
-                                              _updateItem(item.copyWith(
-                                                caption: text,
-                                              )),
+                                              _updateItem(
+                                                item.copyWith(caption: text),
+                                              ),
                                           onSelectSticker: (stickerId) {
                                             setState(() {
                                               _selectedStickerIds[item.id] =
@@ -584,7 +595,8 @@ class _GratitudeCarouselEditorScreenState
                               ],
                             ),
                           ),
-                          if (!_isEditMode && entry.seededBubbleTexts.isNotEmpty) ...[
+                          if (!_isEditMode &&
+                              entry.seededBubbleTexts.isNotEmpty) ...[
                             const SizedBox(height: 26),
                             Text(
                               'Started from these gratitude bubbles',
@@ -609,7 +621,9 @@ class _GratitudeCarouselEditorScreenState
                                         color: scheme.surface.withValues(
                                           alpha: 0.82,
                                         ),
-                                        borderRadius: BorderRadius.circular(999),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
                                       ),
                                       child: Text(text),
                                     ),
@@ -729,10 +743,12 @@ class _GratitudeCarouselHistoryScreenState
                 final polaroidCount = entry.items.length;
                 return InkWell(
                   borderRadius: BorderRadius.circular(24),
-                  onTap: () => context.push(
-                    '/gratitude-carousel',
-                    extra: <String, dynamic>{'entryId': entry.id},
-                  ).then((_) => _load()),
+                  onTap: () => context
+                      .push(
+                        '/gratitude-carousel',
+                        extra: <String, dynamic>{'entryId': entry.id},
+                      )
+                      .then((_) => _load()),
                   child: Container(
                     padding: const EdgeInsets.all(18),
                     decoration: BoxDecoration(
@@ -863,9 +879,9 @@ class _PolaroidSlide extends StatelessWidget {
               ),
               child: Text(
                 label,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
               ),
             ),
             const SizedBox(height: 12),
@@ -914,9 +930,14 @@ class _PolaroidSlide extends StatelessWidget {
                                         color: scheme.surfaceContainerHighest,
                                         child: _hasMedia
                                             ? switch (item.type) {
-                                                GratitudeCarouselItemType.video =>
-                                                  _VideoPreview(filePath: item.filePath),
-                                                _ => _PhotoPreview(filePath: item.filePath),
+                                                GratitudeCarouselItemType
+                                                    .video =>
+                                                  _VideoPreview(
+                                                    filePath: item.filePath,
+                                                  ),
+                                                _ => _PhotoPreview(
+                                                  filePath: item.filePath,
+                                                ),
                                               }
                                             : _PolaroidEmptyMediaState(
                                                 isEditing: isEditing,
@@ -927,9 +948,10 @@ class _PolaroidSlide extends StatelessWidget {
                                     ),
                                   ),
                                   ...item.stickers.map((sticker) {
-                                    final definition = JournalStickerCatalog.byId(
-                                      sticker.stickerId,
-                                    );
+                                    final definition =
+                                        JournalStickerCatalog.byId(
+                                          sticker.stickerId,
+                                        );
                                     if (definition == null) {
                                       return const SizedBox.shrink();
                                     }
@@ -945,9 +967,11 @@ class _PolaroidSlide extends StatelessWidget {
                                       onTap: isEditing
                                           ? () => onSelectSticker(sticker.id)
                                           : null,
-                                      onChanged: (next) =>
-                                          onUpdateSticker(_sanitizeSticker(next)),
-                                      onDelete: () => onDeleteSticker(sticker.id),
+                                      onChanged: (next) => onUpdateSticker(
+                                        _sanitizeSticker(next),
+                                      ),
+                                      onDelete: () =>
+                                          onDeleteSticker(sticker.id),
                                     );
                                   }),
                                 ],
@@ -959,14 +983,23 @@ class _PolaroidSlide extends StatelessWidget {
                                 children: [
                                   FilledButton.tonalIcon(
                                     onPressed: onAddSticker,
-                                    icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                                    icon: const Icon(
+                                      Icons.auto_awesome_outlined,
+                                      size: 18,
+                                    ),
                                     label: const Text('Sticker'),
                                   ),
                                   const Spacer(),
                                   Text(
-                                    _hasMedia ? 'Add a note' : 'Add media first',
-                                    style: Theme.of(context).textTheme.labelMedium
-                                        ?.copyWith(color: scheme.onSurfaceVariant),
+                                    _hasMedia
+                                        ? 'Add a note'
+                                        : 'Add media first',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelMedium
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                        ),
                                   ),
                                 ],
                               ),
@@ -1056,9 +1089,9 @@ class _PolaroidEmptyMediaState extends StatelessWidget {
           ] else
             Text(
               'A quiet little empty Polaroid',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
         ],
       ),
@@ -1125,9 +1158,9 @@ class _StickerPickerSheet extends StatelessWidget {
             children: [
               Text(
                 'Pick a little sticker',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
               ),
               const SizedBox(height: 12),
               GridView.builder(
@@ -1240,10 +1273,10 @@ class _FrameStickerState extends State<_FrameSticker> {
         },
         onScaleUpdate: (details) {
           if (widget.onTap == null) return;
-          final dx = (details.focalPoint.dx - _startFocalPoint.dx) /
-              widget.cardWidth;
-          final dy = (details.focalPoint.dy - _startFocalPoint.dy) /
-              widget.cardHeight;
+          final dx =
+              (details.focalPoint.dx - _startFocalPoint.dx) / widget.cardWidth;
+          final dy =
+              (details.focalPoint.dy - _startFocalPoint.dy) / widget.cardHeight;
           final anchorDx = _startPointerToCenterOffset.dx / widget.cardWidth;
           final anchorDy = _startPointerToCenterOffset.dy / widget.cardHeight;
           final next = _startSticker.copyWith(
@@ -1278,7 +1311,9 @@ class _FrameStickerState extends State<_FrameSticker> {
                         color: Colors.white,
                         shape: BoxShape.circle,
                         border: Border.all(
-                          color: widget.definition.iconColor.withValues(alpha: 0.38),
+                          color: widget.definition.iconColor.withValues(
+                            alpha: 0.38,
+                          ),
                         ),
                         boxShadow: [
                           BoxShadow(
@@ -1343,10 +1378,7 @@ class _FairyLightsDividerState extends State<_FairyLightsDivider>
 }
 
 class _FairyLightsPainter extends CustomPainter {
-  const _FairyLightsPainter({
-    required this.glowAmount,
-    required this.scheme,
-  });
+  const _FairyLightsPainter({required this.glowAmount, required this.scheme});
 
   final double glowAmount;
   final ColorScheme scheme;
@@ -1377,8 +1409,7 @@ class _FairyLightsPainter extends CustomPainter {
     for (int i = 0; i < bulbs; i++) {
       final t = i / (bulbs - 1);
       final x = size.width * t;
-      final y =
-          size.height * (0.42 + math.sin((t * math.pi * 2) + 0.3) * 0.12);
+      final y = size.height * (0.42 + math.sin((t * math.pi * 2) + 0.3) * 0.12);
       final bulbColor = Color.lerp(
         scheme.primary.withValues(alpha: 0.52),
         Colors.white.withValues(alpha: 0.92),

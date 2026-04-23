@@ -3,8 +3,9 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_image_compress/flutter_image_compress.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'package:mind_buddy/core/files/app_paths.dart';
 
 class PreparedJournalImage {
   const PreparedJournalImage({
@@ -89,7 +90,7 @@ class JournalUploadPipeline {
     );
     compressed ??= await sourceFile.readAsBytes();
 
-    final tempDir = await getTemporaryDirectory();
+    final tempDir = await AppPaths.temporaryDirectory();
     final String cachedPath =
         '${tempDir.path}/journal_up_'
         '${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(99999)}.$outputExt';

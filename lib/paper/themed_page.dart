@@ -15,7 +15,7 @@ class ThemedPage extends ConsumerWidget {
     final themeId = ref.watch(settingsControllerProvider).settings.themeId;
     final style = styleById(themeId);
 
-    final theme = _themeFromPaperStyle(style);
+    final theme = buildThemeFromPaperStyle(style);
 
     return Theme(
       data: theme,
@@ -24,7 +24,7 @@ class ThemedPage extends ConsumerWidget {
   }
 }
 
-ThemeData _themeFromPaperStyle(PaperStyle style) {
+ThemeData buildThemeFromPaperStyle(PaperStyle style) {
   final bg = style.paper; // ✅ use "paper" as the page background
   final surface = style.boxFill;
   final outline = style.border;

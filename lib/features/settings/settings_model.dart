@@ -1,4 +1,5 @@
 import 'package:mind_buddy/services/notification_catalog.dart';
+import 'package:mind_buddy/paper/paper_styles.dart';
 
 class NotificationSpaceSetting {
   NotificationSpaceSetting({
@@ -6,6 +7,7 @@ class NotificationSpaceSetting {
     required this.frequency,
     required this.days,
     required this.time,
+    required this.times,
     required this.skipWeekends,
     required this.dayOfMonth,
     required this.style,
@@ -15,9 +17,18 @@ class NotificationSpaceSetting {
   final String frequency; // 'most', 'certain', 'weekly', 'monthly', 'remember'
   final List<String> days; // mon..sun
   final String? time; // "HH:mm" or null
+  final List<String> times; // "HH:mm"
   final bool skipWeekends;
   final int dayOfMonth; // 1..28
   final String style; // 'soft', 'quiet', 'simple'
+
+  List<String> get reminderTimes =>
+      _normalizeReminderTimes(times, fallbackTime: time);
+
+  String? get primaryTime {
+    final normalized = reminderTimes;
+    return normalized.isEmpty ? null : normalized.first;
+  }
 
   factory NotificationSpaceSetting.defaults() {
     return NotificationSpaceSetting(
@@ -25,6 +36,7 @@ class NotificationSpaceSetting {
       frequency: 'most',
       days: const [],
       time: null,
+      times: const [],
       skipWeekends: false,
       dayOfMonth: 1,
       style: 'soft',
@@ -36,15 +48,23 @@ class NotificationSpaceSetting {
     String? frequency,
     List<String>? days,
     String? time,
+    List<String>? times,
     bool? skipWeekends,
     int? dayOfMonth,
     String? style,
   }) {
+    final resolvedTime = time ?? this.time;
+    final rawTimes = times ?? (time != null ? <String>[time] : this.times);
+    final resolvedTimes = _normalizeReminderTimes(
+      rawTimes,
+      fallbackTime: resolvedTime,
+    );
     return NotificationSpaceSetting(
       enabled: enabled ?? this.enabled,
       frequency: frequency ?? this.frequency,
       days: days ?? this.days,
-      time: time ?? this.time,
+      time: resolvedTimes.isEmpty ? resolvedTime : resolvedTimes.first,
+      times: resolvedTimes,
       skipWeekends: skipWeekends ?? this.skipWeekends,
       dayOfMonth: dayOfMonth ?? this.dayOfMonth,
       style: style ?? this.style,
@@ -56,7 +76,8 @@ class NotificationSpaceSetting {
       'enabled': enabled,
       'frequency': frequency,
       'days': days,
-      'time': time,
+      'time': primaryTime,
+      'times': reminderTimes,
       'skipWeekends': skipWeekends,
       'dayOfMonth': dayOfMonth,
       'style': style,
@@ -68,15 +89,55 @@ class NotificationSpaceSetting {
     final parsedDays = rawDays is List
         ? rawDays.map((d) => d.toString()).toList()
         : <String>[];
+    final parsedTimes = _normalizeReminderTimes(
+      json['times'] is List
+          ? (json['times'] as List).map((time) => time.toString()).toList()
+          : const <String>[],
+      fallbackTime: json['time'] as String?,
+    );
     return NotificationSpaceSetting(
       enabled: json['enabled'] == true,
       frequency: (json['frequency'] ?? 'most').toString(),
       days: parsedDays,
-      time: json['time'] as String?,
+      time: parsedTimes.isEmpty ? json['time'] as String? : parsedTimes.first,
+      times: parsedTimes,
       skipWeekends: json['skipWeekends'] == true,
       dayOfMonth: (json['dayOfMonth'] as num?)?.toInt() ?? 1,
       style: (json['style'] ?? 'soft').toString(),
     );
+  }
+
+  static List<String> _normalizeReminderTimes(
+    Iterable<dynamic> rawTimes, {
+    String? fallbackTime,
+  }) {
+    final seen = <String>{};
+    final normalized = <String>[];
+
+    void pushValue(String raw) {
+      final value = raw.trim();
+      if (value.isEmpty) return;
+      final parts = value.split(':');
+      if (parts.length != 2) return;
+      final hour = int.tryParse(parts[0]);
+      final minute = int.tryParse(parts[1]);
+      if (hour == null || minute == null) return;
+      if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return;
+      final safe =
+          '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+      if (seen.add(safe)) {
+        normalized.add(safe);
+      }
+    }
+
+    for (final raw in rawTimes) {
+      pushValue(raw.toString());
+    }
+    if (normalized.isEmpty && fallbackTime != null) {
+      pushValue(fallbackTime);
+    }
+    normalized.sort();
+    return normalized;
   }
 }
 
@@ -90,6 +151,7 @@ Map<String, NotificationSpaceSetting> defaultNotificationSpaceSettings() {
 class SettingsModel {
   SettingsModel({
     required this.themeId,
+    required this.customThemes,
     required this.quietHoursEnabled,
     required this.quietStart,
     required this.quietEnd,
@@ -101,7 +163,6 @@ class SettingsModel {
     required this.notificationCategories,
     required this.notificationSpaceSettings,
     required this.maxNotificationsPerDay,
-    required this.calendarRemindersEnabled,
     required this.pomodoroAlertsEnabled,
     required this.stopwatchAlertsEnabled,
     required this.stopwatchReminderMinutes,
@@ -114,6 +175,7 @@ class SettingsModel {
   });
 
   final String? themeId;
+  final List<PaperStyle> customThemes;
   final bool quietHoursEnabled;
   final String quietStart; // "HH:mm"
   final String quietEnd; // "HH:mm"
@@ -125,7 +187,6 @@ class SettingsModel {
   final Map<String, bool> notificationCategories;
   final Map<String, NotificationSpaceSetting> notificationSpaceSettings;
   final int maxNotificationsPerDay;
-  final bool calendarRemindersEnabled;
   final bool pomodoroAlertsEnabled;
   final bool stopwatchAlertsEnabled;
   final int stopwatchReminderMinutes;
@@ -139,6 +200,7 @@ class SettingsModel {
   factory SettingsModel.defaults() {
     return SettingsModel(
       themeId: null,
+      customThemes: const <PaperStyle>[],
       quietHoursEnabled: false,
       quietStart: '22:00',
       quietEnd: '07:00',
@@ -150,7 +212,6 @@ class SettingsModel {
       notificationCategories: defaultNotificationCategoryState(),
       notificationSpaceSettings: defaultNotificationSpaceSettings(),
       maxNotificationsPerDay: 2,
-      calendarRemindersEnabled: true,
       pomodoroAlertsEnabled: true,
       stopwatchAlertsEnabled: true,
       stopwatchReminderMinutes: 0,
@@ -165,6 +226,7 @@ class SettingsModel {
 
   SettingsModel copyWith({
     String? themeId,
+    List<PaperStyle>? customThemes,
     bool? quietHoursEnabled,
     String? quietStart,
     String? quietEnd,
@@ -176,7 +238,6 @@ class SettingsModel {
     Map<String, bool>? notificationCategories,
     Map<String, NotificationSpaceSetting>? notificationSpaceSettings,
     int? maxNotificationsPerDay,
-    bool? calendarRemindersEnabled,
     bool? pomodoroAlertsEnabled,
     bool? stopwatchAlertsEnabled,
     int? stopwatchReminderMinutes,
@@ -189,6 +250,7 @@ class SettingsModel {
   }) {
     return SettingsModel(
       themeId: themeId ?? this.themeId,
+      customThemes: customThemes ?? this.customThemes,
       quietHoursEnabled: quietHoursEnabled ?? this.quietHoursEnabled,
       quietStart: quietStart ?? this.quietStart,
       quietEnd: quietEnd ?? this.quietEnd,
@@ -203,8 +265,6 @@ class SettingsModel {
           notificationSpaceSettings ?? this.notificationSpaceSettings,
       maxNotificationsPerDay:
           maxNotificationsPerDay ?? this.maxNotificationsPerDay,
-      calendarRemindersEnabled:
-          calendarRemindersEnabled ?? this.calendarRemindersEnabled,
       pomodoroAlertsEnabled:
           pomodoroAlertsEnabled ?? this.pomodoroAlertsEnabled,
       stopwatchAlertsEnabled:
@@ -224,6 +284,7 @@ class SettingsModel {
   Map<String, dynamic> toJson() {
     return {
       'themeId': themeId,
+      'customThemes': customThemes.map((theme) => theme.toJson()).toList(),
       'quietHoursEnabled': quietHoursEnabled,
       'quietStart': quietStart,
       'quietEnd': quietEnd,
@@ -237,7 +298,6 @@ class SettingsModel {
         (key, value) => MapEntry(key, value.toJson()),
       ),
       'maxNotificationsPerDay': maxNotificationsPerDay,
-      'calendarRemindersEnabled': calendarRemindersEnabled,
       'pomodoroAlertsEnabled': pomodoroAlertsEnabled,
       'stopwatchAlertsEnabled': stopwatchAlertsEnabled,
       'stopwatchReminderMinutes': stopwatchReminderMinutes,
@@ -285,8 +345,21 @@ class SettingsModel {
         ? Map<String, dynamic>.from(rawGuideState)
         : <String, dynamic>{};
 
+    final rawCustomThemes = json['customThemes'];
+    final parsedCustomThemes = rawCustomThemes is List
+        ? rawCustomThemes
+              .whereType<Map>()
+              .map(
+                (theme) =>
+                    PaperStyle.fromJson(Map<String, dynamic>.from(theme)),
+              )
+              .where((theme) => theme.id.trim().isNotEmpty)
+              .toList()
+        : <PaperStyle>[];
+
     return SettingsModel(
       themeId: json['themeId'] as String?,
+      customThemes: parsedCustomThemes,
       quietHoursEnabled: (json['quietHoursEnabled'] ?? false) as bool,
       quietStart: (json['quietStart'] ?? '22:00') as String,
       quietEnd: (json['quietEnd'] ?? '07:00') as String,
@@ -298,8 +371,6 @@ class SettingsModel {
       notificationCategories: parsedCategories,
       notificationSpaceSettings: parsedSpaceSettings,
       maxNotificationsPerDay: (json['maxNotificationsPerDay'] ?? 2) as int,
-      calendarRemindersEnabled:
-          (json['calendarRemindersEnabled'] ?? true) as bool,
       pomodoroAlertsEnabled: (json['pomodoroAlertsEnabled'] ?? true) as bool,
       stopwatchAlertsEnabled: (json['stopwatchAlertsEnabled'] ?? true) as bool,
       stopwatchReminderMinutes: (json['stopwatchReminderMinutes'] ?? 0) as int,

@@ -33,7 +33,7 @@ class InsightsGateScreen extends StatelessWidget {
             centerTitle: true,
             leading: MbGlowBackButton(
               onPressed: () =>
-                  context.canPop() ? context.pop() : context.go('/home'),
+                  context.canPop() ? context.pop() : context.go('/'),
             ),
           ),
           body: Padding(
@@ -45,13 +45,13 @@ class InsightsGateScreen extends StatelessWidget {
                   const Icon(Icons.lock_outline, size: 48),
                   const SizedBox(height: 12),
                   Text(
-                    'Insights are available in PLUS SUPPORT MODE',
+                    'Insights are part of Plus Support Mode',
                     style: Theme.of(context).textTheme.titleMedium,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Upgrade to Plus Support Mode to unlock insights for templates and habits.',
+                    'See the updated plans to unlock insights for templates and habits.',
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
@@ -64,7 +64,7 @@ class InsightsGateScreen extends StatelessWidget {
                         context.go('/subscription');
                       }
                     },
-                    child: const Text('View modes'),
+                    child: const Text('See plans'),
                   ),
                 ],
               ),

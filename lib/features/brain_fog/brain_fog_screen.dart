@@ -1,18 +1,30 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:mind_buddy/features/brain_fog/brain_fog_repository.dart';
+import 'package:mind_buddy/features/brain_fog/data/local/brain_fog_local_data_source.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class BrainFogScreen extends StatefulWidget {
-  const BrainFogScreen({super.key});
+class BrainFogScreen extends ConsumerStatefulWidget {
+  const BrainFogScreen({
+    super.key,
+    this.guidesEnabled = true,
+    this.onBackPressed,
+    this.onFigureOutRoute,
+  });
+
+  final bool guidesEnabled;
+  final VoidCallback? onBackPressed;
+  final void Function(String route)? onFigureOutRoute;
 
   @override
-  State<BrainFogScreen> createState() => _BrainFogScreenState();
+  ConsumerState<BrainFogScreen> createState() => _BrainFogScreenState();
 }
 
 class _Thought {
@@ -22,14 +34,13 @@ class _Thought {
   Offset offset;
 }
 
-class _BrainFogScreenState extends State<BrainFogScreen>
+class _BrainFogScreenState extends ConsumerState<BrainFogScreen>
     with TickerProviderStateMixin {
   final List<_Thought> _thoughts = [];
   final Set<String> _poppingIds = {};
   bool _isDeleteMode = false;
   bool _isLoading = true;
   late AnimationController _shakeController;
-  final supabase = Supabase.instance.client;
   final TransformationController _canvasController = TransformationController();
   Size? _lastCanvasSize;
   bool _figureOutMode = false;
@@ -50,7 +61,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
       duration: const Duration(milliseconds: 100),
       vsync: this,
     );
-    _fetchThoughts();
+    _loadThoughtsFromLocal();
   }
 
   @override
@@ -62,12 +73,13 @@ class _BrainFogScreenState extends State<BrainFogScreen>
   }
 
   Future<void> _showGuideIfNeeded({bool force = false}) async {
+    if (!widget.guidesEnabled) return;
     if (!force && _guideStartedThisOpen) return;
     if (!force) {
       _guideStartedThisOpen = true;
     }
     final prefs = await SharedPreferences.getInstance();
-    final seenKey = 'pageGuideShown_brainFog';
+    const seenKey = 'pageGuideShown_brainFog';
     final keepVisible = prefs.getBool('keepInstructionsVisible') ?? false;
     final shown = prefs.getBool(seenKey) ?? false;
 
@@ -120,6 +132,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
       for (final step in reducedSteps)
         if (_isTargetReady(step.key)) step,
     ];
+    if (!mounted) return;
     await GuideManager.showGuideIfNeeded(
       context: context,
       pageId: 'brainFog',
@@ -176,6 +189,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
   }
 
   void _scheduleGuideAutoStart() {
+    if (!widget.guidesEnabled) return;
     if (!mounted || _guideStartedThisOpen) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _isLoading) return;
@@ -186,52 +200,79 @@ class _BrainFogScreenState extends State<BrainFogScreen>
     });
   }
 
-  // --- SUPABASE LOGIC ---
-  Future<bool?> _showExitConfirmation() {
-    return showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Discard thought?'),
-        content: const Text(
-          "You have a thought typed out. If you leave now, it won't be kept.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false), // Don't leave
-            child: const Text('STAY'),
+  // --- LOCAL-FIRST LOGIC ---
+  String get _currentUserId =>
+      Supabase.instance.client.auth.currentUser?.id ?? 'guest';
+
+  List<BrainFogThoughtRecord> _thoughtSnapshot() {
+    return _thoughts
+        .map(
+          (thought) => BrainFogThoughtRecord(
+            id: thought.id,
+            text: thought.text,
+            dx: thought.offset.dx,
+            dy: thought.offset.dy,
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true), // Leave
-            child: Text(
-              'DISCARD',
-              style: TextStyle(color: Colors.red.shade700),
-            ),
-          ),
-        ],
-      ),
-    );
+        )
+        .toList(growable: false);
   }
 
-  Future<void> _fetchThoughts() async {
+  Future<void> _persistCurrentState({required String reason}) {
+    return ref
+        .read(brainFogRepositoryProvider)
+        .saveState(
+          userId: _currentUserId,
+          thoughts: _thoughtSnapshot(),
+          isDeleteMode: _isDeleteMode,
+          figureOutMode: _figureOutMode,
+          figureStep: _figureStep,
+          controllableIds: _controllableIds,
+          focusOrder: _focusOrder,
+          reason: reason,
+        );
+  }
+
+  Future<void> _loadThoughtsFromLocal() async {
     try {
-      final data = await supabase.from('brain_fog').select();
+      final data = await ref
+          .read(brainFogRepositoryProvider)
+          .loadState(userId: _currentUserId);
       setState(() {
         _thoughts.clear();
-        for (var item in data) {
-          _thoughts.add(
-            _Thought(
-              id: item['id'].toString(),
-              text: item['text'] ?? '',
-              // .toDouble() prevents the 'int is not a subtype of double' crash
-              offset: Offset(
-                (item['x_pos'] ?? 100).toDouble(),
-                (item['y_pos'] ?? 100).toDouble(),
+        if (data != null) {
+          for (final item in data.thoughts) {
+            _thoughts.add(
+              _Thought(
+                id: item.id,
+                text: item.text,
+                offset: Offset(item.dx, item.dy),
               ),
-            ),
-          );
+            );
+          }
+          _isDeleteMode = data.isDeleteMode;
+          _figureOutMode = data.figureOutMode;
+          _figureStep = data.figureStep;
+          _controllableIds
+            ..clear()
+            ..addAll(data.controllableIds);
+          _focusOrder
+            ..clear()
+            ..addAll(data.focusOrder);
+        } else {
+          _isDeleteMode = false;
+          _figureOutMode = false;
+          _figureStep = 0;
+          _controllableIds.clear();
+          _focusOrder.clear();
         }
+        _thoughts.removeWhere((thought) => thought.id.trim().isEmpty);
         _isLoading = false;
       });
+      if (_isDeleteMode) {
+        _shakeController.repeat(reverse: true);
+      } else {
+        _shakeController.stop();
+      }
       _scheduleGuideAutoStart();
     } catch (e) {
       debugPrint('Fetch error: $e');
@@ -241,26 +282,14 @@ class _BrainFogScreenState extends State<BrainFogScreen>
   }
 
   Future<void> _upsertThought(_Thought thought) async {
-    final user = supabase.auth.currentUser;
-    if (user == null) return;
-
     try {
-      final bool isTempId = RegExp(r'^\d+$').hasMatch(thought.id);
-      final Map<String, dynamic> data = {
-        'user_id': user.id,
-        'text': thought.text,
-        'x_pos': thought.offset.dx,
-        'y_pos': thought.offset.dy,
-      };
-
-      if (!isTempId) data['id'] = thought.id;
-
-      await supabase.from('brain_fog').upsert(data);
-
-      // We fetch again to get the real UUIDs and update the UI
-      await _fetchThoughts();
+      await _persistCurrentState(
+        reason: thought.text.trim().isEmpty
+            ? 'position_update'
+            : 'save_thought',
+      );
     } catch (e) {
-      debugPrint('Upsert error: $e');
+      debugPrint('BRAINFOG_SAVE_LOCAL_ERROR: $e');
       setState(() => _isLoading = false); // Safety net
     }
   }
@@ -283,6 +312,8 @@ class _BrainFogScreenState extends State<BrainFogScreen>
     setState(() {
       _thoughts.remove(thought);
     });
+    await _persistCurrentState(reason: 'delete_thought');
+    if (!mounted) return;
 
     ScaffoldMessenger.of(context).clearSnackBars();
     final controller = ScaffoldMessenger.of(context).showSnackBar(
@@ -294,10 +325,11 @@ class _BrainFogScreenState extends State<BrainFogScreen>
         action: SnackBarAction(
           label: 'UNDO',
           textColor: Colors.white,
-          onPressed: () {
+          onPressed: () async {
             setState(() {
               _thoughts.insert(originalIndex, deletedThought);
             });
+            await _persistCurrentState(reason: 'undo_delete_thought');
           },
         ),
       ),
@@ -305,16 +337,6 @@ class _BrainFogScreenState extends State<BrainFogScreen>
     Future<void>.delayed(const Duration(seconds: 4), () {
       if (!mounted) return;
       controller.close();
-    });
-    controller.closed.then((reason) async {
-      if (reason != SnackBarClosedReason.action) {
-        final bool isRealId = !RegExp(r'^\d+$').hasMatch(deletedThought.id);
-        if (isRealId) {
-          await supabase.from('brain_fog').delete().match({
-            'id': deletedThought.id,
-          });
-        }
-      }
     });
   }
 
@@ -332,13 +354,16 @@ class _BrainFogScreenState extends State<BrainFogScreen>
           ),
           TextButton(
             onPressed: () async {
-              final user = supabase.auth.currentUser;
-              if (user != null) {
-                await supabase.from('brain_fog').delete().match({
-                  'user_id': user.id,
-                });
-                setState(() => _thoughts.clear());
-              }
+              setState(() {
+                _thoughts.clear();
+                _isDeleteMode = false;
+                _figureOutMode = false;
+                _figureStep = 0;
+                _controllableIds.clear();
+                _focusOrder.clear();
+              });
+              await _persistCurrentState(reason: 'clear_all');
+              if (!context.mounted) return;
               Navigator.pop(context);
             },
             child: const Text("Clear", style: TextStyle(color: Colors.red)),
@@ -357,6 +382,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
           ? _shakeController.repeat(reverse: true)
           : _shakeController.stop();
     });
+    _persistCurrentState(reason: 'toggle_delete_mode');
   }
 
   void _toggleFigureOutMode() {
@@ -366,6 +392,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
       _controllableIds.clear();
       _focusOrder.clear();
     });
+    _persistCurrentState(reason: 'toggle_figure_out_mode');
   }
 
   void _advanceFigureStep() {
@@ -380,6 +407,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
         _focusOrder.clear();
       }
     });
+    _persistCurrentState(reason: 'advance_figure_step');
   }
 
   void _handleFigureTap(_Thought thought) {
@@ -393,6 +421,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
           _controllableIds.add(thought.id);
         }
       });
+      _persistCurrentState(reason: 'select_controllable');
       return;
     }
     if (_figureStep == 2) {
@@ -404,6 +433,7 @@ class _BrainFogScreenState extends State<BrainFogScreen>
           _focusOrder.add(thought.id);
         }
       });
+      _persistCurrentState(reason: 'update_focus_order');
       return;
     }
   }
@@ -415,6 +445,11 @@ class _BrainFogScreenState extends State<BrainFogScreen>
       _controllableIds.clear();
       _focusOrder.clear();
     });
+    _persistCurrentState(reason: 'leave_figure_out_mode');
+    if (widget.onFigureOutRoute != null) {
+      widget.onFigureOutRoute!(route);
+      return;
+    }
     context.go(route);
   }
 
@@ -509,20 +544,24 @@ class _BrainFogScreenState extends State<BrainFogScreen>
       applyBackground: true,
       appBar: AppBar(
         title: const Text('Brain Fog'),
-        // Add this leading block:
         leading: MbGlowBackButton(
-          onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go('/home');
-            }
-          },
+          onPressed:
+              widget.onBackPressed ??
+              () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/');
+                }
+              },
         ),
         actions: [
           MbGlowIconButton(
             icon: Icons.help_outline,
-            onPressed: () => _showGuideIfNeeded(force: true),
+            onPressed: () {
+              if (!widget.guidesEnabled) return;
+              _showGuideIfNeeded(force: true);
+            },
           ),
           MbGlowIconButton(
             icon: Icons.notifications_outlined,

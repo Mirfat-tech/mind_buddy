@@ -82,7 +82,7 @@ class _QuoteBubbleScreenState extends ConsumerState<QuoteBubbleScreen> {
               if (!mounted) return;
               context.go('/subscription');
             },
-            child: const Text('See Plus Support'),
+            child: const Text('See plans'),
           ),
         ],
       ),
@@ -117,7 +117,7 @@ class _QuoteBubbleScreenState extends ConsumerState<QuoteBubbleScreen> {
       await _showUpgradePrompt(
         title: 'Want your own words here too?',
         message:
-            'Plus Support Mode lets you keep your own comforting quotes and weave them into your daily quote nudges.',
+            'Make Your Own Quotes is part of the Quotes feature set in Plus Support Mode.',
       );
       return;
     }
@@ -130,10 +130,7 @@ class _QuoteBubbleScreenState extends ConsumerState<QuoteBubbleScreen> {
     );
     final trimmed = (quote ?? '').trim();
     if (!mounted || trimmed.isEmpty) return;
-    final nextQuotes = {
-      ..._quoteSettings.customQuotes,
-      trimmed,
-    }.toList();
+    final nextQuotes = {..._quoteSettings.customQuotes, trimmed}.toList();
     await _persist(_quoteSettings.copyWith(customQuotes: nextQuotes));
     if (!mounted) return;
     setState(() {
@@ -169,8 +166,7 @@ class _QuoteBubbleScreenState extends ConsumerState<QuoteBubbleScreen> {
       appBar: AppBar(
         title: const Text('Daily quotes'),
         leading: MbGlowBackButton(
-          onPressed: () =>
-              context.canPop() ? context.pop() : context.go('/home'),
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
         ),
         actions: [
           IconButton(
@@ -179,7 +175,7 @@ class _QuoteBubbleScreenState extends ConsumerState<QuoteBubbleScreen> {
             icon: const Icon(Icons.schedule_rounded),
           ),
           IconButton(
-            tooltip: 'Add quote',
+            tooltip: 'Make your own quote',
             onPressed: _openAddQuoteSheet,
             icon: const Icon(Icons.add_rounded),
           ),
@@ -244,17 +240,35 @@ class _QuoteBubbleScreenState extends ConsumerState<QuoteBubbleScreen> {
                     runSpacing: 10,
                     children: _quoteSettings.notificationTimes
                         .map(
-                          (time) => _InfoPill(
-                            label: _formatTime(context, time),
-                          ),
+                          (time) =>
+                              _InfoPill(label: _formatTime(context, time)),
                         )
                         .toList(),
+                  ),
+                ],
+                if (!_isPlus) ...[
+                  const SizedBox(height: 22),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: cs.surface.withValues(alpha: 0.92),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: cs.outline.withValues(alpha: 0.14),
+                      ),
+                    ),
+                    child: Text(
+                      'Make Your Own Quotes is available in Plus Support Mode.',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.copyWith(height: 1.45),
+                    ),
                   ),
                 ],
                 if (_quoteSettings.customQuotes.isNotEmpty) ...[
                   const SizedBox(height: 22),
                   Text(
-                    'Your quotes',
+                    'Make Your Own Quotes',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -286,10 +300,7 @@ String _formatTime(BuildContext context, String time) {
 }
 
 class _QuoteStyleSelector extends StatelessWidget {
-  const _QuoteStyleSelector({
-    required this.selectedId,
-    required this.onSelect,
-  });
+  const _QuoteStyleSelector({required this.selectedId, required this.onSelect});
 
   final String selectedId;
   final ValueChanged<String> onSelect;
@@ -310,9 +321,9 @@ class _QuoteStyleSelector extends StatelessWidget {
       children: [
         Text(
           'Bubble mood',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.w700,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
         Text(
@@ -350,12 +361,13 @@ class _QuoteStyleSelector extends StatelessWidget {
                         ),
                         child: Text(
                           style.label,
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                            color: style.id == selectedId
-                                ? cs.primary
-                                : cs.onSurface,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: style.id == selectedId
+                                    ? cs.primary
+                                    : cs.onSurface,
+                              ),
                         ),
                       ),
                     ),
@@ -476,19 +488,16 @@ class _InfoPill extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          fontWeight: FontWeight.w700,
-        ),
+        style: Theme.of(
+          context,
+        ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w700),
       ),
     );
   }
 }
 
 class _CustomQuoteRow extends StatelessWidget {
-  const _CustomQuoteRow({
-    required this.quote,
-    required this.onDelete,
-  });
+  const _CustomQuoteRow({required this.quote, required this.onDelete});
 
   final String quote;
   final VoidCallback onDelete;
@@ -509,9 +518,9 @@ class _CustomQuoteRow extends StatelessWidget {
           Expanded(
             child: Text(
               quote,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                height: 1.4,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(height: 1.4),
             ),
           ),
           const SizedBox(width: 10),
@@ -562,9 +571,9 @@ class _AddQuoteSheetState extends State<_AddQuoteSheet> {
           children: [
             Text(
               'Add your own quote',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 8),
             Text(
@@ -598,10 +607,7 @@ class _AddQuoteSheetState extends State<_AddQuoteSheet> {
 }
 
 class _QuoteReminderSheet extends StatefulWidget {
-  const _QuoteReminderSheet({
-    required this.initialTimes,
-    required this.isPlus,
-  });
+  const _QuoteReminderSheet({required this.initialTimes, required this.isPlus});
 
   final List<String> initialTimes;
   final bool isPlus;
@@ -712,10 +718,7 @@ class _QuoteReminderSheetState extends State<_QuoteReminderSheet> {
 }
 
 class _TimeChip extends StatelessWidget {
-  const _TimeChip({
-    required this.label,
-    required this.onRemove,
-  });
+  const _TimeChip({required this.label, required this.onRemove});
 
   final String label;
   final VoidCallback onRemove;
@@ -735,9 +738,9 @@ class _TimeChip extends StatelessWidget {
         children: [
           Text(
             label,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(width: 8),
           GestureDetector(
@@ -765,10 +768,7 @@ class _ReminderSheetResult {
 }
 
 class _QuoteThemeStyle {
-  const _QuoteThemeStyle({
-    required this.id,
-    required this.buildPalette,
-  });
+  const _QuoteThemeStyle({required this.id, required this.buildPalette});
 
   final String id;
   final _QuoteCardPalette Function(int index) buildPalette;
@@ -810,10 +810,7 @@ _QuoteThemeStyle _quoteThemeFor(String id, ColorScheme cs) {
     );
   }
 
-  _QuoteCardPalette airy({
-    required Color accent,
-    required Color tint,
-  }) {
+  _QuoteCardPalette airy({required Color accent, required Color tint}) {
     return _QuoteCardPalette(
       gradient: [
         Colors.white.withValues(alpha: 0.94),
@@ -829,42 +826,42 @@ _QuoteThemeStyle _quoteThemeFor(String id, ColorScheme cs) {
 
   return switch (id) {
     'dreamy' => _QuoteThemeStyle(
-        id: id,
-        buildPalette: (index) => index.isEven
-            ? heroLike(accent: cs.primary, secondary: cs.secondary)
-            : airy(accent: cs.secondary, tint: cs.tertiary),
-      ),
+      id: id,
+      buildPalette: (index) => index.isEven
+          ? heroLike(accent: cs.primary, secondary: cs.secondary)
+          : airy(accent: cs.secondary, tint: cs.tertiary),
+    ),
     'glowy' => _QuoteThemeStyle(
-        id: id,
-        buildPalette: (index) => index.isEven
-            ? airy(accent: cs.primary, tint: cs.primary)
-            : heroLike(accent: cs.primary, secondary: cs.tertiary),
-      ),
+      id: id,
+      buildPalette: (index) => index.isEven
+          ? airy(accent: cs.primary, tint: cs.primary)
+          : heroLike(accent: cs.primary, secondary: cs.tertiary),
+    ),
     'sheer' => _QuoteThemeStyle(
-        id: id,
-        buildPalette: (index) => _QuoteCardPalette(
-          gradient: [
-            Colors.white.withValues(alpha: 0.78),
-            cs.surface.withValues(alpha: 0.7),
-            cs.secondary.withValues(alpha: index.isEven ? 0.10 : 0.18),
-          ],
-          border: cs.primary.withValues(alpha: 0.10),
-          shadow: cs.primary.withValues(alpha: 0.08),
-          highlight: cs.primary.withValues(alpha: 0.22),
-          labelColor: cs.primary.withValues(alpha: 0.76),
-        ),
+      id: id,
+      buildPalette: (index) => _QuoteCardPalette(
+        gradient: [
+          Colors.white.withValues(alpha: 0.78),
+          cs.surface.withValues(alpha: 0.7),
+          cs.secondary.withValues(alpha: index.isEven ? 0.10 : 0.18),
+        ],
+        border: cs.primary.withValues(alpha: 0.10),
+        shadow: cs.primary.withValues(alpha: 0.08),
+        highlight: cs.primary.withValues(alpha: 0.22),
+        labelColor: cs.primary.withValues(alpha: 0.76),
       ),
+    ),
     'calming' => _QuoteThemeStyle(
-        id: id,
-        buildPalette: (index) => index.isEven
-            ? airy(accent: cs.tertiary, tint: cs.secondary)
-            : heroLike(accent: cs.secondary, secondary: cs.primary),
-      ),
+      id: id,
+      buildPalette: (index) => index.isEven
+          ? airy(accent: cs.tertiary, tint: cs.secondary)
+          : heroLike(accent: cs.secondary, secondary: cs.primary),
+    ),
     _ => _QuoteThemeStyle(
-        id: 'soft',
-        buildPalette: (index) => index.isEven
-            ? airy(accent: cs.primary, tint: cs.secondary)
-            : heroLike(accent: cs.primary, secondary: cs.secondary),
-      ),
+      id: 'soft',
+      buildPalette: (index) => index.isEven
+          ? airy(accent: cs.primary, tint: cs.secondary)
+          : heroLike(accent: cs.primary, secondary: cs.secondary),
+    ),
   };
 }

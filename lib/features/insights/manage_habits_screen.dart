@@ -1,14 +1,16 @@
 // lib/features/insights/manage_habits_screen.dart
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/features/habits/habit_local_repository.dart';
 import 'package:mind_buddy/services/subscription_plan_catalog.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
-import 'package:mind_buddy/features/habits/habit_category_catalog.dart';
 
 class ManageHabitsScreen extends StatefulWidget {
   const ManageHabitsScreen({super.key});
@@ -19,6 +21,9 @@ class ManageHabitsScreen extends StatefulWidget {
 
 class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   final SupabaseClient supabase = Supabase.instance.client;
+  late final HabitLocalRepository _repository = HabitLocalRepository(
+    supabase: supabase,
+  );
 
   bool _loading = true;
   bool _isPending = false;
@@ -67,49 +72,32 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
 
   // --- LOGIC METHODS ---
 
-  ({int current, int best}) _computeStreak(Set<DateTime> doneDates) {
-    if (doneDates.isEmpty) return (current: 0, best: 0);
-
-    final dates = doneDates.toList()..sort();
-    int best = 1;
-    int run = 1;
-
-    for (int i = 1; i < dates.length; i++) {
-      final diff = dates[i].difference(dates[i - 1]).inDays;
-      if (diff == 1) {
-        run++;
-        if (run > best) best = run;
-      } else if (diff > 1) {
-        run = 1;
-      }
-    }
-
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-
-    int current = 0;
-    DateTime cursor = today;
-
-    while (doneDates.contains(cursor)) {
-      current++;
-      cursor = cursor.subtract(const Duration(days: 1));
-    }
-
-    return (current: current, best: best);
-  }
-
   Future<void> _loadData() async {
     if (mounted) setState(() => _loading = true);
     try {
-      final info = await SubscriptionLimits.fetchForCurrentUser();
-      _isPending = info.isPending;
-      await _loadCategories();
-      await _loadHabits();
-      await _loadStreaks();
+      unawaited(_refreshPendingState());
+      final state = await _repository.loadManageState();
+      _categories
+        ..clear()
+        ..addAll(state.categories);
+      _habits
+        ..clear()
+        ..addAll(state.habits);
+      _streaksByHabitName
+        ..clear()
+        ..addAll(state.streaksByHabitName);
     } catch (e) {
       debugPrint('Load error: $e');
     }
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _refreshPendingState() async {
+    try {
+      final info = await SubscriptionLimits.fetchForCurrentUser();
+      if (!mounted) return;
+      setState(() => _isPending = info.isPending);
+    } catch (_) {}
   }
 
   void _markChanged() {
@@ -117,104 +105,12 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   }
 
   Future<void> _refreshStreaksOnly() async {
-    await _loadStreaks();
+    final state = await _repository.loadManageState();
+    _streaksByHabitName
+      ..clear()
+      ..addAll(state.streaksByHabitName);
     if (!mounted) return;
     setState(() {});
-  }
-
-  Future<void> _loadCategories() async {
-    final user = supabase.auth.currentUser;
-    if (user == null) return;
-
-    var rows = await supabase
-        .from('habit_categories')
-        .select()
-        .eq('user_id', user.id)
-        .order('sort_order');
-
-    final existing = (rows as List)
-        .map((e) => Map<String, dynamic>.from(e as Map))
-        .toList();
-    final existingNames = existing
-        .map((category) => _canonicalCategoryKey(category['name']?.toString()))
-        .whereType<String>()
-        .toSet();
-
-    final missingDefaults = HabitCategoryCatalog.builtInCategories
-        .where((preset) => !existingNames.contains(preset.name.toLowerCase()))
-        .toList();
-
-    if (missingDefaults.isNotEmpty) {
-      await supabase.from('habit_categories').insert([
-        for (final preset in missingDefaults)
-          <String, dynamic>{
-            'user_id': user.id,
-            'name': preset.name,
-            'icon': preset.icon,
-            'sort_order': existing.length + preset.sortOrder,
-          },
-      ]);
-
-      rows = await supabase
-          .from('habit_categories')
-          .select()
-          .eq('user_id', user.id)
-          .order('sort_order');
-    }
-
-    _categories
-      ..clear()
-      ..addAll((rows as List).map((e) => Map<String, dynamic>.from(e as Map)));
-  }
-
-  Future<void> _loadHabits() async {
-    final user = supabase.auth.currentUser;
-    if (user == null) return;
-
-    final rows = await supabase
-        .from('user_habits')
-        .select()
-        .eq('user_id', user.id)
-        .order('sort_order');
-
-    _habits
-      ..clear()
-      ..addAll((rows as List).map((e) => Map<String, dynamic>.from(e as Map)));
-  }
-
-  Future<void> _loadStreaks() async {
-    final user = supabase.auth.currentUser;
-    if (user == null) return;
-
-    final fromStr = DateTime.now()
-        .subtract(const Duration(days: 370))
-        .toIso8601String()
-        .substring(0, 10);
-
-    final rows = await supabase
-        .from('habit_logs')
-        .select('habit_name, day, is_completed')
-        .eq('user_id', user.id)
-        .gte('day', fromStr)
-        .eq('is_completed', true);
-
-    final Map<String, Set<DateTime>> doneDatesByHabit = {};
-
-    for (final r in (rows as List)) {
-      final row = Map<String, dynamic>.from(r as Map);
-      final habit = (row['habit_name'] ?? '').toString().trim();
-      if (habit.isEmpty) continue;
-
-      final day = DateTime.parse(row['day'].toString());
-      final normalized = DateTime(day.year, day.month, day.day);
-      doneDatesByHabit.putIfAbsent(habit, () => <DateTime>{}).add(normalized);
-    }
-
-    _streaksByHabitName.clear();
-    for (final h in _habits) {
-      final name = (h['name'] ?? '').toString().trim();
-      _streaksByHabitName[name] = _computeStreak(doneDatesByHabit[name] ?? {});
-    }
   }
 
   // --- CATEGORY DIALOGS ---
@@ -271,15 +167,7 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
               onPressed: () async {
                 try {
                   // ✅ safer delete: uncategorize habits first (avoids FK constraint errors)
-                  await supabase
-                      .from('user_habits')
-                      .update({'category_id': null})
-                      .eq('category_id', categoryId);
-
-                  await supabase
-                      .from('habit_categories')
-                      .delete()
-                      .eq('id', categoryId);
+                  await _repository.deleteCategory(categoryId);
 
                   if (ctx.mounted) Navigator.pop(ctx);
                   _markChanged();
@@ -300,22 +188,11 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
           FilledButton(
             onPressed: () async {
               if (nameController.text.trim().isEmpty) return;
-              if (categoryId == null) {
-                await supabase.from('habit_categories').insert({
-                  'user_id': supabase.auth.currentUser!.id,
-                  'name': nameController.text.trim(),
-                  'icon': iconController.text.trim(),
-                  'sort_order': _categories.length,
-                });
-              } else {
-                await supabase
-                    .from('habit_categories')
-                    .update({
-                      'name': nameController.text.trim(),
-                      'icon': iconController.text.trim(),
-                    })
-                    .eq('id', categoryId);
-              }
+              await _repository.saveCategory(
+                categoryId: categoryId,
+                name: nameController.text.trim(),
+                icon: iconController.text.trim(),
+              );
 
               if (ctx.mounted) Navigator.pop(ctx);
               _markChanged();
@@ -404,50 +281,15 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
             FilledButton(
               onPressed: () async {
                 if (nameController.text.trim().isEmpty) return;
-
-                if (habitId == null) {
-                  final inserted = await supabase
-                      .from('user_habits')
-                      .insert({
-                        'user_id': supabase.auth.currentUser!.id,
-                        'name': nameController.text.trim(),
-                        'category_id': selectedCategoryId,
-                        'sort_order': _habits.length,
-                        'is_active': true,
-                        'start_date': DateTime.now().toIso8601String(),
-                        'active_from': DateTime.now().toIso8601String(),
-                      })
-                      .select()
-                      .single();
-                  if (mounted) {
-                    setState(() {
-                      _habits.add(Map<String, dynamic>.from(inserted));
-                    });
-                  }
-                } else {
-                  final updated = await supabase
-                      .from('user_habits')
-                      .update({
-                        'name': nameController.text.trim(),
-                        'category_id': selectedCategoryId,
-                      })
-                      .eq('id', habitId)
-                      .select()
-                      .single();
-                  if (mounted) {
-                    setState(() {
-                      final idx = _habits.indexWhere(
-                        (habit) => habit['id'] == habitId,
-                      );
-                      if (idx != -1) {
-                        _habits[idx] = Map<String, dynamic>.from(updated);
-                      }
-                    });
-                  }
-                }
+                await _repository.saveHabit(
+                  habitId: habitId,
+                  name: nameController.text.trim(),
+                  categoryId: selectedCategoryId,
+                );
 
                 if (ctx.mounted) Navigator.pop(ctx);
                 _markChanged();
+                await _loadData();
                 await _refreshStreaksOnly();
               },
               child: const Text('Save'),
@@ -472,13 +314,10 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     }
 
     try {
-      await supabase
-          .from('user_habits')
-          .update({
-            'is_active': nextActive,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', habitId);
+      await _repository.toggleHabitActive(
+        habitId: habitId.toString(),
+        isActive: nextActive,
+      );
       _markChanged();
       await _refreshStreaksOnly();
     } catch (e) {
@@ -524,10 +363,7 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     if (confirm != true) return;
 
     try {
-      await supabase
-          .from('user_habits')
-          .delete()
-          .inFilter('id', _selectedHabitIds.toList());
+      await _repository.deleteHabits(_selectedHabitIds);
 
       if (!mounted) return;
       setState(() {
@@ -553,7 +389,9 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     // Group habits by category_id (including null)
     final Map<String?, List<Map<String, dynamic>>> habitsByCategory = {};
     for (final habit in _habits) {
-      final String? catId = _canonicalCategoryIdFor(habit['category_id']?.toString());
+      final String? catId = _canonicalCategoryIdFor(
+        habit['category_id']?.toString(),
+      );
       habitsByCategory.putIfAbsent(catId, () => []).add(habit);
     }
 
@@ -671,9 +509,10 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     }
     final options = byCanonicalKey.values.toList()
       ..sort((a, b) {
-        final bySort = _asInt(a['sort_order'], fallback: 999).compareTo(
-          _asInt(b['sort_order'], fallback: 999),
-        );
+        final bySort = _asInt(
+          a['sort_order'],
+          fallback: 999,
+        ).compareTo(_asInt(b['sort_order'], fallback: 999));
         if (bySort != 0) return bySort;
         return ((a['name'] ?? '').toString()).toLowerCase().compareTo(
           ((b['name'] ?? '').toString()).toLowerCase(),
@@ -685,9 +524,13 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
   String? _canonicalCategoryIdFor(String? categoryId) {
     final raw = categoryId?.trim();
     if (raw == null || raw.isEmpty) return null;
-    final category = _categories.where((cat) => (cat['id'] ?? '').toString() == raw);
+    final category = _categories.where(
+      (cat) => (cat['id'] ?? '').toString() == raw,
+    );
     if (category.isEmpty) return raw;
-    final canonicalKey = _canonicalCategoryKey(category.first['name']?.toString());
+    final canonicalKey = _canonicalCategoryKey(
+      category.first['name']?.toString(),
+    );
     if (canonicalKey == null) return raw;
     final matching = _dedupedCategoryOptions().where(
       (cat) => _canonicalCategoryKey(cat['name']?.toString()) == canonicalKey,
@@ -713,12 +556,18 @@ class _ManageHabitsScreenState extends State<ManageHabitsScreen> {
     if (text.isEmpty) return null;
     final noEmoji = _stripLeadingDecoration(text).toLowerCase();
     if (noEmoji.startsWith('morning')) return 'morning';
-    if (noEmoji.startsWith('afternoon') || noEmoji == 'day' || noEmoji.startsWith('day ')) {
+    if (noEmoji.startsWith('afternoon') ||
+        noEmoji == 'day' ||
+        noEmoji.startsWith('day ')) {
       return 'day';
     }
-    if (noEmoji.startsWith('night') || noEmoji.startsWith('evening')) return 'night';
+    if (noEmoji.startsWith('night') || noEmoji.startsWith('evening')) {
+      return 'night';
+    }
     if (noEmoji.startsWith('work')) return 'work';
-    if (noEmoji.startsWith('personal') || noEmoji.startsWith('self-care') || noEmoji.startsWith('self care')) {
+    if (noEmoji.startsWith('personal') ||
+        noEmoji.startsWith('self-care') ||
+        noEmoji.startsWith('self care')) {
       return 'personal';
     }
     return noEmoji.replaceAll(RegExp(r'\s+routine$'), '').trim();
@@ -1028,7 +877,7 @@ class _TrialBanner extends StatelessWidget {
           const SizedBox(width: 8),
           TextButton(onPressed: onSkip, child: const Text('Skip for now')),
           const SizedBox(width: 6),
-          FilledButton(onPressed: onUpgrade, child: const Text('View modes')),
+          FilledButton(onPressed: onUpgrade, child: const Text('See plans')),
         ],
       ),
     );

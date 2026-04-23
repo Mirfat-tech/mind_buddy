@@ -24,7 +24,7 @@ class TemplatesSection extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                'Templates',
+                'Logs',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.titleLarge,

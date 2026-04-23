@@ -2,7 +2,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mind_buddy/features/insights/brainbubble_insights.dart';
+import 'package:mind_buddy/features/sleep/sleep_repository.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 // ============================================================================
@@ -213,6 +215,30 @@ class _SleepInsightsState extends State<SleepInsights> {
   SleepHeatMapMode _selectedMode = SleepHeatMapMode.hours;
   DateTime? _selectedDay;
 
+  Future<List<Map<String, dynamic>>> _loadSleepRows({
+    required String startDay,
+    required String endExclusiveDay,
+  }) async {
+    debugPrint('INSIGHTS_LOAD_LOCAL source=sleep');
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return const <Map<String, dynamic>>[];
+    final rows = await ProviderScope.containerOf(
+      context,
+      listen: false,
+    ).read(sleepRepositoryProvider).loadEntries(userId: userId);
+    return rows
+        .where((row) {
+          final day = (row['day'] ?? '').toString();
+          return day.compareTo(startDay) >= 0 &&
+              day.compareTo(endExclusiveDay) < 0;
+        })
+        .toList(growable: false)
+      ..sort(
+        (a, b) =>
+            (a['day'] ?? '').toString().compareTo((b['day'] ?? '').toString()),
+      );
+  }
+
   String _dateOnly(DateTime d) =>
       DateTime(d.year, d.month, d.day).toIso8601String().split('T').first;
 
@@ -335,59 +361,93 @@ class _SleepInsightsState extends State<SleepInsights> {
     if (hours < 5) {
       return _SleepLegendItem(
         label: 'Under 5h',
-        color: _SleepPastelPalette.tint(_SleepPastelPalette.blush, strength: 0.28),
+        color: _SleepPastelPalette.tint(
+          _SleepPastelPalette.blush,
+          strength: 0.28,
+        ),
       );
     }
     if (hours < 7) {
       return _SleepLegendItem(
         label: '5–6.9h',
-        color: _SleepPastelPalette.tint(_SleepPastelPalette.peach, strength: 0.27),
+        color: _SleepPastelPalette.tint(
+          _SleepPastelPalette.peach,
+          strength: 0.27,
+        ),
       );
     }
     if (hours < 9) {
       return _SleepLegendItem(
         label: '7–8.9h',
-        color: _SleepPastelPalette.tint(_SleepPastelPalette.mint, strength: 0.25),
+        color: _SleepPastelPalette.tint(
+          _SleepPastelPalette.mint,
+          strength: 0.25,
+        ),
       );
     }
     if (hours < 11) {
       return _SleepLegendItem(
         label: '9–10.9h',
-        color: _SleepPastelPalette.tint(_SleepPastelPalette.aqua, strength: 0.28),
+        color: _SleepPastelPalette.tint(
+          _SleepPastelPalette.aqua,
+          strength: 0.28,
+        ),
       );
     }
     return _SleepLegendItem(
       label: '11h+',
-      color: _SleepPastelPalette.tint(_SleepPastelPalette.aquaDeep, strength: 0.34),
+      color: _SleepPastelPalette.tint(
+        _SleepPastelPalette.aquaDeep,
+        strength: 0.34,
+      ),
     );
   }
 
-  _SleepLegendItem _qualityLegend(String? raw, double? hours, ColorScheme scheme) {
+  _SleepLegendItem _qualityLegend(
+    String? raw,
+    double? hours,
+    ColorScheme scheme,
+  ) {
     switch (_qualityLabel(raw, fallbackHours: hours)) {
       case 'Restless':
         return _SleepLegendItem(
           label: 'Restless',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.blush, strength: 0.28),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.blush,
+            strength: 0.28,
+          ),
         );
       case 'Short':
         return _SleepLegendItem(
           label: 'Short',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.peach, strength: 0.27),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.peach,
+            strength: 0.27,
+          ),
         );
       case 'Okay':
         return _SleepLegendItem(
           label: 'Okay',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.butter, strength: 0.24),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.butter,
+            strength: 0.24,
+          ),
         );
       case 'Good':
         return _SleepLegendItem(
           label: 'Good',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.mint, strength: 0.26),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.mint,
+            strength: 0.26,
+          ),
         );
       case 'Great':
         return _SleepLegendItem(
           label: 'Great',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.aqua, strength: 0.30),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.aqua,
+            strength: 0.30,
+          ),
         );
       default:
         return _SleepLegendItem(
@@ -406,22 +466,34 @@ class _SleepInsightsState extends State<SleepInsights> {
       case 'Very inconsistent':
         return _SleepLegendItem(
           label: 'Very inconsistent',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.blush, strength: 0.28),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.blush,
+            strength: 0.28,
+          ),
         );
       case 'Slightly off':
         return _SleepLegendItem(
           label: 'Slightly off',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.peach, strength: 0.26),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.peach,
+            strength: 0.26,
+          ),
         );
       case 'Typical':
         return _SleepLegendItem(
           label: 'Typical',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.butter, strength: 0.24),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.butter,
+            strength: 0.24,
+          ),
         );
       case 'Very consistent':
         return _SleepLegendItem(
           label: 'Very consistent',
-          color: _SleepPastelPalette.tint(_SleepPastelPalette.teal, strength: 0.30),
+          color: _SleepPastelPalette.tint(
+            _SleepPastelPalette.teal,
+            strength: 0.30,
+          ),
         );
       default:
         return _SleepLegendItem(
@@ -472,7 +544,9 @@ class _SleepInsightsState extends State<SleepInsights> {
   ) {
     switch (mode) {
       case SleepHeatMapMode.hours:
-        return day == null ? 'No entry logged' : '${day.averageHours.toStringAsFixed(1)} hours';
+        return day == null
+            ? 'No entry logged'
+            : '${day.averageHours.toStringAsFixed(1)} hours';
       case SleepHeatMapMode.quality:
         return _qualityLabel(day?.qualityRaw, fallbackHours: day?.averageHours);
       case SleepHeatMapMode.consistency:
@@ -502,22 +576,25 @@ class _SleepInsightsState extends State<SleepInsights> {
       case SleepHeatMapMode.quality:
         final counts = <String, int>{};
         for (final day in monthData) {
-          final label = _qualityLabel(day.qualityRaw, fallbackHours: day.averageHours);
+          final label = _qualityLabel(
+            day.qualityRaw,
+            fallbackHours: day.averageHours,
+          );
           if (label == 'No data') continue;
           counts[label] = (counts[label] ?? 0) + 1;
         }
         if (counts.isEmpty) {
           return 'You logged sleep this month, though quality tags were a little quiet.';
         }
-        final dominant = counts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+        final dominant = counts.entries
+            .reduce((a, b) => a.value >= b.value ? a : b)
+            .key;
         return 'Your sleep quality most often felt $dominant this month, with a few softer variations around it.';
       case SleepHeatMapMode.consistency:
-        final steadyDays = monthData
-            .where((day) {
-              final label = _consistencyLabel(day.averageHours, monthlyAverage);
-              return label == 'Typical' || label == 'Very consistent';
-            })
-            .length;
+        final steadyDays = monthData.where((day) {
+          final label = _consistencyLabel(day.averageHours, monthlyAverage);
+          return label == 'Typical' || label == 'Very consistent';
+        }).length;
         if (steadyDays >= math.max(3, monthData.length ~/ 2)) {
           return 'Your sleep rhythm looked fairly steady this month, especially in your usual range.';
         }
@@ -537,7 +614,10 @@ class _SleepInsightsState extends State<SleepInsights> {
       day: day,
       monthlyAverage: monthlyAverage,
       selectedMode: _selectedMode,
-      qualityLabel: _qualityLabel(day?.qualityRaw, fallbackHours: day?.averageHours),
+      qualityLabel: _qualityLabel(
+        day?.qualityRaw,
+        fallbackHours: day?.averageHours,
+      ),
       consistencyLabel: _consistencyLabel(day?.averageHours, monthlyAverage),
       scheme: scheme,
     );
@@ -546,13 +626,13 @@ class _SleepInsightsState extends State<SleepInsights> {
       showDialog<void>(
         context: context,
         builder: (context) => Dialog(
-          insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 32,
+            vertical: 24,
+          ),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: content,
-            ),
+            child: Padding(padding: const EdgeInsets.all(16), child: content),
           ),
         ),
       );
@@ -576,18 +656,23 @@ class _SleepInsightsState extends State<SleepInsights> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final selectedMonth = widget.selectedMonth;
-    final previousMonthStart = DateTime(selectedMonth.year, selectedMonth.month - 1, 1);
+    final previousMonthStart = DateTime(
+      selectedMonth.year,
+      selectedMonth.month - 1,
+      1,
+    );
     final monthStart = DateTime(selectedMonth.year, selectedMonth.month, 1);
-    final endExclusive = DateTime(selectedMonth.year, selectedMonth.month + 1, 1);
+    final endExclusive = DateTime(
+      selectedMonth.year,
+      selectedMonth.month + 1,
+      1,
+    );
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from('sleep_logs')
-          .select('day, hours_slept, quality, notes')
-          .gte('day', _dateOnly(previousMonthStart))
-          .lt('day', _dateOnly(endExclusive))
-          .order('day', ascending: true)
-          .limit(500),
+      future: _loadSleepRows(
+        startDay: _dateOnly(previousMonthStart),
+        endExclusiveDay: _dateOnly(endExclusive),
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Padding(
@@ -628,11 +713,13 @@ class _SleepInsightsState extends State<SleepInsights> {
               : null;
           if (targetMap == null) continue;
           final dayKey = _dateOnly(localDay);
-          targetMap.putIfAbsent(dayKey, () => SleepDayAgg(day: dayKey)).add(
-            _toDouble(row['hours_slept']),
-            quality: row['quality']?.toString(),
-            note: row['notes']?.toString(),
-          );
+          targetMap
+              .putIfAbsent(dayKey, () => SleepDayAgg(day: dayKey))
+              .add(
+                _toDouble(row['hours_slept']),
+                quality: row['quality']?.toString(),
+                note: row['notes']?.toString(),
+              );
         }
 
         if (kDebugMode) {
@@ -643,22 +730,30 @@ class _SleepInsightsState extends State<SleepInsights> {
 
         final monthData = byDay.values.toList()
           ..sort((a, b) => a.day.compareTo(b.day));
-        final totalHours = monthData.fold<double>(0, (sum, day) => sum + day.hoursTotal);
+        final totalHours = monthData.fold<double>(
+          0,
+          (sum, day) => sum + day.hoursTotal,
+        );
         final monthlyAverage = monthData.isEmpty
             ? null
             : monthData.fold<double>(0, (sum, day) => sum + day.averageHours) /
-                monthData.length;
+                  monthData.length;
         final previousTotalHours = previousByDay.values.fold<double>(
           0,
           (sum, day) => sum + day.hoursTotal,
         );
         final bestSleepDay = monthData.isEmpty
             ? null
-            : monthData.reduce((a, b) => a.averageHours >= b.averageHours ? a : b);
+            : monthData.reduce(
+                (a, b) => a.averageHours >= b.averageHours ? a : b,
+              );
         final shortestSleepDay = monthData.isEmpty
             ? null
-            : monthData.reduce((a, b) => a.averageHours <= b.averageHours ? a : b);
-        final selectedDay = _selectedDay != null &&
+            : monthData.reduce(
+                (a, b) => a.averageHours <= b.averageHours ? a : b,
+              );
+        final selectedDay =
+            _selectedDay != null &&
                 _selectedDay!.year == selectedMonth.year &&
                 _selectedDay!.month == selectedMonth.month
             ? _selectedDay!
@@ -669,13 +764,19 @@ class _SleepInsightsState extends State<SleepInsights> {
         final hoursCounts = <String, int>{};
         int steadyDays = 0;
         for (final day in monthData) {
-          final quality = _qualityLabel(day.qualityRaw, fallbackHours: day.averageHours);
+          final quality = _qualityLabel(
+            day.qualityRaw,
+            fallbackHours: day.averageHours,
+          );
           if (quality != 'No data') {
             qualityCounts[quality] = (qualityCounts[quality] ?? 0) + 1;
           }
           final range = _hoursLegend(day.averageHours, scheme).label;
           hoursCounts[range] = (hoursCounts[range] ?? 0) + 1;
-          final consistency = _consistencyLabel(day.averageHours, monthlyAverage);
+          final consistency = _consistencyLabel(
+            day.averageHours,
+            monthlyAverage,
+          );
           if (consistency == 'Typical' || consistency == 'Very consistent') {
             steadyDays += 1;
           }
@@ -684,7 +785,9 @@ class _SleepInsightsState extends State<SleepInsights> {
         final metricCards = <_SleepMetricCardData>[
           _SleepMetricCardData(
             label: 'Average sleep',
-            value: monthlyAverage == null ? '—' : '${monthlyAverage.toStringAsFixed(1)}h',
+            value: monthlyAverage == null
+                ? '—'
+                : '${monthlyAverage.toStringAsFixed(1)}h',
             icon: Icons.nights_stay_outlined,
           ),
           _SleepMetricCardData(
@@ -694,14 +797,20 @@ class _SleepInsightsState extends State<SleepInsights> {
           ),
           _SleepMetricCardData(
             label: 'Total sleep this month',
-            value: monthData.isEmpty ? '—' : '${totalHours.toStringAsFixed(1)}h',
+            value: monthData.isEmpty
+                ? '—'
+                : '${totalHours.toStringAsFixed(1)}h',
             icon: Icons.stacked_line_chart_rounded,
           ),
           _SleepMetricCardData(
             label: 'Best sleep day',
-            value: bestSleepDay == null ? '—' : '${bestSleepDay.averageHours.toStringAsFixed(1)}h',
+            value: bestSleepDay == null
+                ? '—'
+                : '${bestSleepDay.averageHours.toStringAsFixed(1)}h',
             icon: Icons.wb_twilight_outlined,
-            subtitle: bestSleepDay == null ? null : _formatDate(bestSleepDay.day),
+            subtitle: bestSleepDay == null
+                ? null
+                : _formatDate(bestSleepDay.day),
           ),
           _SleepMetricCardData(
             label: 'Shortest sleep day',
@@ -709,18 +818,24 @@ class _SleepInsightsState extends State<SleepInsights> {
                 ? '—'
                 : '${shortestSleepDay.averageHours.toStringAsFixed(1)}h',
             icon: Icons.bedtime_off_outlined,
-            subtitle: shortestSleepDay == null ? null : _formatDate(shortestSleepDay.day),
+            subtitle: shortestSleepDay == null
+                ? null
+                : _formatDate(shortestSleepDay.day),
           ),
           if (hoursCounts.isNotEmpty)
             _SleepMetricCardData(
               label: 'Most common range',
-              value: hoursCounts.entries.reduce((a, b) => a.value >= b.value ? a : b).key,
+              value: hoursCounts.entries
+                  .reduce((a, b) => a.value >= b.value ? a : b)
+                  .key,
               icon: Icons.blur_on_rounded,
             ),
           if (qualityCounts.isNotEmpty)
             _SleepMetricCardData(
               label: 'Most common quality',
-              value: qualityCounts.entries.reduce((a, b) => a.value >= b.value ? a : b).key,
+              value: qualityCounts.entries
+                  .reduce((a, b) => a.value >= b.value ? a : b)
+                  .key,
               icon: Icons.self_improvement_outlined,
             ),
           if (monthData.isNotEmpty)
@@ -734,9 +849,12 @@ class _SleepInsightsState extends State<SleepInsights> {
         final legacyInsight = BrainBubbleInsights.sleep(
           currentHours: totalHours,
           previousHours: previousTotalHours,
-          calmestNight: bestSleepDay == null ? null : DateTime.tryParse(bestSleepDay.day),
-          shortestNight:
-              shortestSleepDay == null ? null : DateTime.tryParse(shortestSleepDay.day),
+          calmestNight: bestSleepDay == null
+              ? null
+              : DateTime.tryParse(bestSleepDay.day),
+          shortestNight: shortestSleepDay == null
+              ? null
+              : DateTime.tryParse(shortestSleepDay.day),
           daysLogged: monthData.length,
         );
 
@@ -1009,7 +1127,10 @@ class _SleepHeatMapToggle extends StatelessWidget {
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 220),
                   curve: Curves.easeOutCubic,
-                  padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 11,
+                    horizontal: 8,
+                  ),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(999),
                     color: selected
@@ -1126,7 +1247,10 @@ class _SleepHeatMap extends StatelessWidget {
         if (hours < 11) return const Color(0xFF89C9D8).withOpacity(0.18);
         return const Color(0xFF6EB7CB).withOpacity(0.22);
       case SleepHeatMapMode.quality:
-        return switch (_qualityLabel(day.qualityRaw, fallbackHours: day.averageHours)) {
+        return switch (_qualityLabel(
+          day.qualityRaw,
+          fallbackHours: day.averageHours,
+        )) {
           'Restless' => const Color(0xFFE88AA8).withOpacity(0.18),
           'Short' => const Color(0xFFEFB08D).withOpacity(0.18),
           'Okay' => const Color(0xFFE5C96D).withOpacity(0.18),
@@ -1181,17 +1305,20 @@ class _SleepHeatMap extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 8),
             child: Row(
               children: List.generate(7, (dayOfWeek) {
-                final dayNumber = (weekIndex * 7) + dayOfWeek - leadingBlanks + 1;
+                final dayNumber =
+                    (weekIndex * 7) + dayOfWeek - leadingBlanks + 1;
                 if (dayNumber < 1 || dayNumber > daysInMonth) {
                   return const Expanded(child: SizedBox());
                 }
                 final date = DateTime(month.year, month.month, dayNumber);
                 final data = dataByDay[_dateOnly(date)];
-                final isSelected = selectedDay.year == date.year &&
+                final isSelected =
+                    selectedDay.year == date.year &&
                     selectedDay.month == date.month &&
                     selectedDay.day == date.day;
                 final today = DateTime.now();
-                final isToday = today.year == date.year &&
+                final isToday =
+                    today.year == date.year &&
                     today.month == date.month &&
                     today.day == date.day;
 
@@ -1221,7 +1348,9 @@ class _SleepHeatMap extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(
                                   color: isSelected
-                                      ? _selectionBorderColor().withOpacity(0.28)
+                                      ? _selectionBorderColor().withOpacity(
+                                          0.28,
+                                        )
                                       : isToday
                                       ? scheme.primary.withOpacity(0.18)
                                       : scheme.outline.withOpacity(0.1),
@@ -1234,7 +1363,9 @@ class _SleepHeatMap extends StatelessWidget {
                                   style: TextStyle(
                                     fontSize: 10,
                                     fontWeight: FontWeight.w600,
-                                    color: scheme.onSurfaceVariant.withOpacity(0.62),
+                                    color: scheme.onSurfaceVariant.withOpacity(
+                                      0.62,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1363,7 +1494,9 @@ class _SleepDayDetailsCard extends StatelessWidget {
           runSpacing: 8,
           children: [
             _DetailPill(
-              label: hasData ? '${day!.averageHours.toStringAsFixed(1)}h' : 'No data',
+              label: hasData
+                  ? '${day!.averageHours.toStringAsFixed(1)}h'
+                  : 'No data',
               scheme: scheme,
             ),
             _DetailPill(label: qualityLabel, scheme: scheme),
@@ -1383,7 +1516,8 @@ class _SleepDayDetailsCard extends StatelessWidget {
           _DetailRow(
             label: 'Mode focus',
             value: switch (selectedMode) {
-              SleepHeatMapMode.hours => '${day!.averageHours.toStringAsFixed(1)} hours',
+              SleepHeatMapMode.hours =>
+                '${day!.averageHours.toStringAsFixed(1)} hours',
               SleepHeatMapMode.quality => qualityLabel,
               SleepHeatMapMode.consistency => consistencyLabel,
             },

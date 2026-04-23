@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+import 'package:mind_buddy/core/database/app_database.dart';
+import 'package:mind_buddy/features/habits/habit_local_repository.dart';
+import 'package:mind_buddy/features/settings/data/local/notifications_local_data_source.dart';
 import 'package:home_widget/home_widget.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -29,11 +32,22 @@ class HabitHomeWidgetService {
   static const int _maxVisible = 6;
 
   static Future<void> syncTodaySnapshot() async {
+    // This updates only local widget/notification caches; it is not a remote sync.
+    // ignore: avoid_print
+    print('HABIT_LOAD_FROM_LOCAL_START kind=widget_snapshot');
     await HomeWidget.setAppGroupId(iOSAppGroupId);
     final palette = await _loadThemePalette();
     final supabase = Supabase.instance.client;
     final user = supabase.auth.currentUser;
+    final habitRepository = HabitLocalRepository(supabase: supabase);
+    final notificationsLocalDataSource = NotificationsLocalDataSource(
+      AppDatabase.shared(),
+    );
     if (user == null) {
+      await notificationsLocalDataSource.saveHabitSnapshot(
+        userId: 'guest',
+        habits: const <Map<String, dynamic>>[],
+      );
       await _write(
         done: 0,
         total: 0,
@@ -46,46 +60,31 @@ class HabitHomeWidgetService {
       return;
     }
 
-    final today = _ymd(DateTime.now().toLocal());
-    final activeRows = await supabase
-        .from('user_habits')
-        .select('id, name')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .order('sort_order', ascending: true);
-
+    final todayHabits = await habitRepository.loadTodayHabits();
     final activeHabits = <Map<String, String>>[];
+    final notificationHabits = <Map<String, dynamic>>[];
     final activeIds = <String>{};
-    for (final raw in (activeRows as List)) {
-      final row = Map<String, dynamic>.from(raw as Map);
-      final id = (row['id'] ?? '').toString().trim();
-      final name = (row['name'] ?? '').toString().trim();
+    for (final habit in todayHabits) {
+      final id = habit.id.trim();
+      final name = habit.name.trim();
       if (id.isEmpty || name.isEmpty) continue;
       activeHabits.add(<String, String>{'id': id, 'name': name});
+      notificationHabits.add(<String, dynamic>{
+        'id': id,
+        'name': name,
+        'sort_order': habit.sortOrder,
+        'category_name': habit.categoryName,
+      });
       activeIds.add(id);
     }
-    List logs;
-    try {
-      logs = await supabase
-          .from('habit_logs')
-          .select('habit_id, habit_name, is_completed')
-          .eq('user_id', user.id)
-          .eq('day', today);
-    } catch (_) {
-      logs = await supabase
-          .from('habit_logs')
-          .select('habit_name, is_completed')
-          .eq('user_id', user.id)
-          .eq('day', today);
-    }
-
+    await notificationsLocalDataSource.saveHabitSnapshot(
+      userId: user.id,
+      habits: notificationHabits,
+    );
     final doneById = <String, bool>{};
-    for (final raw in logs) {
-      final row = Map<String, dynamic>.from(raw as Map);
-      final hid = (row['habit_id'] ?? '').toString().trim();
-      final isCompleted = row['is_completed'] == true;
-      if (hid.isNotEmpty && activeIds.contains(hid)) {
-        doneById[hid] = isCompleted;
+    for (final habit in todayHabits) {
+      if (activeIds.contains(habit.id)) {
+        doneById[habit.id] = habit.isCompleted;
       }
     }
     final doneIds = doneById.entries
@@ -97,11 +96,13 @@ class HabitHomeWidgetService {
         .take(_maxVisible)
         .toList(growable: false);
     final items = visibleHabits
-        .map((h) => <String, dynamic>{
-              'id': h['id'],
-              'name': h['name'],
-              'done': doneIds.contains(h['id']),
-            })
+        .map(
+          (h) => <String, dynamic>{
+            'id': h['id'],
+            'name': h['name'],
+            'done': doneIds.contains(h['id']),
+          },
+        )
         .toList(growable: false);
 
     await _write(
@@ -115,6 +116,10 @@ class HabitHomeWidgetService {
       palette: palette,
     );
     await _refreshWidgets();
+    // ignore: avoid_print
+    print(
+      'HABIT_LOAD_FROM_LOCAL_RESULT kind=widget_snapshot total=${activeHabits.length} done=${doneIds.length}',
+    );
   }
 
   static Future<bool> toggleTodayFromWidget({
@@ -134,52 +139,35 @@ class HabitHomeWidgetService {
         : _ymd(DateTime.now().toLocal());
 
     try {
-      final existingRows = await supabase
-          .from('habit_logs')
-          .select('is_completed')
-          .eq('user_id', user.id)
-          .eq('habit_id', trimmedId)
-          .eq('day', day);
-
-      final existingList = (existingRows as List)
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList(growable: false);
-      final wasDone = existingList.any((row) => row['is_completed'] == true);
-      final isNowDone = forceCompleted ?? !wasDone;
-      // Widget toggle persistence log for debug parity with app reads.
-      // ignore: avoid_print
-      print(
-        '[WidgetPersist] table=habit_logs user_id=${user.id} habit_id=$trimmedId day=$day is_completed=$isNowDone via=toggleTodayFromWidget',
-      );
-
-      final payload = <String, dynamic>{
-        'user_id': user.id,
-        'habit_id': trimmedId,
-        'day': day,
-        'is_completed': isNowDone,
-      };
-      if (trimmedName.isNotEmpty) payload['habit_name'] = trimmedName;
-
-      try {
-        await supabase
-            .from('habit_logs')
-            .upsert(payload, onConflict: 'user_id,habit_id,day');
-      } catch (_) {
-        if (existingList.isNotEmpty) {
-          await supabase
-              .from('habit_logs')
-              .update({'is_completed': isNowDone})
-              .eq('user_id', user.id)
-              .eq('habit_id', trimmedId)
-              .eq('day', day);
-        } else {
-          await supabase.from('habit_logs').insert(payload);
+      final habitRepository = HabitLocalRepository(supabase: supabase);
+      final todayHabits = await habitRepository.loadTodayHabits();
+      var wasDone = false;
+      for (final item in todayHabits) {
+        if (item.id == trimmedId) {
+          wasDone = item.isCompleted;
+          break;
         }
       }
+      final isNowDone = forceCompleted ?? !wasDone;
+      // ignore: avoid_print
+      print(
+        'HABIT_UI_SAVE_TRIGGERED kind=widget_toggle userId=${user.id} habitId=$trimmedId day=$day isCompleted=$isNowDone',
+      );
+
+      await habitRepository.setHabitCompletion(
+        habitId: trimmedId,
+        habitName: trimmedName,
+        isCompleted: isNowDone,
+        day: DateTime.parse(day),
+      );
 
       await syncTodaySnapshot();
       return true;
     } catch (_) {
+      // ignore: avoid_print
+      print(
+        'HABIT_REMOTE_WRITE_SKIPPED_OFFLINE kind=widget_toggle reason=no_remote_habit_write_path',
+      );
       return false;
     }
   }
@@ -207,7 +195,8 @@ class HabitHomeWidgetService {
     final habitId = (uri.queryParameters['habit_id'] ?? '').trim();
     if (habitId.isEmpty) return;
     final habitName = (uri.queryParameters['habit_name'] ?? '').trim();
-    final alreadyToggled = (uri.queryParameters['already_toggled'] ?? '') == '1';
+    final alreadyToggled =
+        (uri.queryParameters['already_toggled'] ?? '') == '1';
     final rawCompleted = (uri.queryParameters['is_completed'] ?? '').trim();
     bool? targetCompleted;
     if (rawCompleted == '1' || rawCompleted.toLowerCase() == 'true') {
@@ -300,15 +289,14 @@ class HabitHomeWidgetService {
       );
       if (ok) {
         anySuccess = true;
-        // ignore: avoid_print
-        print(
-          '[WidgetPersist] table=habit_logs user_id=${user.id} habit_id=$habitId day=$day is_completed=$completed via=flushPendingWidgetToggles',
-        );
       } else {
         keep.add(row);
       }
     }
-    await HomeWidget.saveWidgetData<String>(_pendingTogglesKey, jsonEncode(keep));
+    await HomeWidget.saveWidgetData<String>(
+      _pendingTogglesKey,
+      jsonEncode(keep),
+    );
     if (anySuccess) {
       await syncTodaySnapshot();
     }
@@ -346,7 +334,10 @@ class HabitHomeWidgetService {
       'is_completed': completed,
       'updated_at': DateTime.now().toIso8601String(),
     });
-    await HomeWidget.saveWidgetData<String>(_pendingTogglesKey, jsonEncode(next));
+    await HomeWidget.saveWidgetData<String>(
+      _pendingTogglesKey,
+      jsonEncode(next),
+    );
   }
 
   static Future<void> _removePendingToggle({
@@ -368,7 +359,10 @@ class HabitHomeWidgetService {
       if (hid == habitId && d == day) continue;
       next.add(row);
     }
-    await HomeWidget.saveWidgetData<String>(_pendingTogglesKey, jsonEncode(next));
+    await HomeWidget.saveWidgetData<String>(
+      _pendingTogglesKey,
+      jsonEncode(next),
+    );
   }
 
   static Future<_WidgetThemePalette> _loadThemePalette() async {

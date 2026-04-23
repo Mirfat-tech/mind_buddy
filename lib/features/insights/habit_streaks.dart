@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'package:mind_buddy/features/habits/habit_local_repository.dart';
 
 class HabitStreaks extends StatelessWidget {
   const HabitStreaks({super.key});
 
+  Future<List<HabitStreakRow>> _loadRows() {
+    debugPrint('INSIGHTS_LOAD_LOCAL source=habit_streaks');
+    return HabitLocalRepository().loadStreakRows();
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from('v_habit_streaks')
-          .select('habit,current_streak,longest_streak,last_done_day')
-          .order('current_streak', ascending: false)
-          .order('longest_streak', ascending: false)
-          .order('habit', ascending: true),
+    return FutureBuilder<List<HabitStreakRow>>(
+      future: _loadRows(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Padding(
@@ -33,10 +34,10 @@ class HabitStreaks extends StatelessWidget {
 
         return Column(
           children: rows.map((r) {
-            final habit = (r['habit'] ?? '').toString();
-            final current = (r['current_streak'] ?? 0) as int;
-            final longest = (r['longest_streak'] ?? 0) as int;
-            final lastDone = (r['last_done_day'] ?? '').toString();
+            final habit = r.habit;
+            final current = r.currentStreak;
+            final longest = r.longestStreak;
+            final lastDone = r.lastDoneDay ?? '—';
 
             return Card(
               child: ListTile(

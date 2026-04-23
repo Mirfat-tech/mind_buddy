@@ -1,4 +1,4 @@
-// lib/features/home/home_screen.dart
+// lib/features/home/overall_features_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,25 +6,28 @@ import 'package:go_router/go_router.dart';
 import 'widgets/templates_section.dart';
 
 import 'package:mind_buddy/features/settings/settings_provider.dart';
+import 'package:mind_buddy/features/settings/theme_picker_panel.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
-import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'; // Fixes 'Supabase' error
 import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 //import 'widgets/pomodoro_box_widget.dart';
 
-class HomeScreen extends ConsumerStatefulWidget {
-  const HomeScreen({super.key});
+class OverallFeaturesPage extends ConsumerStatefulWidget {
+  const OverallFeaturesPage({super.key, this.previewMode = false});
+
+  final bool previewMode;
 
   @override
-  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<OverallFeaturesPage> createState() =>
+      _OverallFeaturesPageState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+class _OverallFeaturesPageState extends ConsumerState<OverallFeaturesPage> {
   bool _checkedDevice = false;
   final GlobalKey _themeSelectorButtonKey = GlobalKey();
   final GlobalKey _insightsButtonKey = GlobalKey();
@@ -33,30 +36,32 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _enforceDeviceLimit();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      GuideManager.showGuideIfNeeded(
-        context: context,
-        pageId: 'home',
-        steps: [
-          GuideStep(
-            key: _themeSelectorButtonKey,
-            title: 'Feeling a different vibe today?',
-            body: 'Tap the theme bubble to shift your colours.',
-          ),
-          GuideStep(
-            key: _insightsButtonKey,
-            title: 'Curious what your brain’s been up to?',
-            body: 'Tap here to view insights, streaks and reflections.',
-          ),
-          GuideStep(
-            key: _settingsButtonKey,
-            title: 'Need to adjust your bubble?',
-            body: 'Open settings to customise your flow.',
-          ),
-        ],
-      );
-    });
+    if (!widget.previewMode) {
+      _enforceDeviceLimit();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        GuideManager.showGuideIfNeeded(
+          context: context,
+          pageId: 'home',
+          steps: [
+            GuideStep(
+              key: _themeSelectorButtonKey,
+              title: 'Feeling a different vibe today?',
+              body: 'Tap the theme bubble to shift your colours.',
+            ),
+            GuideStep(
+              key: _insightsButtonKey,
+              title: 'Want to explore your patterns?',
+              body: 'Tap here to open your insights.',
+            ),
+            GuideStep(
+              key: _settingsButtonKey,
+              title: 'Need to adjust your bubble?',
+              body: 'Open settings to customise your flow.',
+            ),
+          ],
+        );
+      });
+    }
   }
 
   Future<void> _enforceDeviceLimit() async {
@@ -106,45 +111,31 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Future<void> _openThemePicker(BuildContext context, WidgetRef ref) async {
-    final controller = ref.read(settingsControllerProvider);
+    final selectedId = ref.read(settingsControllerProvider).settings.themeId;
 
-    final selected = await showModalBottomSheet<String>(
+    await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (_) {
         return SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Text(
-                'Choose theme',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-
-              // Make sure paperStyles exists in paper_styles.dart
-              ...paperStyles.map((s) {
-                final isSelected = controller.settings.themeId == s.id;
-                return ListTile(
-                  title: Text(s.name),
-                  trailing: isSelected ? const Icon(Icons.check) : null,
-                  onTap: () => Navigator.pop(context, s.id),
-                );
-              }),
-            ],
+          child: SizedBox(
+            height: MediaQuery.of(context).size.height * 0.78,
+            child: ThemePickerPanel(
+              selectedId: selectedId,
+              onThemeSelected: (_) {
+                Navigator.of(context).pop();
+              },
+            ),
           ),
         );
       },
     );
-
-    if (selected != null) {
-      await controller.setTheme(selected);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return MbScaffold(
+    final content = MbScaffold(
       applyBackground: true,
       appBar: AppBar(
         title: const Text('MyBrainBubble'),
@@ -154,31 +145,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             icon: Icons.palette_outlined,
             onPressed: () => _openThemePicker(context, ref),
           ),
-          MbGlowIconButton(
-            icon: Icons.help_outline,
-            onPressed: () => GuideManager.showGuideIfNeeded(
-              context: context,
-              pageId: 'home',
-              force: true,
-              steps: [
-                GuideStep(
-                  key: _themeSelectorButtonKey,
-                  title: 'Feeling a different vibe today?',
-                  body: 'Tap the theme bubble to shift your colours.',
-                ),
-                GuideStep(
-                  key: _insightsButtonKey,
-                  title: 'Curious what your brain’s been up to?',
-                  body: 'Tap here to view insights, streaks and reflections.',
-                ),
-                GuideStep(
-                  key: _settingsButtonKey,
-                  title: 'Need to adjust your bubble?',
-                  body: 'Open settings to customise your flow.',
-                ),
-              ],
-            ),
-          ),
+
           MbGlowIconButton(
             key: _settingsButtonKey,
             icon: Icons.settings_outlined,
@@ -193,6 +160,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         child: _HomeBody(insightsButtonKey: _insightsButtonKey),
       ),
     );
+
+    if (!widget.previewMode) {
+      return content;
+    }
+
+    return IgnorePointer(child: content);
   }
 }
 
@@ -217,8 +190,8 @@ class _HomeBubble extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: scheme.primary.withOpacity(0.15), // The glow color
-            blurRadius: 20, // How soft the glow is
+            color: scheme.primary.withValues(alpha: 0.15), // The glow color
+            blurRadius: 40, // How soft the glow is
             spreadRadius: 2, // How far the glow extends
             offset: const Offset(0, 4), // Subtle downward shift
           ),
@@ -233,7 +206,7 @@ class _HomeBubble extends StatelessWidget {
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: scheme.outline.withOpacity(0.25)),
+              border: Border.all(color: scheme.outline.withValues(alpha: 0.08)),
             ),
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -332,16 +305,6 @@ class _HomeBody extends ConsumerWidget {
           const SizedBox(height: 8),
 
           const SizedBox(height: 12),
-
-          // CALENDAR
-          SizedBox(
-            height: 52,
-            child: OutlinedButton(
-              onPressed: () => context.go('/calendar'),
-              child: const Text('Calendar'),
-            ),
-          ),
-          const SizedBox(height: 10),
 
           // BRAIN FOG
           SizedBox(
@@ -449,48 +412,12 @@ class _TrialBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        border: Border.all(color: scheme.outline.withValues(alpha: 0.25)),
         boxShadow: [
           BoxShadow(
-            color: scheme.primary.withOpacity(0.12),
+            color: scheme.primary.withValues(alpha: 0.12),
             blurRadius: 16,
             offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.auto_awesome, color: scheme.primary),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'FREE MODE uses 24-hour preview mode for templates. Preview data disappears after 24 hours.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextButton(
-                  onPressed: onSkip,
-                  child: const Text('Skip for now'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: FilledButton(
-                  onPressed: onUpgrade,
-                  child: const Text('View modes'),
-                ),
-              ),
-            ],
           ),
         ],
       ),

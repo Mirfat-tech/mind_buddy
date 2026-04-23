@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:mind_buddy/features/bubble_coins/widgets/bubble_coin_reward_burst.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/features/habits/habit_models.dart';
 import 'package:mind_buddy/features/habits/habit_today_repository.dart';
 
 class HabitBubbleEntryScreen extends StatefulWidget {
@@ -21,11 +23,13 @@ class HabitBubbleEntryScreen extends StatefulWidget {
 class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
   final HabitTodayRepository _repository = HabitTodayRepository();
   final PageController _pageController = PageController(viewportFraction: 0.94);
+  final GlobalKey _resetButtonKey = GlobalKey();
   bool _loading = true;
   String? _error;
   List<TodayHabitItem> _habits = const <TodayHabitItem>[];
   final Map<String, int> _requestVersionByHabitId = <String, int>{};
   int _currentPage = 0;
+  int _rewardBurstCount = 0;
 
   @override
   void initState() {
@@ -87,11 +91,17 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
     }
 
     try {
-      await _repository.setHabitCompletion(
+      final rewardAwarded = await _repository.setHabitCompletion(
         habitId: item.id,
         habitName: item.name,
         isCompleted: nextCompleted,
       );
+      if (!mounted) return;
+      if (rewardAwarded) {
+        setState(() {
+          _rewardBurstCount++;
+        });
+      }
     } catch (_) {
       if (!mounted) return;
       final latestVersion = _requestVersionByHabitId[item.id];
@@ -123,9 +133,9 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
     final grouped = <String, List<TodayHabitItem>>{};
     for (final habit in _habits) {
       final categoryName = _normalizedCategoryName(habit.categoryName);
-      grouped.putIfAbsent(categoryName, () => <TodayHabitItem>[]).add(
-        habit.copyWith(categoryName: categoryName),
-      );
+      grouped
+          .putIfAbsent(categoryName, () => <TodayHabitItem>[])
+          .add(habit.copyWith(categoryName: categoryName));
     }
 
     final entries = grouped.entries.toList()
@@ -134,8 +144,12 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
         final bStartedAt = _oldestStartedAt(b.value);
         final byStart = _compareNullableDate(aStartedAt, bStartedAt);
         if (byStart != 0) return byStart;
-        final aSort = a.value.map((habit) => habit.categorySortOrder).reduce(math.min);
-        final bSort = b.value.map((habit) => habit.categorySortOrder).reduce(math.min);
+        final aSort = a.value
+            .map((habit) => habit.categorySortOrder)
+            .reduce(math.min);
+        final bSort = b.value
+            .map((habit) => habit.categorySortOrder)
+            .reduce(math.min);
         final byOrder = aSort.compareTo(bSort);
         if (byOrder != 0) return byOrder;
         return a.key.toLowerCase().compareTo(b.key.toLowerCase());
@@ -170,7 +184,7 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
             children: [
               MbGlowBackButton(
                 onPressed: () =>
-                    context.canPop() ? context.pop() : context.go('/home'),
+                    context.canPop() ? context.pop() : context.go('/'),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -190,7 +204,9 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.labelMedium?.copyWith(
-                        color: theme.colorScheme.primary.withValues(alpha: 0.82),
+                        color: theme.colorScheme.primary.withValues(
+                          alpha: 0.82,
+                        ),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -207,58 +223,88 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
         ),
         actions: [
           MbGlowIconButton(
-            tooltip: 'Refresh',
-            icon: Icons.refresh_rounded,
-            onPressed: _load,
+            tooltip: 'Bubble Pool',
+            icon: Icons.bubble_chart_outlined,
+            onPressed: () => context.go('/bubble-pool'),
           ),
         ],
       ),
       body: MbFloatingHintOverlay(
         hintKey: 'hint_habit_bubble_entry',
-        text: 'Pop the bubbles you finished today. When you’re ready, slide to the next category or open the full tracker.',
+        text:
+            'Pop the bubbles you finished today. When you’re ready, slide to the next category or open the full tracker.',
         iconText: '🫧',
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-            child: _loading
-                ? const _BubbleWrapLoadingState()
-                : _error != null
-                ? _BubbleWrapErrorState(error: _error!, onRetry: _load)
-                : _habits.isEmpty
-                ? const _BubbleWrapEmptyState()
-                : Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _HeroSummary(
-                        currentIndex: _currentPage,
-                        pageCount: pages.length,
-                        page: currentPage!,
+        child: Stack(
+          children: [
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                child: _loading
+                    ? const _BubbleWrapLoadingState()
+                    : _error != null
+                    ? _BubbleWrapErrorState(error: _error!, onRetry: _load)
+                    : _habits.isEmpty
+                    ? const _BubbleWrapEmptyState()
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _HeroSummary(
+                            currentIndex: _currentPage,
+                            pageCount: pages.length,
+                            page: currentPage!,
+                          ),
+                          const SizedBox(height: 14),
+                          Expanded(
+                            child: PageView.builder(
+                              controller: _pageController,
+                              itemCount: pages.length,
+                              onPageChanged: (page) {
+                                setState(() => _currentPage = page);
+                              },
+                              itemBuilder: (context, index) {
+                                final page = pages[index];
+                                return Padding(
+                                  padding: const EdgeInsets.only(right: 10),
+                                  child: _CategoryBubblePage(
+                                    page: page,
+                                    onHabitTap: _toggleHabit,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          SafeArea(
+                            top: false,
+                            child: Center(
+                              child: TextButton(
+                                key: _resetButtonKey,
+                                onPressed: _load,
+                                style: TextButton.styleFrom(
+                                  foregroundColor: theme.colorScheme.primary,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 12,
+                                  ),
+                                  minimumSize: const Size(88, 44),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                ),
+                                child: const Text('Reset'),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                       ),
-                      const SizedBox(height: 14),
-                      Expanded(
-                        child: PageView.builder(
-                          controller: _pageController,
-                          itemCount: pages.length,
-                          onPageChanged: (page) {
-                            setState(() => _currentPage = page);
-                          },
-                          itemBuilder: (context, index) {
-                            final page = pages[index];
-                            return Padding(
-                              padding: const EdgeInsets.only(right: 10),
-                        child: _CategoryBubblePage(
-                          page: page,
-                          onHabitTap: _toggleHabit,
-                        ),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                  ),
-          ),
+              ),
+            ),
+            BubbleCoinRewardBurst(
+              playCount: _rewardBurstCount,
+              padding: const EdgeInsets.only(top: 72),
+            ),
+          ],
         ),
       ),
     );
@@ -397,9 +443,7 @@ class _HeroSummary extends StatelessWidget {
                 value: pageProgress,
                 minHeight: 8,
                 backgroundColor: accent.withValues(alpha: 0.14),
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  accent,
-                ),
+                valueColor: AlwaysStoppedAnimation<Color>(accent),
               ),
             ),
             const SizedBox(height: 10),
@@ -417,10 +461,7 @@ class _HeroSummary extends StatelessWidget {
 }
 
 class _CategoryBubblePage extends StatelessWidget {
-  const _CategoryBubblePage({
-    required this.page,
-    required this.onHabitTap,
-  });
+  const _CategoryBubblePage({required this.page, required this.onHabitTap});
 
   final _CategoryPageData page;
   final ValueChanged<TodayHabitItem> onHabitTap;
@@ -440,8 +481,10 @@ class _CategoryBubblePage extends StatelessWidget {
               : 3;
           const spacing = 14.0;
           final bubbleSize =
-              ((width - 42 - (spacing * (columns - 1))) / columns)
-                  .clamp(90.0, 128.0);
+              ((width - 42 - (spacing * (columns - 1))) / columns).clamp(
+                90.0,
+                128.0,
+              );
           return GridView.builder(
             padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
             physics: const BouncingScrollPhysics(),
@@ -520,21 +563,24 @@ class _HabitBubbleNodeState extends State<_HabitBubbleNode>
     );
     _pressScale = TweenSequence<double>([
       TweenSequenceItem(
-        tween: Tween<double>(begin: 1, end: 0.91).chain(
-          CurveTween(curve: Curves.easeOut),
-        ),
+        tween: Tween<double>(
+          begin: 1,
+          end: 0.91,
+        ).chain(CurveTween(curve: Curves.easeOut)),
         weight: 26,
       ),
       TweenSequenceItem(
-        tween: Tween<double>(begin: 0.91, end: 1.03).chain(
-          CurveTween(curve: Curves.easeOutBack),
-        ),
+        tween: Tween<double>(
+          begin: 0.91,
+          end: 1.03,
+        ).chain(CurveTween(curve: Curves.easeOutBack)),
         weight: 28,
       ),
       TweenSequenceItem(
-        tween: Tween<double>(begin: 1.03, end: 1).chain(
-          CurveTween(curve: Curves.easeOutCubic),
-        ),
+        tween: Tween<double>(
+          begin: 1.03,
+          end: 1,
+        ).chain(CurveTween(curve: Curves.easeOutCubic)),
         weight: 46,
       ),
     ]).animate(_controller);
@@ -580,24 +626,21 @@ class _HabitBubbleNodeState extends State<_HabitBubbleNode>
     final isCompleted = widget.habit.isCompleted;
     final size = widget.size;
     final accentColor = Theme.of(context).colorScheme.primary;
-    final horizontalPadding =
-        switch (widget.shape) {
-          _BubbleShape.star => size * 0.2,
-          _BubbleShape.diamond => size * 0.2,
-          _ => size * 0.18,
-        };
-    final topPadding =
-        switch (widget.shape) {
-          _BubbleShape.star => size * 0.27,
-          _BubbleShape.diamond => size * 0.24,
-          _ => size * 0.26,
-        };
-    final bottomPadding =
-        switch (widget.shape) {
-          _BubbleShape.star => size * 0.18,
-          _BubbleShape.diamond => size * 0.15,
-          _ => size * 0.14,
-        };
+    final horizontalPadding = switch (widget.shape) {
+      _BubbleShape.star => size * 0.2,
+      _BubbleShape.diamond => size * 0.2,
+      _ => size * 0.18,
+    };
+    final topPadding = switch (widget.shape) {
+      _BubbleShape.star => size * 0.27,
+      _BubbleShape.diamond => size * 0.24,
+      _ => size * 0.26,
+    };
+    final bottomPadding = switch (widget.shape) {
+      _BubbleShape.star => size * 0.18,
+      _BubbleShape.diamond => size * 0.15,
+      _ => size * 0.14,
+    };
     return Semantics(
       button: true,
       selected: isCompleted,
@@ -648,7 +691,9 @@ class _HabitBubbleNodeState extends State<_HabitBubbleNode>
                               children: [
                                 if (isCompleted)
                                   Padding(
-                                    padding: EdgeInsets.only(bottom: size * 0.04),
+                                    padding: EdgeInsets.only(
+                                      bottom: size * 0.04,
+                                    ),
                                     child: Icon(
                                       Icons.check_rounded,
                                       size: size * 0.16,
@@ -662,19 +707,20 @@ class _HabitBubbleNodeState extends State<_HabitBubbleNode>
                                   overflow: TextOverflow.ellipsis,
                                   softWrap: true,
                                   textAlign: TextAlign.center,
-                                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                                    color: widget.palette.headingColor.withValues(
-                                      alpha: isCompleted ? 0.72 : 0.84,
-                                    ),
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.08,
-                                    fontSize:
-                                        switch (widget.shape) {
+                                  style: Theme.of(context).textTheme.labelMedium
+                                      ?.copyWith(
+                                        color: widget.palette.headingColor
+                                            .withValues(
+                                              alpha: isCompleted ? 0.72 : 0.84,
+                                            ),
+                                        fontWeight: FontWeight.w600,
+                                        height: 1.08,
+                                        fontSize: switch (widget.shape) {
                                           _BubbleShape.star => size * 0.086,
                                           _BubbleShape.diamond => size * 0.092,
                                           _ => size * 0.105,
                                         },
-                                  ),
+                                      ),
                                 ),
                               ],
                             ),
@@ -749,10 +795,7 @@ class _BubbleWrapSheet extends StatelessWidget {
           fit: StackFit.expand,
           children: [
             CustomPaint(
-              painter: _BubbleSheetPainter(
-                palette: palette,
-                shape: shape,
-              ),
+              painter: _BubbleSheetPainter(palette: palette, shape: shape),
             ),
             child,
             IgnorePointer(
@@ -778,10 +821,7 @@ class _BubbleWrapSheet extends StatelessWidget {
 }
 
 class _BubbleSparklePainter extends CustomPainter {
-  const _BubbleSparklePainter({
-    required this.progress,
-    required this.accent,
-  });
+  const _BubbleSparklePainter({required this.progress, required this.accent});
 
   final double progress;
   final Color accent;
@@ -793,68 +833,97 @@ class _BubbleSparklePainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final eased = Curves.easeOutCubic.transform(progress);
     final travel = size.width * 0.38 * eased;
-    final sparkleConfigs = <({double angle, double radius, double scale, Color color})>[
-      (
-        angle: -1.75,
-        radius: travel * 1.14,
-        scale: 1.28,
-        color: Color.lerp(accent, Colors.white, 0.52)!.withValues(alpha: 0.98 * fade),
-      ),
-      (
-        angle: -0.9,
-        radius: travel * 1.3,
-        scale: 1.08,
-        color: accent.withValues(alpha: 0.9 * fade),
-      ),
-      (
-        angle: -0.2,
-        radius: travel * 1.42,
-        scale: 0.98,
-        color: Color.lerp(accent, Colors.white, 0.68)!.withValues(alpha: 0.92 * fade),
-      ),
-      (
-        angle: 0.75,
-        radius: travel * 1.24,
-        scale: 1.18,
-        color: Color.lerp(accent, Colors.white, 0.36)!.withValues(alpha: 0.96 * fade),
-      ),
-      (
-        angle: 1.55,
-        radius: travel * 1.26,
-        scale: 0.9,
-        color: accent.withValues(alpha: 0.84 * fade),
-      ),
-      (
-        angle: 2.4,
-        radius: travel * 1.38,
-        scale: 1.02,
-        color: Color.lerp(accent, Colors.white, 0.62)!.withValues(alpha: 0.9 * fade),
-      ),
-      (
-        angle: -2.52,
-        radius: travel * 1.22,
-        scale: 0.86,
-        color: Color.lerp(accent, Colors.white, 0.5)!.withValues(alpha: 0.86 * fade),
-      ),
-      (
-        angle: -1.34,
-        radius: travel * 1.46,
-        scale: 0.8,
-        color: accent.withValues(alpha: 0.82 * fade),
-      ),
-      (
-        angle: 0.14,
-        radius: travel * 1.52,
-        scale: 0.88,
-        color: Color.lerp(accent, Colors.white, 0.58)!.withValues(alpha: 0.88 * fade),
-      ),
-      (
-        angle: 2.88,
-        radius: travel * 1.18,
-        scale: 0.76,
-        color: Color.lerp(accent, Colors.white, 0.44)!.withValues(alpha: 0.8 * fade),
-      ),
-    ];
+    final sparkleConfigs =
+        <({double angle, double radius, double scale, Color color})>[
+          (
+            angle: -1.75,
+            radius: travel * 1.14,
+            scale: 1.28,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.52,
+            )!.withValues(alpha: 0.98 * fade),
+          ),
+          (
+            angle: -0.9,
+            radius: travel * 1.3,
+            scale: 1.08,
+            color: accent.withValues(alpha: 0.9 * fade),
+          ),
+          (
+            angle: -0.2,
+            radius: travel * 1.42,
+            scale: 0.98,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.68,
+            )!.withValues(alpha: 0.92 * fade),
+          ),
+          (
+            angle: 0.75,
+            radius: travel * 1.24,
+            scale: 1.18,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.36,
+            )!.withValues(alpha: 0.96 * fade),
+          ),
+          (
+            angle: 1.55,
+            radius: travel * 1.26,
+            scale: 0.9,
+            color: accent.withValues(alpha: 0.84 * fade),
+          ),
+          (
+            angle: 2.4,
+            radius: travel * 1.38,
+            scale: 1.02,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.62,
+            )!.withValues(alpha: 0.9 * fade),
+          ),
+          (
+            angle: -2.52,
+            radius: travel * 1.22,
+            scale: 0.86,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.5,
+            )!.withValues(alpha: 0.86 * fade),
+          ),
+          (
+            angle: -1.34,
+            radius: travel * 1.46,
+            scale: 0.8,
+            color: accent.withValues(alpha: 0.82 * fade),
+          ),
+          (
+            angle: 0.14,
+            radius: travel * 1.52,
+            scale: 0.88,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.58,
+            )!.withValues(alpha: 0.88 * fade),
+          ),
+          (
+            angle: 2.88,
+            radius: travel * 1.18,
+            scale: 0.76,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.44,
+            )!.withValues(alpha: 0.8 * fade),
+          ),
+        ];
 
     for (final sparkle in sparkleConfigs) {
       final offset = Offset(
@@ -922,8 +991,12 @@ class _HabitBubblePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
     final path = _bubbleShapePath(shape, rect);
-    final accentBase = isCompleted ? palette.completedBubble : palette.bubbleColor;
-    final stroke = isCompleted ? palette.completedOutline : palette.bubbleOutline;
+    final accentBase = isCompleted
+        ? palette.completedBubble
+        : palette.bubbleColor;
+    final stroke = isCompleted
+        ? palette.completedOutline
+        : palette.bubbleOutline;
     final shortestSide = size.shortestSide;
 
     canvas.drawShadow(
@@ -953,7 +1026,10 @@ class _HabitBubblePainter extends CustomPainter {
       ).createShader(rect);
     canvas.drawPath(path, fill);
 
-    final domeInner = _bubbleShapePath(shape, rect.deflate(shortestSide * 0.08));
+    final domeInner = _bubbleShapePath(
+      shape,
+      rect.deflate(shortestSide * 0.08),
+    );
     final domePaint = Paint()
       ..shader = RadialGradient(
         center: const Alignment(-0.1, -0.18),
@@ -983,13 +1059,17 @@ class _HabitBubblePainter extends CustomPainter {
       ..strokeWidth = 1.2
       ..color = Colors.white.withValues(alpha: isCompleted ? 0.08 : 0.34);
     canvas.drawPath(
-      _bubbleShapePath(shape, rect.deflate(shortestSide * 0.03)).shift(
-        Offset(-shortestSide * 0.012, -shortestSide * 0.016),
-      ),
+      _bubbleShapePath(
+        shape,
+        rect.deflate(shortestSide * 0.03),
+      ).shift(Offset(-shortestSide * 0.012, -shortestSide * 0.016)),
       rimHighlight,
     );
 
-    final innerPath = _bubbleShapePath(shape, rect.deflate(shortestSide * 0.16));
+    final innerPath = _bubbleShapePath(
+      shape,
+      rect.deflate(shortestSide * 0.16),
+    );
     final innerHighlight = Paint()
       ..style = PaintingStyle.fill
       ..color = Colors.white.withValues(alpha: isCompleted ? 0.03 : 0.1);
@@ -1012,8 +1092,10 @@ class _HabitBubblePainter extends CustomPainter {
         ..strokeWidth = shortestSide * 0.045
         ..color = Colors.black.withValues(alpha: 0.05);
       canvas.drawPath(
-        _bubbleShapePath(shape, rect.deflate(shortestSide * 0.18))
-            .shift(Offset(0, shortestSide * 0.03)),
+        _bubbleShapePath(
+          shape,
+          rect.deflate(shortestSide * 0.18),
+        ).shift(Offset(0, shortestSide * 0.03)),
         insetShadow,
       );
     } else {
@@ -1023,7 +1105,9 @@ class _HabitBubblePainter extends CustomPainter {
       canvas.drawPath(
         _bubbleShapePath(
           shape,
-          rect.deflate(shortestSide * 0.14).shift(Offset(0, shortestSide * 0.05)),
+          rect
+              .deflate(shortestSide * 0.14)
+              .shift(Offset(0, shortestSide * 0.05)),
         ),
         bottomOcclusion,
       );
@@ -1046,7 +1130,10 @@ Path _bubbleShapePath(_BubbleShape shape, Rect rect) {
     case _BubbleShape.heart:
       final path = Path();
       final topDip = Offset(rect.center.dx, rect.top + (rect.height * 0.24));
-      final bottomPoint = Offset(rect.center.dx, rect.bottom - (rect.height * 0.02));
+      final bottomPoint = Offset(
+        rect.center.dx,
+        rect.bottom - (rect.height * 0.02),
+      );
       path.moveTo(bottomPoint.dx, bottomPoint.dy);
       path.cubicTo(
         rect.left + (rect.width * 0.1),
@@ -1097,20 +1184,14 @@ Path _bubbleShapePath(_BubbleShape shape, Rect rect) {
           ),
         );
       }
-      return _roundedPolygonPath(
-        points,
-        cornerRadius: rect.width * 0.032,
-      );
+      return _roundedPolygonPath(points, cornerRadius: rect.width * 0.032);
     case _BubbleShape.diamond:
-      return _roundedPolygonPath(
-        <Offset>[
-          Offset(rect.center.dx, rect.top + rect.height * 0.01),
-          Offset(rect.right - rect.width * 0.02, rect.center.dy),
-          Offset(rect.center.dx, rect.bottom - rect.height * 0.01),
-          Offset(rect.left + rect.width * 0.02, rect.center.dy),
-        ],
-        cornerRadius: rect.width * 0.028,
-      );
+      return _roundedPolygonPath(<Offset>[
+        Offset(rect.center.dx, rect.top + rect.height * 0.01),
+        Offset(rect.right - rect.width * 0.02, rect.center.dy),
+        Offset(rect.center.dx, rect.bottom - rect.height * 0.01),
+        Offset(rect.left + rect.width * 0.02, rect.center.dy),
+      ], cornerRadius: rect.width * 0.028);
   }
 }
 
@@ -1183,10 +1264,7 @@ _HabitSectionPalette _themePalette(BuildContext context) {
 }
 
 class _BubbleSheetPainter extends CustomPainter {
-  const _BubbleSheetPainter({
-    required this.palette,
-    required this.shape,
-  });
+  const _BubbleSheetPainter({required this.palette, required this.shape});
 
   final _HabitSectionPalette palette;
   final _BubbleShape shape;
@@ -1240,7 +1318,11 @@ class _BubbleSheetPainter extends CustomPainter {
     };
     for (double y = radius + 10; y < size.height + spacing; y += spacing) {
       final isOffsetRow = ((y / spacing).floor()).isOdd;
-      for (double x = isOffsetRow ? radius + 14 : radius - 2; x < size.width + spacing; x += spacing) {
+      for (
+        double x = isOffsetRow ? radius + 14 : radius - 2;
+        x < size.width + spacing;
+        x += spacing
+      ) {
         final center = Offset(x, y);
         final rect = Rect.fromCenter(
           center: center,
@@ -1250,7 +1332,9 @@ class _BubbleSheetPainter extends CustomPainter {
         final path = _bubbleShapePath(shape, rect);
         final glossPath = _bubbleShapePath(
           shape,
-          rect.deflate(radius * 0.26).shift(Offset(-radius * 0.1, -radius * 0.12)),
+          rect
+              .deflate(radius * 0.26)
+              .shift(Offset(-radius * 0.1, -radius * 0.12)),
         );
         final innerPath = _bubbleShapePath(shape, rect.deflate(radius * 0.14));
         final bubbleInnerFill = Paint()
@@ -1264,10 +1348,18 @@ class _BubbleSheetPainter extends CustomPainter {
               palette.panelColor.withValues(alpha: 0.01),
             ],
           ).createShader(rect);
-        canvas.drawShadow(path, Colors.black.withValues(alpha: 0.1), 2.1, false);
+        canvas.drawShadow(
+          path,
+          Colors.black.withValues(alpha: 0.1),
+          2.1,
+          false,
+        );
         canvas.drawPath(path, bubbleFill);
         canvas.drawPath(path, bubbleInnerFill);
-        canvas.drawPath(innerPath, Paint()..color = Colors.white.withValues(alpha: 0.03));
+        canvas.drawPath(
+          innerPath,
+          Paint()..color = Colors.white.withValues(alpha: 0.03),
+        );
         canvas.drawPath(path, rimDark);
         canvas.drawPath(path.shift(Offset(0, radius * 0.03)), innerShadow);
         canvas.drawPath(path, rimLight);
@@ -1456,20 +1548,17 @@ class _BubbleWrapEmptyState extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    'No bubbles for today',
+                    'No habits yet ✨',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       color: palette.headingColor,
                       fontWeight: FontWeight.w800,
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Your page is clear for now. No habits are scheduled today.',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: palette.headingColor.withValues(alpha: 0.8),
-                    ),
+                  const SizedBox(height: 8),
+                  _EmptyStateAddHabitAction(
+                    color: palette.headingColor,
+                    onTap: () => context.push('/habits/manage'),
                   ),
                 ],
               ),
@@ -1480,6 +1569,126 @@ class _BubbleWrapEmptyState extends StatelessWidget {
     );
   }
 }
+
+class _EmptyStateAddHabitAction extends StatefulWidget {
+  const _EmptyStateAddHabitAction({required this.color, required this.onTap});
+
+  final Color color;
+  final Future<void> Function() onTap;
+
+  @override
+  State<_EmptyStateAddHabitAction> createState() =>
+      _EmptyStateAddHabitActionState();
+}
+
+class _EmptyStateAddHabitActionState extends State<_EmptyStateAddHabitAction>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _burstController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 420),
+  );
+  bool _navigating = false;
+
+  @override
+  void dispose() {
+    _burstController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _handleTap() async {
+    if (_navigating) return;
+    _navigating = true;
+    unawaited(_burstController.forward(from: 0));
+    await Future<void>.delayed(const Duration(milliseconds: 170));
+    if (!mounted) return;
+    await widget.onTap();
+    _navigating = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.w600,
+      color: widget.color,
+    );
+
+    return GestureDetector(
+      onTap: _handleTap,
+      behavior: HitTestBehavior.opaque,
+      child: AnimatedBuilder(
+        animation: _burstController,
+        builder: (context, child) {
+          final progress = Curves.easeOut.transform(_burstController.value);
+          final fade = (1 - Curves.easeIn.transform(_burstController.value))
+              .clamp(0.0, 1.0);
+          return Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              child!,
+              if (_burstController.value > 0)
+                IgnorePointer(
+                  child: SizedBox(
+                    width: 180,
+                    height: 64,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      alignment: Alignment.center,
+                      children: [
+                        for (final star in _starBursts)
+                          Transform.translate(
+                            offset: Offset(
+                              math.cos(star.angle) * star.distance * progress,
+                              (math.sin(star.angle) *
+                                      star.distance *
+                                      progress) -
+                                  (6 * progress),
+                            ),
+                            child: Opacity(
+                              opacity: fade,
+                              child: Transform.scale(
+                                scale: 0.8 + (0.4 * (1 - progress)),
+                                child: Text(
+                                  star.glyph,
+                                  style: TextStyle(
+                                    fontSize: star.size,
+                                    fontWeight: FontWeight.w700,
+                                    color: widget.color,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+          decoration: BoxDecoration(
+            color: widget.color.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: widget.color.withValues(alpha: 0.18)),
+          ),
+          child: Text('Want to add one?', style: textStyle),
+        ),
+      ),
+    );
+  }
+}
+
+const List<({double angle, double distance, double size, String glyph})>
+_starBursts = <({double angle, double distance, double size, String glyph})>[
+  (angle: -2.2, distance: 18, size: 13, glyph: '✦'),
+  (angle: -1.4, distance: 24, size: 11, glyph: '✦'),
+  (angle: -0.45, distance: 20, size: 12, glyph: '✦'),
+  (angle: 0.35, distance: 22, size: 11, glyph: '✦'),
+  (angle: 1.1, distance: 18, size: 12, glyph: '✦'),
+  (angle: 2.05, distance: 16, size: 10, glyph: '✦'),
+];
 
 class _HabitSectionPalette {
   const _HabitSectionPalette({

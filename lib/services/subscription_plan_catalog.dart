@@ -6,7 +6,6 @@ enum MbPlanTier { pending, free, plusSupport }
 class PlanBenefits {
   const PlanBenefits({
     required this.tier,
-    required this.emoji,
     required this.name,
     required this.price,
     required this.normalizedAliases,
@@ -19,12 +18,14 @@ class PlanBenefits {
     required this.canShareEntries,
     required this.sharesPerDay,
     required this.canReceiveUnlimitedShares,
+    required this.toolsHeading,
     required this.tools,
-    this.notes = const <String>[],
+    this.plusExtras = const <String>[],
+    this.summary = '',
+    this.caption = '',
   });
 
   final MbPlanTier tier;
-  final String emoji;
   final String name;
   final String price;
   final List<String> normalizedAliases;
@@ -41,29 +42,22 @@ class PlanBenefits {
   final int sharesPerDay; // -1 means unlimited
   final bool canReceiveUnlimitedShares;
 
+  final String toolsHeading;
   final List<String> tools;
-  final List<String> notes;
-  String get titleWithPrice => '$name ($price)';
-  String get heading => '$emoji $name ($price)';
+  final List<String> plusExtras;
+  final String summary;
+  final String caption;
+
+  bool get includesEverythingInFreeMode => tier == MbPlanTier.plusSupport;
+
+  String get titleWithPrice => price.isEmpty ? name : '$name ($price)';
 }
 
 class SubscriptionPlanCatalog {
-  static const String title = '🟣 MB - Subscriptions';
-
-  static const List<String> comparisonSectionOrder = <String>[
-    'Access',
-    'Insights',
-    'Devices',
-    'Templates',
-    'Journaling',
-    'Tools Included',
-  ];
+  static const String title = 'Subscriptions';
 
   static const String previewModeHelpText =
-      'Free Mode includes journaling, journal sharing, and custom templates with normal saving.';
-
-  static const String freeModeJournalHelpText =
-      'Write freely, as much as you need 💭\nYour journal entries stay saved in Free mode';
+      'Choose the mode that fits you best. Everything is kept simple, clear, and easy to come back to.';
 
   static String sharesPerDayHelpText(PlanBenefits plan) {
     if (!plan.canShareEntries) {
@@ -88,8 +82,7 @@ class SubscriptionPlanCatalog {
 
   static const PlanBenefits free = PlanBenefits(
     tier: MbPlanTier.free,
-    emoji: '🟢',
-    name: 'FREE MODE',
+    name: 'Free Mode',
     price: '£0',
     normalizedAliases: <String>['free', 'free_mode', 'free mode', 'basic'],
     insights: false,
@@ -101,25 +94,30 @@ class SubscriptionPlanCatalog {
     canShareEntries: true,
     sharesPerDay: -1,
     canReceiveUnlimitedShares: true,
+    toolsHeading: 'Tools included',
     tools: <String>[
-      'Brain Fog Bubble ✅',
-      'Pomodoro Timer ✅',
-      'Habit Tracker ✅',
-      'Manual Logging ✅',
-      'Unlimited journal entries ✅',
-      'Journal sharing ✅',
-      'Custom templates ✅',
+      'Brainfog Bubble',
+      'Pomodoro Bubble',
+      'Habit Bubble',
+      'Logs / Templates',
+      'Unlimited journal entries',
+      'Unlimited journal sharings',
+      'Custom templates',
+      'Does not include Insights',
+      'Does not include Make Your Own Quotes',
+      'Does not include Gratitude Bubble',
+      'Up to 2 themes in Theme Selector',
+      '1 device only',
+      'Does not include Study Buddy feature',
     ],
-    notes: <String>[
-      'Custom templates save normally',
-      'Unlimited journal sharing',
-    ],
+    summary:
+        'A calm starting point with the core bubbles, journaling, and templates.',
+    caption: 'Simple, gentle, and easy to scan.',
   );
 
   static const PlanBenefits plus = PlanBenefits(
     tier: MbPlanTier.plusSupport,
-    emoji: '🟣',
-    name: 'PLUS SUPPORT MODE',
+    name: 'Plus Support Mode',
     price: '£2.99',
     normalizedAliases: <String>[
       'plus',
@@ -139,20 +137,28 @@ class SubscriptionPlanCatalog {
     canShareEntries: true,
     sharesPerDay: -1,
     canReceiveUnlimitedShares: true,
+    toolsHeading: 'Everything in Free Mode, plus',
     tools: <String>[
-      'Brain Fog Bubble ✅',
-      'Pomodoro Timer ✅',
-      'Habit Tracker ✅',
-      'Manual Logging ✅',
-      'Unlimited journal entries ✅',
-      'Journal sharing ✅',
-      'Custom templates ✅',
-      'Insights ✅',
+      'Includes Insights',
+      'Includes Make Your Own Quotes',
+      'Includes Gratitude Bubble',
+      'Study Buddy feature',
+      'Unlimited themes',
+      'Create your own theme',
+      'Unlimited devices',
     ],
-    notes: <String>[
-      'Custom templates save normally',
-      'Unlimited journal sharing',
+    plusExtras: <String>[
+      'Includes Insights',
+      'Includes Make Your Own Quotes',
+      'Includes Gratitude Bubble',
+      'Study Buddy feature',
+      'Unlimited themes',
+      'Create your own theme',
+      'Unlimited devices',
     ],
+    summary:
+        'Everything in Free Mode with more room to personalise, reflect, and use across devices.',
+    caption: 'Best for a fuller MyBrainBubble setup.',
   );
 
   static const List<PlanBenefits> allPaidPlans = <PlanBenefits>[plus];

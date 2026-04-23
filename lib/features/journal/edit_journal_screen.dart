@@ -24,16 +24,16 @@ import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
 import 'package:mind_buddy/features/journal/journal_drawing_canvas.dart';
 import 'package:mind_buddy/features/journal/journal_folder_support.dart';
+import 'package:mind_buddy/features/journal/journal_local_repository.dart';
+import 'package:mind_buddy/features/journal/journal_page_codec.dart';
+import 'package:mind_buddy/features/journal/journal_page_widgets.dart';
 import 'package:mind_buddy/features/journal/journal_upload_pipeline.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
 import 'package:mind_buddy/features/journal/journal_sticker_catalog.dart';
-import 'package:mind_buddy/services/journal_access_service.dart';
 import 'package:mind_buddy/services/journal_canvas_objects.dart';
 import 'package:mind_buddy/services/journal_document_codec.dart';
 import 'package:mind_buddy/services/journal_doodle_service.dart';
-import 'package:mind_buddy/services/journal_encryption_service.dart';
-import 'package:mind_buddy/services/journal_repository.dart';
 
 enum _LeaveJournalAction { cancel, leave, saveAndLeave }
 
@@ -105,7 +105,11 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
   String? _doodleImageUrl;
   String? _doodleStoragePath;
   bool _hasUnsavedDoodleChanges = false;
-  final JournalRepository _journalRepository = JournalRepository();
+  final JournalLocalRepository _journalLocalRepository =
+      JournalLocalRepository();
+  final PageController _pageController = PageController();
+  List<JournalEntryPageData> _pages = const <JournalEntryPageData>[];
+  int _currentPageIndex = 0;
 
   static const List<String> _fonts = ['sans-serif', 'serif', 'monospace'];
   static const List<Color> _colors = [
@@ -163,6 +167,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
     _qc.dispose();
     _editorFocus.dispose();
     _editorScrollController.dispose();
+    _pageController.dispose();
     _titleController.dispose();
     super.dispose();
   }
@@ -183,10 +188,6 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
       !_loading && _captureDraftSignature() != _lastSavedDraftSignature;
 
   String _captureDraftSignature() {
-    final body = JournalDocumentCodec.encode(
-      document: _qc.document,
-      canvasObjects: _canvasObjects,
-    );
     final doodleState = <String, dynamic>{
       'storage_path': _doodleStoragePath,
       'bg_style': _bgStyleToString(_doodleBgStyle),
@@ -199,8 +200,150 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
     return jsonEncode(<String, dynamic>{
       'title': _titleController.text,
       'folder_id': _selectedFolderId,
-      'body': body,
+      'pages': JournalPageCodec.encode(
+        pages: _pagesForSave(),
+        currentPageId: _currentPageId,
+      ),
       'doodle': doodleState,
+    });
+  }
+
+  String get _currentPageId => _pages[_currentPageIndex].id;
+
+  List<JournalEntryPageData> _pagesForSave() {
+    if (_pages.isEmpty) {
+      return <JournalEntryPageData>[_buildBlankPage()];
+    }
+    return _pages
+        .asMap()
+        .entries
+        .map(
+          (entry) => entry.key == _currentPageIndex
+              ? entry.value.copyWith(body: _encodeCurrentPageBody())
+              : entry.value,
+        )
+        .toList(growable: false);
+  }
+
+  String _encodeCurrentPageBody() {
+    return JournalDocumentCodec.encode(
+      document: _qc.document,
+      canvasObjects: _canvasObjects,
+    );
+  }
+
+  JournalEntryPageData _buildBlankPage() {
+    final document = quill.Document()..insert(0, '\n');
+    return JournalEntryPageData(
+      id: 'page-${_uuid.v4()}',
+      body: JournalDocumentCodec.encode(document: document),
+    );
+  }
+
+  void _loadPageIntoEditor(int index) {
+    final page = _pages[index];
+    final content = JournalDocumentCodec.decodeContent(page.body);
+    _qc.document = content.document;
+    _qc.updateSelection(
+      const TextSelection.collapsed(offset: 0),
+      quill.ChangeSource.local,
+    );
+    _canvasObjects = content.canvasObjects;
+    _ensurePlainTypingDefaults();
+  }
+
+  void _persistCurrentPageDraft() {
+    if (_pages.isEmpty) return;
+    _pages = _pages
+        .asMap()
+        .entries
+        .map(
+          (entry) => entry.key == _currentPageIndex
+              ? entry.value.copyWith(body: _encodeCurrentPageBody())
+              : entry.value,
+        )
+        .toList(growable: false);
+  }
+
+  void _handlePageChanged(int index) {
+    setState(() {
+      _persistCurrentPageDraft();
+      _currentPageIndex = index;
+      _loadPageIntoEditor(index);
+    });
+  }
+
+  Future<void> _addPage() async {
+    setState(() {
+      _persistCurrentPageDraft();
+      final insertIndex = _currentPageIndex + 1;
+      _pages = <JournalEntryPageData>[
+        ..._pages.take(insertIndex),
+        _buildBlankPage(),
+        ..._pages.skip(insertIndex),
+      ];
+      _currentPageIndex = insertIndex;
+      _loadPageIntoEditor(insertIndex);
+    });
+    await _pageController.animateToPage(
+      _currentPageIndex,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  Future<void> _deleteCurrentPage() async {
+    if (_pages.length <= 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Keep at least one page in this entry.')),
+      );
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete this page?'),
+        content: const Text('This page will be removed from the entry.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final nextIndex = (_currentPageIndex == _pages.length - 1)
+        ? _currentPageIndex - 1
+        : _currentPageIndex;
+    setState(() {
+      _persistCurrentPageDraft();
+      _pages = _pages
+          .where((page) => page.id != _currentPageId)
+          .toList(growable: false);
+      _currentPageIndex = nextIndex.clamp(0, _pages.length - 1);
+      _loadPageIntoEditor(_currentPageIndex);
+    });
+    _pageController.jumpToPage(_currentPageIndex);
+  }
+
+  void _toggleBookmarkPage() {
+    setState(() {
+      _persistCurrentPageDraft();
+      final current = _pages[_currentPageIndex];
+      _pages = _pages
+          .asMap()
+          .entries
+          .map(
+            (entry) => entry.key == _currentPageIndex
+                ? current.copyWith(isBookmarked: !current.isBookmarked)
+                : entry.value,
+          )
+          .toList(growable: false);
     });
   }
 
@@ -350,8 +493,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
     final elevated = _canvasObjects.map((object) {
       if (object.id != objectId) return object;
       return object.copyWith(zIndex: _nextCanvasObjectZIndex);
-    }).toList()
-      ..sort((a, b) => a.zIndex.compareTo(b.zIndex));
+    }).toList()..sort((a, b) => a.zIndex.compareTo(b.zIndex));
     setState(() {
       _canvasObjects = elevated;
       _selectedCanvasObjectId = objectId;
@@ -363,8 +505,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
   void _updateCanvasObject(JournalCanvasObject updated) {
     final next = _canvasObjects.map((object) {
       return object.id == updated.id ? updated : object;
-    }).toList()
-      ..sort((a, b) => a.zIndex.compareTo(b.zIndex));
+    }).toList()..sort((a, b) => a.zIndex.compareTo(b.zIndex));
     setState(() => _canvasObjects = next);
   }
 
@@ -846,42 +987,31 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
   Future<void> _load() async {
     unawaited(_loadFolders());
     try {
-      final row = await _journalRepository.fetchJournalForEditor(
+      final row = await _journalLocalRepository.loadJournalForEditor(
         widget.journalId,
       );
-      final doodle = await JournalDoodleService.fetchDoodle(widget.journalId);
 
       if (row != null) {
         final title = (row['title'] as String?) ?? '';
         final raw = row['text']?.toString() ?? '';
-        String hydratedRaw = raw;
-        try {
-          hydratedRaw = await JournalAccessService.hydrateMediaSignedUrls(
-            entryId: widget.journalId,
-            rawText: raw,
-          );
-        } catch (_) {}
         _titleController.text = title;
         _selectedFolderId = row['folder_id']?.toString();
-
-        final content = JournalDocumentCodec.decodeContent(hydratedRaw);
-        _qc.document = content.document;
-        _qc.updateSelection(
-          const TextSelection.collapsed(offset: 0),
-          quill.ChangeSource.local,
-        );
-        _ensurePlainTypingDefaults();
         _savedShareId = row['share_id']?.toString();
-        _canvasObjects = content.canvasObjects;
-        _doodleStoragePath = doodle.storagePath;
-        _doodleImageUrl = doodle.previewUrl;
-        if (doodle.bgStyle != null) {
-          _doodleBgStyle = _bgStyleFromString(doodle.bgStyle!);
-        }
+        final pagesData = JournalPageCodec.decode(raw);
+        _pages = pagesData.pages.isEmpty
+            ? <JournalEntryPageData>[_buildBlankPage()]
+            : pagesData.pages;
+        final restoredIndex = pagesData.currentPageId == null
+            ? 0
+            : _pages.indexWhere((page) => page.id == pagesData.currentPageId);
+        _currentPageIndex = restoredIndex >= 0 ? restoredIndex : 0;
+        _loadPageIntoEditor(_currentPageIndex);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_pageController.hasClients) return;
+          _pageController.jumpToPage(_currentPageIndex);
+        });
         _lastSavedDraftSignature = _captureDraftSignature();
       }
-    } on JournalEncryptionException catch (error) {
-      _loadError = error.message;
     } catch (error) {
       _loadError = 'Unable to open this journal right now: $error';
     }
@@ -913,9 +1043,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
       _uploadProgressByPath[image.path] = 0.03;
       _uploadFailedPaths.remove(image.path);
       if (mounted) setState(() {});
-      tasks.add(
-        _uploadImageInBackground(image: image, objectId: object.id),
-      );
+      tasks.add(_uploadImageInBackground(image: image, objectId: object.id));
     }
     if (mounted) setState(() {});
     _trackPendingUpload(Future.wait(tasks));
@@ -1017,10 +1145,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
         _replaceEmbedPayload(
           type: 'image',
           oldPayload: localPayload,
-          newPayload: jsonEncode({
-            'bucket': _mediaBucket,
-            'path': storagePath,
-          }),
+          newPayload: jsonEncode({'bucket': _mediaBucket, 'path': storagePath}),
         );
       }
 
@@ -1180,10 +1305,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
         _replaceEmbedPayload(
           type: 'video',
           oldPayload: localPayload,
-          newPayload: jsonEncode({
-            'bucket': _mediaBucket,
-            'path': storagePath,
-          }),
+          newPayload: jsonEncode({'bucket': _mediaBucket, 'path': storagePath}),
         );
       }
 
@@ -1349,7 +1471,9 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
   void _refreshInlineStyleState() {
     final next = _isBoldActive;
     final attrs = _qc.getSelectionStyle().attributes;
-    final nextColor = _colorFromAttributeValue(attrs[quill.Attribute.color.key]);
+    final nextColor = _colorFromAttributeValue(
+      attrs[quill.Attribute.color.key],
+    );
     final nextHighlight = _colorFromAttributeValue(
       attrs[quill.Attribute.background.key],
     );
@@ -1507,9 +1631,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
     if (hex.length != 6 && hex.length != 8) return null;
     final parsed = int.tryParse(hex, radix: 16);
     if (parsed == null) return null;
-    return hex.length == 6
-        ? Color(0xFF000000 | parsed)
-        : Color(parsed);
+    return hex.length == 6 ? Color(0xFF000000 | parsed) : Color(parsed);
   }
 
   String _bgStyleLabel(DoodleBackgroundStyle style) {
@@ -1661,6 +1783,12 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
   }
 
   Future<void> _refreshDoodleFromDb() async {
+    if (JournalDoodleService.isLocalPrivateJournalId(widget.journalId)) {
+      debugPrint(
+        'JOURNAL_PRIVATE_DOODLE_REMOTE_BLOCKED id=${widget.journalId}',
+      );
+      return;
+    }
     final doodle = await JournalDoodleService.fetchDoodle(widget.journalId);
     if (!mounted) return;
     setState(() {
@@ -1741,6 +1869,14 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
   }
 
   Future<bool> _saveDoodleIfPossible({bool showSuccessMessage = true}) async {
+    if (JournalDoodleService.isLocalPrivateJournalId(widget.journalId)) {
+      debugPrint(
+        'JOURNAL_PRIVATE_DOODLE_REMOTE_BLOCKED id=${widget.journalId}',
+      );
+      if (!mounted) return true;
+      setState(() => _hasUnsavedDoodleChanges = false);
+      return true;
+    }
     try {
       if (_strokes.isEmpty && _doodleStoragePath == null) {
         await JournalDoodleService.clearDoodle(widget.journalId);
@@ -1852,14 +1988,15 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
       return false;
     }
 
-    final deltaJson = JournalDocumentCodec.encode(
-      document: _qc.document,
-      canvasObjects: _canvasObjects,
+    _persistCurrentPageDraft();
+    final deltaJson = JournalPageCodec.encode(
+      pages: _pagesForSave(),
+      currentPageId: _currentPageId,
     );
     final title = _titleController.text.trim();
 
     try {
-      final updated = await _journalRepository.savePrivateJournal(
+      final updated = await _journalLocalRepository.saveJournal(
         journalId: widget.journalId,
         title: title,
         body: deltaJson,
@@ -1945,9 +2082,28 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
         onPressed: _openShareForSavedEntry,
       ),
       MbAppBarCircleButton(
+        tooltip: 'Add page',
+        icon: Icons.note_add_outlined,
+        onPressed: _addPage,
+      ),
+      MbAppBarCircleButton(
+        tooltip: _pages[_currentPageIndex].isBookmarked
+            ? 'Remove bookmark'
+            : 'Bookmark page',
+        icon: _pages[_currentPageIndex].isBookmarked
+            ? Icons.bookmark
+            : Icons.bookmark_border,
+        onPressed: _toggleBookmarkPage,
+      ),
+      MbAppBarCircleButton(
         key: _deletePageButtonKey,
+        tooltip: 'Delete page',
+        icon: Icons.delete_outline,
+        onPressed: _deleteCurrentPage,
+      ),
+      MbAppBarCircleButton(
         tooltip: _removeMediaMode ? 'Stop removing' : 'Remove media',
-        icon: _removeMediaMode ? Icons.check_circle : Icons.delete_outline,
+        icon: _removeMediaMode ? Icons.check_circle : Icons.remove_circle,
         onPressed: _toggleRemoveMediaMode,
       ),
       MbAppBarCircleButton(
@@ -2040,9 +2196,7 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
         if (_canvasObjects.isNotEmpty)
           PopupMenuItem<String>(
             value: 'arrange',
-            child: Text(
-              _canvasEditMode ? 'Finish arranging' : 'Arrange items',
-            ),
+            child: Text(_canvasEditMode ? 'Finish arranging' : 'Arrange items'),
           ),
         PopupMenuItem<String>(
           value: 'draw_mode',
@@ -2116,7 +2270,9 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
           label: const Text('Stickers'),
         ),
         OutlinedButton.icon(
-          onPressed: (_activeUploads > 0 || _isPickingMedia) ? null : _insertGif,
+          onPressed: (_activeUploads > 0 || _isPickingMedia)
+              ? null
+              : _insertGif,
           icon: const Icon(Icons.gif_box_outlined),
           label: const Text('GIFs'),
         ),
@@ -2356,258 +2512,289 @@ class _EditJournalScreenState extends State<EditJournalScreen> {
       child: MbScaffold(
         applyBackground: true,
         appBar: AppBar(
-        automaticallyImplyLeading: false,
-        titleSpacing: 0,
-        title: LayoutBuilder(
-          builder: (context, constraints) {
-            final compactActions = constraints.maxWidth < 430;
-            final actionButtons = _buildActionButtons(compact: compactActions);
-            return Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: _appBarEdgePadding,
-              ),
-              child: Row(
-                children: [
-                  MbAppBarCircleButton(
-                    key: _backButtonKey,
-                    icon: Icons.arrow_back,
-                    onPressed: _handleExitRequest,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: actionButtons,
+          automaticallyImplyLeading: false,
+          titleSpacing: 0,
+          title: LayoutBuilder(
+            builder: (context, constraints) {
+              final compactActions = constraints.maxWidth < 430;
+              final actionButtons = _buildActionButtons(
+                compact: compactActions,
+              );
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: _appBarEdgePadding,
+                ),
+                child: Row(
+                  children: [
+                    MbAppBarCircleButton(
+                      key: _backButtonKey,
+                      icon: Icons.arrow_back,
+                      onPressed: _handleExitRequest,
                     ),
-                  ),
-                ],
-              ),
-            );
-          },
-        ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: actionButtons,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
         body: MbFloatingHintOverlay(
-        hintKey: 'hint_journal_edit',
-        text: 'Edit gently. You can add or remove media.',
-        iconText: '✨',
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _loadError != null
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(_loadError!, textAlign: TextAlign.center),
-                ),
-              )
-            : Padding(
-                padding: const EdgeInsets.all(10),
-                child: SizedBox.expand(
-                  child: _GlowPanel(
-                    child: Column(
-                      children: [
-                        OutlinedButton.icon(
-                          key: _folderPickerKey,
-                          onPressed: _pickFolder,
-                          icon: const Icon(Icons.folder_open_rounded),
-                          label: Text(_selectedFolderLabel),
-                        ),
-                        const SizedBox(height: 8),
-                        TextField(
-                          controller: _titleController,
-                          decoration: InputDecoration(
-                            labelText: 'Title',
-                            hintText: 'Give this entry a name',
-                            filled: true,
-                            fillColor: cs.surface,
+          hintKey: 'hint_journal_edit',
+          text: 'Edit gently. You can add or remove media.',
+          iconText: '✨',
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _loadError != null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(_loadError!, textAlign: TextAlign.center),
+                  ),
+                )
+              : Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: SizedBox.expand(
+                    child: _GlowPanel(
+                      child: Column(
+                        children: [
+                          OutlinedButton.icon(
+                            key: _folderPickerKey,
+                            onPressed: _pickFolder,
+                            icon: const Icon(Icons.folder_open_rounded),
+                            label: Text(_selectedFolderLabel),
                           ),
-                        ),
-                        const SizedBox(height: 6),
-                        if (!_drawMode)
-                          KeyedSubtree(
-                            key: _formattingDropdownKey,
-                            child: ExpansionTile(
-                              tilePadding: EdgeInsets.zero,
-                              title: const Text('Formatting'),
-                              initiallyExpanded: _showFormatBar,
-                              onExpansionChanged: (v) =>
-                                  setState(() => _showFormatBar = v),
-                              children: [
-                                const SizedBox(height: 8),
-                                _buildFormattingToolbar(),
-                              ],
-                            ),
-                          ),
-                        if (!_drawMode) const SizedBox(height: 8),
-                        if (_drawMode) _buildDrawingToolbar(),
-                        if (_drawMode || _canvasObjects.isNotEmpty)
                           const SizedBox(height: 8),
-                        _buildCanvasToolbar(),
-                        const SizedBox(height: 8),
-                        Expanded(
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            curve: Curves.easeOutCubic,
-                            decoration: _journalCanvasDecoration(cs),
-                            clipBehavior: Clip.antiAlias,
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: IgnorePointer(
-                                    ignoring: _drawMode,
-                                    child: quill.QuillEditor.basic(
-                                      controller: _qc,
-                                      focusNode: _editorFocus,
-                                      scrollController:
-                                          _editorScrollController,
-                                      config: quill.QuillEditorConfig(
-                                        autoFocus: true,
-                                        scrollable: true,
-                                        expands: false,
-                                        scrollBottomInset: keyboardInset + 24,
-                                        customStyles: editorStyles,
-                                        padding: const EdgeInsets.fromLTRB(
-                                          12,
-                                          12,
-                                          12,
-                                          24,
-                                        ),
-                                        embedBuilders: const [
-                                          LocalImageEmbedBuilder(),
-                                          LocalVideoEmbedBuilder(),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                Positioned.fill(
-                                  child: JournalCanvasLayer(
-                                    objects: _canvasObjects,
-                                    selectedObjectId: _selectedCanvasObjectId,
-                                    editable: true,
-                                    interactionEnabled:
-                                        _canvasEditMode && !_drawMode,
-                                    uploadProgressByPath:
-                                        _uploadProgressByPath,
-                                    failedPaths: _uploadFailedPaths,
-                                    onSelectObject: _selectCanvasObject,
-                                    onUpdateObject: _updateCanvasObject,
-                                    onDeleteObject: _deleteCanvasObject,
-                                  ),
-                                ),
-                                Positioned.fill(
-                                  child: IgnorePointer(
-                                    ignoring: !_drawMode,
-                                    child: JournalDrawingCanvas(
-                                      repaintKey: _drawingBoundaryKey,
-                                      strokes: _strokes,
-                                      activeStroke: _activeStroke,
-                                      baseImageUrl: _doodleImageUrl,
-                                      backgroundStyle: _doodleBgStyle,
-                                      backgroundSpacing: _doodleBgSpacing,
-                                      onStrokeStart: _startStroke,
-                                      onStrokeUpdate: _appendStrokePoint,
-                                      onStrokeEnd: _endStroke,
-                                    ),
-                                  ),
-                                ),
-                              ],
+                          TextField(
+                            controller: _titleController,
+                            decoration: InputDecoration(
+                              labelText: 'Title',
+                              hintText: 'Give this entry a name',
+                              filled: true,
+                              fillColor: cs.surface,
                             ),
                           ),
-                        ),
-                        if (_drawMode)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(
-                              'Draw mode is on. Text gestures are temporarily disabled.',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.primary,
-                                  ),
-                            ),
-                          ),
-                        if (_canvasEditMode && !_drawMode)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              'Arrange mode is on. Drag items around the page, or pinch to resize and rotate them.',
-                              style: Theme.of(
-                                context,
-                              ).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.primary,
-                              ),
-                            ),
-                          ),
-                        _MediaPreviewStrip(
-                          items: _media,
-                          removeMode: _removeMediaMode,
-                          uploadProgressByPath: _uploadProgressByPath,
-                          failedPaths: _uploadFailedPaths,
-                          onRetry: _retryFailedUpload,
-                          onTap: (index) {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => JournalMediaViewer(
-                                  items: _media,
-                                  initialIndex: index,
-                                ),
-                              ),
-                            );
-                          },
-                          onRemove: _confirmRemove,
-                        ),
-                        if (_showPickSpinner)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Opening media picker...',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              ],
-                            ),
-                          ),
-                        if (_media.isNotEmpty) ...[
                           const SizedBox(height: 6),
-                          if (_removeMediaMode)
-                            Text(
-                              'Tap a preview to remove',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withOpacity(0.75),
-                                  ),
+                          if (!_drawMode)
+                            KeyedSubtree(
+                              key: _formattingDropdownKey,
+                              child: ExpansionTile(
+                                tilePadding: EdgeInsets.zero,
+                                title: const Text('Formatting'),
+                                initiallyExpanded: _showFormatBar,
+                                onExpansionChanged: (v) =>
+                                    setState(() => _showFormatBar = v),
+                                children: [
+                                  const SizedBox(height: 8),
+                                  _buildFormattingToolbar(),
+                                ],
+                              ),
                             ),
-                          if (_activeUploads > 0)
-                            Text(
-                              'Uploading $_activeUploads media item(s) in background...',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.primary,
-                                  ),
+                          if (!_drawMode) const SizedBox(height: 8),
+                          if (_drawMode) _buildDrawingToolbar(),
+                          if (_drawMode || _canvasObjects.isNotEmpty)
+                            const SizedBox(height: 8),
+                          _buildCanvasToolbar(),
+                          const SizedBox(height: 8),
+                          JournalPageControls(
+                            currentPage: _currentPageIndex,
+                            pageCount: _pages.length,
+                            isBookmarked:
+                                _pages[_currentPageIndex].isBookmarked,
+                            onAddPage: _addPage,
+                            onDeletePage: _deleteCurrentPage,
+                            onToggleBookmark: _toggleBookmarkPage,
+                          ),
+                          const SizedBox(height: 8),
+                          Expanded(
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              curve: Curves.easeOutCubic,
+                              decoration: _journalCanvasDecoration(cs),
+                              clipBehavior: Clip.antiAlias,
+                              child: PageView.builder(
+                                controller: _pageController,
+                                onPageChanged: _handlePageChanged,
+                                itemCount: _pages.length,
+                                itemBuilder: (context, index) {
+                                  if (index == _currentPageIndex) {
+                                    return Stack(
+                                      children: [
+                                        Positioned.fill(
+                                          child: IgnorePointer(
+                                            ignoring: _drawMode,
+                                            child: quill.QuillEditor.basic(
+                                              controller: _qc,
+                                              focusNode: _editorFocus,
+                                              scrollController:
+                                                  _editorScrollController,
+                                              config: quill.QuillEditorConfig(
+                                                autoFocus: true,
+                                                scrollable: true,
+                                                expands: false,
+                                                scrollBottomInset:
+                                                    keyboardInset + 24,
+                                                customStyles: editorStyles,
+                                                padding:
+                                                    const EdgeInsets.fromLTRB(
+                                                      12,
+                                                      12,
+                                                      12,
+                                                      24,
+                                                    ),
+                                                embedBuilders: const [
+                                                  LocalImageEmbedBuilder(),
+                                                  LocalVideoEmbedBuilder(),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        Positioned.fill(
+                                          child: JournalCanvasLayer(
+                                            objects: _canvasObjects,
+                                            selectedObjectId:
+                                                _selectedCanvasObjectId,
+                                            editable: true,
+                                            interactionEnabled:
+                                                _canvasEditMode && !_drawMode,
+                                            uploadProgressByPath:
+                                                _uploadProgressByPath,
+                                            failedPaths: _uploadFailedPaths,
+                                            onSelectObject: _selectCanvasObject,
+                                            onUpdateObject: _updateCanvasObject,
+                                            onDeleteObject: _deleteCanvasObject,
+                                          ),
+                                        ),
+                                        Positioned.fill(
+                                          child: IgnorePointer(
+                                            ignoring: !_drawMode,
+                                            child: JournalDrawingCanvas(
+                                              repaintKey: _drawingBoundaryKey,
+                                              strokes: _strokes,
+                                              activeStroke: _activeStroke,
+                                              baseImageUrl: _doodleImageUrl,
+                                              backgroundStyle: _doodleBgStyle,
+                                              backgroundSpacing:
+                                                  _doodleBgSpacing,
+                                              onStrokeStart: _startStroke,
+                                              onStrokeUpdate:
+                                                  _appendStrokePoint,
+                                              onStrokeEnd: _endStroke,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  }
+                                  return JournalReadOnlyPagePreview(
+                                    body: _pages[index].body,
+                                    editorStyles: editorStyles,
+                                  );
+                                },
+                              ),
                             ),
+                          ),
+                          if (_drawMode)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: Text(
+                                'Draw mode is on. Text gestures are temporarily disabled.',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
+                              ),
+                            ),
+                          if (_canvasEditMode && !_drawMode)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(
+                                'Arrange mode is on. Drag items around the page, or pinch to resize and rotate them.',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
+                              ),
+                            ),
+                          _MediaPreviewStrip(
+                            items: _media,
+                            removeMode: _removeMediaMode,
+                            uploadProgressByPath: _uploadProgressByPath,
+                            failedPaths: _uploadFailedPaths,
+                            onRetry: _retryFailedUpload,
+                            onTap: (index) {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => JournalMediaViewer(
+                                    items: _media,
+                                    initialIndex: index,
+                                  ),
+                                ),
+                              );
+                            },
+                            onRemove: _confirmRemove,
+                          ),
+                          if (_showPickSpinner)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    'Opening media picker...',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (_media.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            if (_removeMediaMode)
+                              Text(
+                                'Tap a preview to remove',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withOpacity(0.75),
+                                    ),
+                              ),
+                            if (_activeUploads > 0)
+                              Text(
+                                'Uploading $_activeUploads media item(s) in background...',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.primary,
+                                    ),
+                              ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),
-              ),
         ),
       ),
     );
@@ -2987,9 +3174,9 @@ class _ColorDot extends StatelessWidget {
           boxShadow: selected
               ? [
                   BoxShadow(
-                    color: Theme.of(context).colorScheme.primary.withOpacity(
-                      0.18,
-                    ),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withOpacity(0.18),
                     blurRadius: 10,
                     spreadRadius: 1,
                   ),

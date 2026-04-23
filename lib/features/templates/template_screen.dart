@@ -161,6 +161,25 @@ class _TemplateConfig {
           description: 'Sleep tracker screen goes here (hours/quality).',
           primaryCta: 'Log sleep',
         );
+      case 'medication':
+        return const _TemplateConfig(
+          id: 'medication',
+          title: 'Medication',
+          icon: Icons.medication_outlined,
+          calendarLinked: true,
+          description:
+              'Keep medication logs simple with dosage, status, notes, and built-in reminders.',
+          primaryCta: 'Add medication log',
+        );
+      case 'meals':
+        return const _TemplateConfig(
+          id: 'meals',
+          title: 'Meals',
+          icon: Icons.restaurant_menu_outlined,
+          calendarLinked: true,
+          description: 'Log meals, time, type, calories, and quick notes.',
+          primaryCta: 'Add meal',
+        );
       //case 'habits':
       //return const _TemplateConfig(
       //id: 'habits',

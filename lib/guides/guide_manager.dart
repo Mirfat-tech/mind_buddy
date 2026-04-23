@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:tutorial_coach_mark/tutorial_coach_mark.dart';
 
+import 'package:mind_buddy/features/settings/settings_repository.dart';
 import 'package:mind_buddy/services/startup_user_data_service.dart';
 
 enum GuideAlign { top, bottom, left, right }
@@ -408,30 +409,27 @@ class GuideManager {
   static Future<void> _persistRemote({
     required _GuideState Function(_GuideState state) update,
   }) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
+    final repository = SettingsRepository.activeInstance;
+    if (repository == null) return;
 
     try {
-      final bundle =
-          StartupUserDataService.instance.peekCachedForCurrentUser() ??
-          await StartupUserDataService.instance.fetchCombinedForCurrentUser();
-      final row = bundle.settingsRow;
-      final rawSettings = row?['settings'];
-      final settings = rawSettings is Map
-          ? Map<String, dynamic>.from(rawSettings)
-          : <String, dynamic>{};
-      final currentState = _parseRemoteGuideState(row);
+      final settings =
+          await repository.loadCached() ?? await repository.initialize();
+      final currentState = _GuideState(
+        shownPages:
+            ((settings.guideState[_shownPagesField] as List?) ?? const [])
+                .map((entry) => entry.toString())
+                .toSet(),
+        dismissedSteps:
+            ((settings.guideState[_dismissedStepsField] as List?) ?? const [])
+                .map((entry) => entry.toString())
+                .toSet(),
+      );
       final nextState = update(currentState);
-      settings[_guideStateField] = <String, dynamic>{
+      await repository.updateGuideState(<String, dynamic>{
         _shownPagesField: nextState.shownPages.toList()..sort(),
         _dismissedStepsField: nextState.dismissedSteps.toList()..sort(),
-      };
-      await Supabase.instance.client.from('user_settings').upsert({
-        'user_id': user.id,
-        'settings': settings,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
       });
-      StartupUserDataService.instance.invalidateUser(user.id);
     } catch (_) {
       // Guidance persistence should never block navigation.
     }

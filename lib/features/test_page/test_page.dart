@@ -1,226 +1,111 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:mind_buddy/features/mood/mood_catalog.dart';
-import 'package:mind_buddy/features/onboarding/onboarding_widgets.dart';
+
 import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 
-class TestPage extends ConsumerStatefulWidget {
+class TestPage extends ConsumerWidget {
   const TestPage({super.key});
 
   @override
-  ConsumerState<TestPage> createState() => _TestPageState();
-}
-
-enum _TestFlowStep { mood, expression }
-
-class _TestPageState extends ConsumerState<TestPage> {
-  _TestFlowStep _step = _TestFlowStep.mood;
-  String? _selectedMood;
-
-  static const List<_ExpressionDestination> _destinations = [
-    _ExpressionDestination('Brain Fog Bubble', Icons.blur_on_rounded, '/brain-fog'),
-    _ExpressionDestination(
-      'Gratitude Bubble',
-      Icons.auto_awesome_rounded,
-      '/gratitude-bubble',
-    ),
-    _ExpressionDestination('Habit Bubble', Icons.checklist_rounded, '/habits'),
-    _ExpressionDestination('Journal Bubble', Icons.menu_book_rounded, '/journals'),
-    _ExpressionDestination('Pomodoro Bubble', Icons.timer_rounded, '/pomodoro'),
-    _ExpressionDestination('Quote Bubble', Icons.format_quote_rounded, '/quotes'),
-  ];
-
-  void _selectMood(String mood) {
-    setState(() {
-      _selectedMood = mood;
-      _step = _TestFlowStep.expression;
-    });
-  }
-
-  void _resetFlow() {
-    setState(() {
-      _step = _TestFlowStep.mood;
-      _selectedMood = null;
-    });
-  }
-
-  List<_ExpressionDestination> _orderedDestinations() {
-    final mood = _selectedMood;
-    if (mood == null) return _destinations;
-    final emphasized = switch (moodToneOf(mood)) {
-      MoodTone.negative => <String>{
-          'Brain Fog Bubble',
-          'Journal Bubble',
-          'Pomodoro Bubble',
-        },
-      MoodTone.positive => <String>{
-          'Gratitude Bubble',
-          'Quote Bubble',
-          'Journal Bubble',
-        },
-      MoodTone.neutral => <String>{
-          'Habit Bubble',
-          'Pomodoro Bubble',
-          'Journal Bubble',
-        },
-    };
-    final ordered = [..._destinations];
-    ordered.sort((a, b) {
-      final aPinned = emphasized.contains(a.label);
-      final bPinned = emphasized.contains(b.label);
-      if (aPinned == bPinned) return 0;
-      return aPinned ? -1 : 1;
-    });
-    return ordered;
-  }
-
-  String _expressionPrompt() {
-    final mood = _selectedMood;
-    if (mood == null) return 'How would you like to express it?';
-    return switch (moodToneOf(mood)) {
-      MoodTone.negative => 'Would you like to express this through…',
-      MoodTone.positive => 'How would you like to express it?',
-      MoodTone.neutral => 'What feels right for this mood?',
-    };
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsControllerProvider).settings;
-    final style = styleById(settings.themeId);
-    final cloudStyle = BubbleCloudStyle(
-      centerFill: Color.lerp(style.boxFill, style.paper, 0.45)!,
-      bubbleFill: Color.lerp(style.boxFill, style.paper, 0.18)!,
-      textColor: style.text,
-      mutedTextColor: style.mutedText,
-      glowColor: style.accent,
-      borderColor: style.border,
+    final rawThemeId = settings.themeId;
+    final resolvedThemeId = rawThemeId == null || rawThemeId.trim().isEmpty
+        ? kDefaultThemeId
+        : rawThemeId;
+    final style = styleById(resolvedThemeId);
+
+    final titleStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
+      color: style.text,
+      fontWeight: FontWeight.w700,
+      height: 1.2,
     );
-    final emphasizedLabels = _selectedMood == null
-        ? const <String>{}
-        : switch (moodToneOf(_selectedMood!)) {
-            MoodTone.negative => <String>{
-                'Brain Fog Bubble',
-                'Journal Bubble',
-                'Pomodoro Bubble',
-              },
-            MoodTone.positive => <String>{
-                'Gratitude Bubble',
-                'Quote Bubble',
-                'Journal Bubble',
-              },
-            MoodTone.neutral => <String>{
-                'Habit Bubble',
-                'Pomodoro Bubble',
-                'Journal Bubble',
-              },
-          };
+    final captionStyle = Theme.of(
+      context,
+    ).textTheme.bodyMedium?.copyWith(color: style.mutedText, height: 1.35);
 
     return Scaffold(
       backgroundColor: style.paper,
       body: Stack(
         children: [
-          Positioned.fill(child: _TestPageBackground(style: style)),
+          Positioned.fill(child: _BubbleBackdrop(style: style)),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      _GlassCircleButton(
-                        icon: Icons.arrow_back_rounded,
-                        style: style,
-                        onTap: () => context.canPop() ? context.pop() : context.go('/home'),
-                      ),
-                      const Spacer(),
-                      Text(
-                        'TestPage',
-                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: style.text,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const Spacer(),
-                      _GlassCircleButton(
-                        icon: Icons.refresh_rounded,
-                        style: style,
-                        onTap: _resetFlow,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Experimental mood-guided bubble flow',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: style.mutedText,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 24),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight,
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 360),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) {
-                        return FadeTransition(
-                          opacity: animation,
-                          child: ScaleTransition(
-                            scale: Tween<double>(begin: 0.98, end: 1.0).animate(animation),
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: _step == _TestFlowStep.mood
-                          ? OnboardingBubbleCloud(
-                              key: const ValueKey<String>('mood-step'),
-                              centerText: 'Hey… how are you feeling today?',
-                              instructionText: 'Tap a mood bubble',
-                              style: cloudStyle,
-                              choices: [
-                                for (final mood in moodOptions)
-                                  BubbleChoice(
-                                    label: mood,
-                                    selected: _selectedMood == mood,
-                                    onTap: () => _selectMood(mood),
-                                  ),
-                              ],
-                            )
-                          : OnboardingBubbleCloud(
-                              key: ValueKey<String>('expression-${_selectedMood ?? ''}'),
-                              centerText: _expressionPrompt(),
-                              instructionText: _selectedMood == null
-                                  ? 'Choose a bubble'
-                                  : 'Mood selected: ${displayMood(_selectedMood!)}',
-                              style: cloudStyle,
-                              choices: [
-                                for (final destination in _orderedDestinations())
-                                  BubbleChoice(
-                                    label: destination.label,
-                                    emphasized: emphasizedLabels.contains(destination.label),
-                                    onTap: () => context.go(destination.route),
-                                  ),
-                              ],
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          children: [
+                            _GlassIconButton(
+                              icon: Icons.arrow_back_rounded,
+                              style: style,
+                              onTap: () => context.canPop()
+                                  ? context.pop()
+                                  : context.go('/settings'),
                             ),
+                            const Spacer(),
+                            Text(
+                              'Test Page',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(
+                                    color: style.text,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                            const Spacer(),
+                            const SizedBox(width: 44),
+                          ],
+                        ),
+                        const SizedBox(height: 38),
+                        _PromptSphere(
+                          style: style,
+                          titleStyle: titleStyle,
+                          captionStyle: captionStyle,
+                        ),
+                        const SizedBox(height: 28),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 18,
+                          runSpacing: 18,
+                          children: [
+                            Transform.translate(
+                              offset: const Offset(0, -4),
+                              child: _ChoiceBubble(
+                                label: "It's feeling grateful",
+                                style: style,
+                                size: 148,
+                                onTap: () => context.go('/gratitude-bubble'),
+                              ),
+                            ),
+                            Transform.translate(
+                              offset: const Offset(0, 6),
+                              child: _ChoiceBubble(
+                                label: "It's feeling full",
+                                style: style,
+                                size: 138,
+                                onTap: () => context.go('/brain-fog'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 20),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  TextButton(
-                    onPressed: _step == _TestFlowStep.expression ? _resetFlow : null,
-                    child: Text(
-                      _step == _TestFlowStep.expression
-                          ? 'Choose another mood'
-                          : 'Take your time',
-                      style: TextStyle(color: style.mutedText),
-                    ),
-                  ),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ],
@@ -229,16 +114,230 @@ class _TestPageState extends ConsumerState<TestPage> {
   }
 }
 
-class _ExpressionDestination {
-  const _ExpressionDestination(this.label, this.icon, this.route);
+class _PromptSphere extends StatelessWidget {
+  const _PromptSphere({
+    required this.style,
+    required this.titleStyle,
+    required this.captionStyle,
+  });
 
-  final String label;
-  final IconData icon;
-  final String route;
+  final PaperStyle style;
+  final TextStyle? titleStyle;
+  final TextStyle? captionStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    final promptFill = Color.lerp(style.boxFill, Colors.white, 0.34)!;
+    final innerFill = Color.lerp(style.paper, Colors.white, 0.58)!;
+    final glow = style.accent.withValues(alpha: 0.22);
+    final sphereSize = math.min(
+      MediaQuery.of(context).size.width * 0.72,
+      300.0,
+    );
+
+    return Container(
+      width: sphereSize,
+      height: sphereSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [
+            Colors.white.withValues(alpha: 0.98),
+            innerFill,
+            promptFill,
+            Color.lerp(style.paper, style.boxFill, 0.42)!,
+          ],
+          stops: const [0.06, 0.32, 0.7, 1],
+        ),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.74),
+          width: 1.8,
+        ),
+        boxShadow: [
+          BoxShadow(color: glow, blurRadius: 42, spreadRadius: 10),
+          BoxShadow(
+            color: style.border.withValues(alpha: 0.16),
+            blurRadius: 22,
+            spreadRadius: 2,
+          ),
+          BoxShadow(
+            color: style.text.withValues(alpha: 0.06),
+            blurRadius: 26,
+            offset: const Offset(0, 14),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: Padding(
+              padding: EdgeInsets.all(sphereSize * 0.04),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: style.border.withValues(alpha: 0.2),
+                  ),
+                  gradient: RadialGradient(
+                    colors: [
+                      Colors.white.withValues(alpha: 0.22),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.45, 1],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            left: sphereSize * 0.17,
+            top: sphereSize * 0.14,
+            child: Container(
+              width: sphereSize * 0.18,
+              height: sphereSize * 0.18,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withValues(alpha: 0.52),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: sphereSize * 0.14),
+              child: Center(
+                child: Text(
+                  'How is your mind feeling today, genuinely?',
+                  textAlign: TextAlign.center,
+                  style: titleStyle,
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: sphereSize * 0.16,
+            bottom: sphereSize * 0.15,
+            child: Text(
+              'Choose a bubble below',
+              style: captionStyle?.copyWith(fontSize: 12.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-class _GlassCircleButton extends StatelessWidget {
-  const _GlassCircleButton({
+class _ChoiceBubble extends StatelessWidget {
+  const _ChoiceBubble({
+    required this.label,
+    required this.style,
+    required this.size,
+    required this.onTap,
+  });
+
+  final String label;
+  final PaperStyle style;
+  final double size;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final fill = Color.lerp(style.boxFill, Colors.white, 0.28)!;
+    final innerFill = Color.lerp(style.paper, Colors.white, 0.52)!;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: Ink(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: [
+                Colors.white.withValues(alpha: 0.96),
+                innerFill,
+                fill,
+                Color.lerp(style.paper, style.boxFill, 0.46)!,
+              ],
+              stops: const [0.08, 0.34, 0.72, 1],
+            ),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.72),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: style.accent.withValues(alpha: 0.14),
+                blurRadius: 28,
+                spreadRadius: 3,
+              ),
+              BoxShadow(
+                color: style.border.withValues(alpha: 0.16),
+                blurRadius: 14,
+              ),
+            ],
+          ),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Padding(
+                  padding: EdgeInsets.all(size * 0.04),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: style.border.withValues(alpha: 0.16),
+                      ),
+                      gradient: RadialGradient(
+                        colors: [
+                          Colors.white.withValues(alpha: 0.18),
+                          Colors.transparent,
+                        ],
+                        stops: const [0.4, 1],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: size * 0.18,
+                top: size * 0.14,
+                child: Container(
+                  width: size * 0.14,
+                  height: size * 0.14,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.5),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: size * 0.14),
+                child: Center(
+                  child: Text(
+                    label,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: style.text,
+                      fontWeight: FontWeight.w700,
+                      height: 1.2,
+                      fontSize: size < 144 ? 14 : 14.5,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassIconButton extends StatelessWidget {
+  const _GlassIconButton({
     required this.icon,
     required this.style,
     required this.onTap,
@@ -254,24 +353,17 @@ class _GlassCircleButton extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
         child: Material(
-          color: Color.lerp(style.boxFill, Colors.white, 0.25)!.withValues(alpha: 0.82),
+          color: Color.lerp(
+            style.boxFill,
+            Colors.white,
+            0.24,
+          )!.withValues(alpha: 0.86),
           child: InkWell(
             customBorder: const CircleBorder(),
             onTap: onTap,
-            child: Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: style.border.withValues(alpha: 0.75)),
-                boxShadow: [
-                  BoxShadow(
-                    color: style.accent.withValues(alpha: 0.18),
-                    blurRadius: 18,
-                    spreadRadius: 1,
-                  ),
-                ],
-              ),
+            child: SizedBox(
+              width: 44,
+              height: 44,
               child: Icon(icon, color: style.text),
             ),
           ),
@@ -281,118 +373,94 @@ class _GlassCircleButton extends StatelessWidget {
   }
 }
 
-class _TestPageBackground extends StatefulWidget {
-  const _TestPageBackground({required this.style});
+class _BubbleBackdrop extends StatelessWidget {
+  const _BubbleBackdrop({required this.style});
 
   final PaperStyle style;
 
   @override
-  State<_TestPageBackground> createState() => _TestPageBackgroundState();
-}
-
-class _TestPageBackgroundState extends State<_TestPageBackground>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 9000),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final style = widget.style;
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, _) {
-        final drift = Curves.easeInOut.transform(_controller.value);
-        return Stack(
-          children: [
-            Positioned.fill(
+    final mist = Color.lerp(style.paper, style.boxFill, 0.44)!;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Color.lerp(style.paper, Colors.white, 0.05)!,
+            Color.lerp(style.paper, mist, 0.52)!,
+          ],
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -0.2),
+                    radius: 1.05,
                     colors: [
-                      Color.lerp(style.paper, style.boxFill, 0.18)!,
-                      style.paper,
-                      Color.lerp(style.paper, style.accent, 0.06)!,
+                      style.accent.withValues(alpha: 0.06),
+                      Colors.transparent,
                     ],
+                    stops: const [0.0, 1.0],
                   ),
                 ),
               ),
             ),
-            _BlurOrb(
-              left: -30 + (drift * 12),
-              top: 90 - (drift * 18),
-              size: 170,
-              color: style.accent.withValues(alpha: 0.14),
+          ),
+          Positioned(
+            left: -40,
+            top: 100,
+            child: _BackdropOrb(
+              size: 160,
+              color: style.accent.withValues(alpha: 0.07),
             ),
-            _BlurOrb(
-              right: -40 + (drift * 14),
-              top: 210 + (drift * 10),
-              size: 210,
-              color: style.border.withValues(alpha: 0.28),
+          ),
+          Positioned(
+            right: -30,
+            top: 180,
+            child: _BackdropOrb(
+              size: 130,
+              color: style.border.withValues(alpha: 0.18),
             ),
-            _BlurOrb(
-              left: 80 - (drift * 8),
-              bottom: -20 + (drift * 14),
-              size: 220,
-              color: style.accent.withValues(alpha: 0.10),
+          ),
+          Positioned(
+            right: 30,
+            bottom: 120,
+            child: _BackdropOrb(
+              size: 94,
+              color: style.accent.withValues(alpha: 0.08),
             ),
-          ],
-        );
-      },
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _BlurOrb extends StatelessWidget {
-  const _BlurOrb({
-    this.left,
-    this.right,
-    this.top,
-    this.bottom,
-    required this.size,
-    required this.color,
-  });
+class _BackdropOrb extends StatelessWidget {
+  const _BackdropOrb({required this.size, required this.color});
 
-  final double? left;
-  final double? right;
-  final double? top;
-  final double? bottom;
   final double size;
   final Color color;
 
   @override
   Widget build(BuildContext context) {
-    return Positioned(
-      left: left,
-      right: right,
-      top: top,
-      bottom: bottom,
-      child: IgnorePointer(
-        child: ImageFiltered(
-          imageFilter: ImageFilter.blur(sigmaX: 34, sigmaY: 34),
-          child: Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: color,
-            ),
-          ),
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(
+          colors: [
+            Colors.white.withValues(alpha: 0.22),
+            color,
+            color.withValues(alpha: 0.08),
+          ],
+          stops: const [0.0, 0.52, 1.0],
         ),
       ),
     );

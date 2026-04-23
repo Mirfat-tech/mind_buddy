@@ -1,12 +1,16 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/core/database/database_providers.dart';
+import 'package:mind_buddy/features/settings/data/local/notifications_local_data_source.dart';
 import 'package:mind_buddy/features/settings/settings_model.dart';
 import 'package:mind_buddy/features/settings/settings_provider.dart';
+import 'package:mind_buddy/features/templates/template_reminder_support.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class NotificationsSettingsScreen extends ConsumerStatefulWidget {
@@ -19,27 +23,69 @@ class NotificationsSettingsScreen extends ConsumerStatefulWidget {
 
 class _NotificationsSettingsScreenState
     extends ConsumerState<NotificationsSettingsScreen> {
-  static const String _calendarReminderSpaceId = 'calendar_reminders';
   static const String _pomodoroAlertSpaceId = 'pomodoro_finished';
   static const List<int> _stopwatchReminderOptions = [0, 5, 10, 15, 30, 60];
 
   final _supabase = Supabase.instance.client;
+  final ScrollController _scrollController = ScrollController();
+  final Map<String, GlobalKey> _reminderSectionKeys = <String, GlobalKey>{};
 
   bool _loadingHabits = true;
   List<Map<String, dynamic>> _habits = const [];
+  bool _loadingTemplateReminders = true;
+  List<TemplateReminderTarget> _templateReminderTargets =
+      const <TemplateReminderTarget>[];
+  String? _lastFocusedSpaceId;
+  bool _focusScrollCompleted = false;
+  String? _highlightedSpaceId;
+  AnimationStatusListener? _routeAnimationListener;
+  ModalRoute<dynamic>? _cachedRoute;
+  Animation<double>? _cachedRouteAnimation;
 
   @override
   void initState() {
     super.initState();
     _loadHabits();
+    _loadTemplateReminderTargets();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _cacheRouteReferences();
+    final focus = _currentFocusSpaceId();
+    if (focus != _lastFocusedSpaceId) {
+      _lastFocusedSpaceId = focus;
+      _focusScrollCompleted = false;
+      _highlightedSpaceId = null;
+    }
+    _scheduleFocusWhenRouteReady();
+  }
+
+  @override
+  void dispose() {
+    if (_cachedRouteAnimation != null && _routeAnimationListener != null) {
+      _cachedRouteAnimation!.removeStatusListener(_routeAnimationListener!);
+    }
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _cacheRouteReferences() {
+    final route = ModalRoute.of(context);
+    if (route == _cachedRoute) return;
+    if (_cachedRouteAnimation != null && _routeAnimationListener != null) {
+      _cachedRouteAnimation!.removeStatusListener(_routeAnimationListener!);
+    }
+    _cachedRoute = route;
+    _cachedRouteAnimation = route?.animation;
+    _routeAnimationListener = null;
   }
 
   String _resolveBackTarget(BuildContext context, {String? from}) {
     switch (from) {
       case 'templates':
         return '/templates';
-      case 'calendar':
-        return '/calendar';
       default:
         return '/settings';
     }
@@ -57,54 +103,326 @@ class _NotificationsSettingsScreenState
     }
 
     try {
-      final rows = await _supabase
-          .from('user_habits')
-          .select('id, name, sort_order, category_id, habit_categories(name)')
-          .eq('user_id', user.id)
-          .eq('is_active', true)
-          .order('sort_order');
-
-      final habits = (rows as List)
-          .map((row) => Map<String, dynamic>.from(row as Map))
-          .toList();
+      final localDataSource = NotificationsLocalDataSource(
+        ref.read(appDatabaseProvider),
+      );
+      final habits = (await localDataSource.loadHabitSnapshot(userId: user.id))
+          .map(
+            (habit) => <String, dynamic>{
+              'id': habit.id,
+              'name': habit.name,
+              'sort_order': habit.sortOrder,
+              'habit_categories': <String, dynamic>{
+                'name': habit.categoryName ?? 'Uncategorized',
+              },
+            },
+          )
+          .toList(growable: false);
 
       if (!mounted) return;
       setState(() {
         _habits = habits;
         _loadingHabits = false;
       });
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToFocusIfNeeded(),
+      );
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _habits = const [];
         _loadingHabits = false;
       });
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToFocusIfNeeded(),
+      );
+    }
+  }
+
+  GlobalKey _reminderSectionKey(String spaceId) {
+    return _reminderSectionKeys.putIfAbsent(spaceId, GlobalKey.new);
+  }
+
+  String? _currentFocusSpaceId() {
+    final focus = GoRouterState.of(context).uri.queryParameters['focus'];
+    if (focus == null || focus.isEmpty) return null;
+    return focus.trim().toLowerCase();
+  }
+
+  void _scheduleFocusWhenRouteReady() {
+    final focus = _currentFocusSpaceId();
+    if (focus == null || _focusScrollCompleted) return;
+
+    final animation = _cachedRouteAnimation;
+    if (animation == null || animation.status == AnimationStatus.completed) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToFocusIfNeeded(),
+      );
+      return;
+    }
+
+    if (_routeAnimationListener != null) {
+      animation.removeStatusListener(_routeAnimationListener!);
+    }
+    _routeAnimationListener = (status) {
+      if (status != AnimationStatus.completed) return;
+      if (_routeAnimationListener != null) {
+        animation.removeStatusListener(_routeAnimationListener!);
+        _routeAnimationListener = null;
+      }
+      if (!mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToFocusIfNeeded(),
+      );
+    };
+    animation.addStatusListener(_routeAnimationListener!);
+  }
+
+  void _scrollToFocusIfNeeded() {
+    final focus = _currentFocusSpaceId();
+    if (focus == null || _focusScrollCompleted) return;
+    unawaited(_scrollToFocusIfNeededWithRetry(focus));
+  }
+
+  Future<void> _scrollToFocusIfNeededWithRetry(
+    String focus, [
+    int attempt = 0,
+  ]) async {
+    if (!mounted) return;
+    await _ensureFocusedTargetPresent(focus);
+    if (!mounted) return;
+    if (_loadingHabits || _loadingTemplateReminders) {
+      if (attempt >= 12) {
+        debugPrint(
+          '[NotificationsFocus] Timed out waiting for sections to load for "$focus".',
+        );
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+      await _scrollToFocusIfNeededWithRetry(focus, attempt + 1);
+      return;
+    }
+    if (!_scrollController.hasClients ||
+        !_scrollController.position.hasContentDimensions) {
+      if (attempt >= 12) {
+        debugPrint(
+          '[NotificationsFocus] Scroll view never became ready for "$focus".',
+        );
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+      await _scrollToFocusIfNeededWithRetry(focus, attempt + 1);
+      return;
+    }
+    final targetContext = _reminderSectionKey(focus).currentContext;
+    if (targetContext != null) {
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      if (!mounted) return;
+
+      for (var ensureAttempt = 0; ensureAttempt < 3; ensureAttempt++) {
+        final activeContext = _reminderSectionKey(focus).currentContext;
+        if (activeContext == null) break;
+        if (!activeContext.mounted) break;
+        await Scrollable.ensureVisible(
+          activeContext,
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeOutCubic,
+          alignment: 0.08,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        if (!mounted) return;
+        if (_isSectionVisible(focus)) {
+          _focusScrollCompleted = true;
+          _highlightFocusedSection(focus);
+          return;
+        }
+      }
+
+      if (attempt >= 12) {
+        debugPrint(
+          '[NotificationsFocus] Section "$focus" never became visible after repeated ensureVisible calls.',
+        );
+        await _fallbackScrollForMissingFocus(focus);
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      if (!mounted) return;
+      await _scrollToFocusIfNeededWithRetry(focus, attempt + 1);
+      return;
+    }
+    if (attempt >= 12) {
+      debugPrint(
+        '[NotificationsFocus] Could not find reminder section for "$focus".',
+      );
+      await _fallbackScrollForMissingFocus(focus);
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    if (!mounted) return;
+    await _scrollToFocusIfNeededWithRetry(focus, attempt + 1);
+  }
+
+  bool _isSectionVisible(String focus) {
+    final targetContext = _reminderSectionKey(focus).currentContext;
+    if (targetContext == null) return false;
+    final renderObject = targetContext.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.attached) return false;
+    final viewport = RenderAbstractViewport.maybeOf(renderObject);
+    if (viewport == null) return false;
+    final position = _scrollController.position;
+    final revealTop = viewport.getOffsetToReveal(renderObject, 0.0).offset;
+    final revealBottom = viewport.getOffsetToReveal(renderObject, 1.0).offset;
+    final visibleTop = position.pixels;
+    final visibleBottom = position.pixels + position.viewportDimension;
+    return revealBottom >= visibleTop && revealTop <= visibleBottom;
+  }
+
+  Future<void> _fallbackScrollForMissingFocus(String focus) async {
+    if (!_scrollController.hasClients) return;
+    final fallbackOffset = _scrollController.position.minScrollExtent;
+    debugPrint(
+      '[NotificationsFocus] Falling back to top of Notifications for "$focus".',
+    );
+    await _scrollController.animateTo(
+      fallbackOffset,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+    );
+  }
+
+  bool _hasReminderTarget(String focus) {
+    return _templateReminderTargets.any(
+      (target) => target.spaceId.trim().toLowerCase() == focus,
+    );
+  }
+
+  Future<void> _ensureFocusedTargetPresent(String focus) async {
+    if (_loadingTemplateReminders) return;
+    if (_hasReminderTarget(focus)) return;
+
+    TemplateReminderTarget? injected;
+    if (!focus.startsWith('template:')) {
+      final title = builtInTemplateReminderTitle(focus);
+      if (title != null) {
+        injected = TemplateReminderTarget(
+          spaceId: focus,
+          title: title,
+          templateKey: focus,
+        );
+      }
+    } else {
+      final templateId = focus.substring('template:'.length);
+      final user = _supabase.auth.currentUser;
+      if (user != null && templateId.isNotEmpty) {
+        injected = await loadTemplateReminderTargetBySpaceIdLocal(
+          database: ref.read(appDatabaseProvider),
+          userId: user.id,
+          spaceId: focus,
+        );
+      }
+    }
+
+    if (injected == null) {
+      debugPrint(
+        '[NotificationsFocus] No reminder target source found for "$focus".',
+      );
+      return;
+    }
+    if (!mounted || _hasReminderTarget(focus)) return;
+    final nextTargets =
+        <TemplateReminderTarget>[..._templateReminderTargets, injected]
+          ..sort((a, b) {
+            if (a.isCustom != b.isCustom) {
+              return a.isCustom ? 1 : -1;
+            }
+            return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+          });
+    setState(() {
+      _templateReminderTargets = nextTargets;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+  }
+
+  void _highlightFocusedSection(String focus) {
+    if (!mounted) return;
+    setState(() => _highlightedSpaceId = focus);
+    Future<void>.delayed(const Duration(milliseconds: 1400), () {
+      if (!mounted) return;
+      if (_highlightedSpaceId != focus) return;
+      setState(() => _highlightedSpaceId = null);
+    });
+  }
+
+  String _formatTimeList(List<String> times) {
+    if (times.isEmpty) return '09:00';
+    return times.join(' • ');
+  }
+
+  List<String> _normalizedScheduleTimes(NotificationSpaceSetting space) {
+    final times = space.reminderTimes;
+    return times.isEmpty ? const <String>['09:00'] : times;
+  }
+
+  Future<void> _loadTemplateReminderTargets() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      setState(() {
+        _templateReminderTargets = const <TemplateReminderTarget>[];
+        _loadingTemplateReminders = false;
+      });
+      return;
+    }
+
+    try {
+      final targets = await loadTemplateReminderTargetsLocal(
+        database: ref.read(appDatabaseProvider),
+        userId: user.id,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _templateReminderTargets = targets;
+        _loadingTemplateReminders = false;
+      });
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToFocusIfNeeded(),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _templateReminderTargets = const <TemplateReminderTarget>[];
+        _loadingTemplateReminders = false;
+      });
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _scrollToFocusIfNeeded(),
+      );
     }
   }
 
   String _formatScheduleSummary(NotificationSpaceSetting space) {
     if (!space.enabled) return '';
-    final time = (space.time == null || space.time!.isEmpty)
-        ? '09:00'
-        : space.time!;
+    final timeLabel = _formatTimeList(_normalizedScheduleTimes(space));
     if (space.frequency == 'remember') {
       return 'Only when I open the app';
     }
     if (space.frequency == 'monthly') {
-      return 'Once a month • ${space.dayOfMonth} • $time';
+      return 'Once a month • ${space.dayOfMonth} • $timeLabel';
     }
     if (space.frequency == 'weekly') {
       final days = space.days.isEmpty ? ['Mon'] : _labelsForDays(space.days);
-      return 'Once a week • ${days.join(' / ')} • $time';
+      return 'Once a week • ${days.join(' / ')} • $timeLabel';
     }
     if (space.frequency == 'certain') {
       final days = space.days.isEmpty ? ['Mon'] : _labelsForDays(space.days);
-      return '${days.join(' / ')} • $time';
+      return '${days.join(' / ')} • $timeLabel';
     }
     if (space.skipWeekends) {
-      return 'Every day • $time • Skip weekends';
+      return 'Every day • $timeLabel • Skip weekends';
     }
-    return 'Every day • $time';
+    return 'Every day • $timeLabel';
   }
 
   List<String> _labelsForDays(List<String> days) {
@@ -124,6 +442,7 @@ class _NotificationsSettingsScreenState
     required BuildContext context,
     required String title,
     required NotificationSpaceSetting initial,
+    bool allowMultipleTimes = false,
     required Future<void> Function(NotificationSpaceSetting setting) onSave,
   }) async {
     var space = initial;
@@ -145,6 +464,7 @@ class _NotificationsSettingsScreenState
             final safeDayValue = dayValues.contains(space.dayOfMonth)
                 ? space.dayOfMonth
                 : null;
+            final reminderTimes = _normalizedScheduleTimes(space);
 
             return SafeArea(
               child: Padding(
@@ -277,21 +597,103 @@ class _NotificationsSettingsScreenState
                                     },
                                   ),
                                 ),
-                              ListTile(
-                                title: const Text('Time'),
-                                subtitle: Text(space.time ?? '09:00'),
-                                trailing: const Icon(Icons.chevron_right),
-                                onTap: () async {
-                                  final current = space.time ?? '09:00';
-                                  final next = await _pickTime(
+                              if (space.frequency != 'remember' &&
+                                  allowMultipleTimes) ...[
+                                Text(
+                                  'Reminder times',
+                                  style: Theme.of(
                                     context,
-                                    current,
+                                  ).textTheme.titleMedium,
+                                ),
+                                const SizedBox(height: 8),
+                                ...reminderTimes.asMap().entries.map((entry) {
+                                  final index = entry.key;
+                                  final reminderTime = entry.value;
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text('Reminder ${index + 1}'),
+                                    subtitle: Text(reminderTime),
+                                    trailing: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Edit time',
+                                          icon: const Icon(Icons.edit_outlined),
+                                          onPressed: () async {
+                                            final next = await _pickTime(
+                                              context,
+                                              reminderTime,
+                                            );
+                                            if (next == null) return;
+                                            final nextTimes = List<String>.from(
+                                              reminderTimes,
+                                            );
+                                            nextTimes[index] = next;
+                                            apply(
+                                              space.copyWith(times: nextTimes),
+                                            );
+                                          },
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Delete time',
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                          onPressed: reminderTimes.length <= 1
+                                              ? null
+                                              : () {
+                                                  final nextTimes =
+                                                      List<String>.from(
+                                                        reminderTimes,
+                                                      )..removeAt(index);
+                                                  apply(
+                                                    space.copyWith(
+                                                      times: nextTimes,
+                                                    ),
+                                                  );
+                                                },
+                                        ),
+                                      ],
+                                    ),
                                   );
-                                  if (next != null) {
-                                    apply(space.copyWith(time: next));
-                                  }
-                                },
-                              ),
+                                }),
+                                Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: OutlinedButton.icon(
+                                    onPressed: () async {
+                                      final next = await _pickTime(
+                                        context,
+                                        reminderTimes.isEmpty
+                                            ? '09:00'
+                                            : reminderTimes.last,
+                                      );
+                                      if (next == null) return;
+                                      final nextTimes = List<String>.from(
+                                        reminderTimes,
+                                      )..add(next);
+                                      apply(space.copyWith(times: nextTimes));
+                                    },
+                                    icon: const Icon(Icons.add),
+                                    label: const Text('Add reminder time'),
+                                  ),
+                                ),
+                              ] else if (space.frequency != 'remember')
+                                ListTile(
+                                  title: const Text('Time'),
+                                  subtitle: Text(space.primaryTime ?? '09:00'),
+                                  trailing: const Icon(Icons.chevron_right),
+                                  onTap: () async {
+                                    final current =
+                                        space.primaryTime ?? '09:00';
+                                    final next = await _pickTime(
+                                      context,
+                                      current,
+                                    );
+                                    if (next != null) {
+                                      apply(space.copyWith(time: next));
+                                    }
+                                  },
+                                ),
                               if (space.frequency == 'most')
                                 CheckboxListTile(
                                   value: space.skipWeekends,
@@ -383,11 +785,11 @@ class _NotificationsSettingsScreenState
     NotificationSpaceSetting current,
     bool enabled,
   ) {
+    final normalizedTimes = _normalizedScheduleTimes(current);
     return current.copyWith(
       enabled: enabled,
-      time: current.time == null || current.time!.isEmpty
-          ? '09:00'
-          : current.time,
+      times: normalizedTimes,
+      time: normalizedTimes.first,
     );
   }
 
@@ -397,26 +799,6 @@ class _NotificationsSettingsScreenState
   ) async {
     final controller = ref.read(settingsControllerProvider);
     await controller.setNotificationSpaceSetting('habit:$habitId', setting);
-  }
-
-  Future<void> _setCalendarSetting(
-    NotificationSpaceSetting setting,
-    bool enabled,
-  ) async {
-    final controller = ref.read(settingsControllerProvider);
-    final nextSpaces = Map<String, NotificationSpaceSetting>.from(
-      ref.read(settingsControllerProvider).settings.notificationSpaceSettings,
-    );
-    nextSpaces[_calendarReminderSpaceId] = setting.copyWith(enabled: enabled);
-    await controller.update(
-      ref
-          .read(settingsControllerProvider)
-          .settings
-          .copyWith(
-            calendarRemindersEnabled: enabled,
-            notificationSpaceSettings: nextSpaces,
-          ),
-    );
   }
 
   Future<void> _setPomodoroSetting(
@@ -436,6 +818,29 @@ class _NotificationsSettingsScreenState
             pomodoroAlertsEnabled: enabled,
             notificationSpaceSettings: nextSpaces,
           ),
+    );
+  }
+
+  Future<void> _setTemplateReminderSetting(
+    String spaceId,
+    NotificationSpaceSetting setting,
+    bool enabled,
+  ) async {
+    final controller = ref.read(settingsControllerProvider);
+    final current = controller.settings;
+    final nextSpaces = Map<String, NotificationSpaceSetting>.from(
+      current.notificationSpaceSettings,
+    );
+    final nextCategories = Map<String, bool>.from(
+      current.notificationCategories,
+    );
+    nextSpaces[spaceId] = setting.copyWith(enabled: enabled);
+    nextCategories[spaceId] = enabled;
+    await controller.update(
+      current.copyWith(
+        notificationCategories: nextCategories,
+        notificationSpaceSettings: nextSpaces,
+      ),
     );
   }
 
@@ -509,9 +914,6 @@ class _NotificationsSettingsScreenState
     final from = GoRouterState.of(context).uri.queryParameters['from'];
     final backTarget = _resolveBackTarget(context, from: from);
 
-    final calendarSpace =
-        settings.notificationSpaceSettings[_calendarReminderSpaceId] ??
-        NotificationSpaceSetting.defaults();
     final pomodoroSpace =
         settings.notificationSpaceSettings[_pomodoroAlertSpaceId] ??
         NotificationSpaceSetting.defaults();
@@ -546,6 +948,7 @@ class _NotificationsSettingsScreenState
         ),
       ),
       body: ListView(
+        controller: _scrollController,
         padding: const EdgeInsets.all(16),
         children: [
           Text('Habit Tracker', style: Theme.of(context).textTheme.titleLarge),
@@ -610,45 +1013,72 @@ class _NotificationsSettingsScreenState
             }),
           const SizedBox(height: 20),
           Text(
-            'Calendar Reminders',
+            'Template Reminders',
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 8),
-          _buildCoreTile(
-            context: context,
-            title: 'Calendar Reminders',
-            enabled: settings.calendarRemindersEnabled,
-            space: calendarSpace.copyWith(
-              enabled: settings.calendarRemindersEnabled,
-            ),
-            showSummaryWhenEnabled: false,
-            showEditHint: false,
-            onToggle: (value) {
-              unawaited(
-                _setCalendarSetting(
-                  _effectiveEnabledSetting(calendarSpace, value),
-                  value,
-                ),
-              );
-            },
-            onEditTap: () {
-              _openScheduleSheet(
-                context: context,
-                title: 'Calendar reminder settings',
-                initial: _effectiveEnabledSetting(
-                  calendarSpace.copyWith(
-                    enabled: settings.calendarRemindersEnabled,
+          if (_loadingTemplateReminders)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_templateReminderTargets.isEmpty)
+            Text(
+              'No reminder-supported templates available yet.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            )
+          else
+            ..._templateReminderTargets.map((target) {
+              final space =
+                  settings.notificationSpaceSettings[target.spaceId] ??
+                  NotificationSpaceSetting.defaults();
+              final isHighlighted = _highlightedSpaceId == target.spaceId;
+              return Container(
+                key: _reminderSectionKey(target.spaceId),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  decoration: BoxDecoration(
+                    color: isHighlighted
+                        ? Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.08)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(18),
                   ),
-                  true,
-                ),
-                onSave: (setting) => _setCalendarSetting(
-                  setting,
-                  settings.calendarRemindersEnabled,
+                  child: _buildCoreTile(
+                    context: context,
+                    title: '${target.title} reminders',
+                    enabled: space.enabled,
+                    space: space.copyWith(enabled: space.enabled),
+                    onToggle: (value) {
+                      unawaited(
+                        _setTemplateReminderSetting(
+                          target.spaceId,
+                          _effectiveEnabledSetting(space, value),
+                          value,
+                        ),
+                      );
+                    },
+                    onEditTap: () {
+                      _openScheduleSheet(
+                        context: context,
+                        title: '${target.title} reminder settings',
+                        initial: _effectiveEnabledSetting(
+                          space.copyWith(enabled: true),
+                          true,
+                        ),
+                        allowMultipleTimes: true,
+                        onSave: (setting) => _setTemplateReminderSetting(
+                          target.spaceId,
+                          setting,
+                          true,
+                        ),
+                      );
+                    },
+                  ),
                 ),
               );
-            },
-          ),
-          const SizedBox(height: 20),
+            }),
           Text(
             'Pomodoro Finished Alerts',
             style: Theme.of(context).textTheme.titleLarge,

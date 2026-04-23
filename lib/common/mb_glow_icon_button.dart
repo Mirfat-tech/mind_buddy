@@ -29,7 +29,7 @@ class MbGlowIconButton extends StatelessWidget {
           BoxShadow(
             color: scheme.primary.withOpacity(0.25),
             blurRadius: 14,
-            spreadRadius: 1,
+            spreadRadius: 0.5,
           ),
         ],
       ),

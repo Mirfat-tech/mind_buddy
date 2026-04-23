@@ -17,6 +17,45 @@ abstract class BubbleBoardStorage {
   Future<void> clearAll();
 }
 
+class InMemoryBubbleBoardStorage extends BubbleBoardStorage {
+  InMemoryBubbleBoardStorage({
+    List<BubbleEntry> seedEntries = const <BubbleEntry>[],
+    this.onMutated,
+  }) : _entries = seedEntries.map(_cloneEntry).toList(growable: true);
+
+  final VoidCallback? onMutated;
+  final List<BubbleEntry> _entries;
+
+  @override
+  Future<List<BubbleEntry>> fetchEntries() async {
+    return _entries.map(_cloneEntry).toList(growable: false);
+  }
+
+  @override
+  Future<void> saveEntry(BubbleEntry entry) async {
+    final index = _entries.indexWhere((existing) => existing.id == entry.id);
+    final copy = _cloneEntry(entry);
+    if (index >= 0) {
+      _entries[index] = copy;
+    } else {
+      _entries.add(copy);
+    }
+    onMutated?.call();
+  }
+
+  @override
+  Future<void> deleteEntry(BubbleEntry entry) async {
+    _entries.removeWhere((existing) => existing.id == entry.id);
+    onMutated?.call();
+  }
+
+  @override
+  Future<void> clearAll() async {
+    _entries.clear();
+    onMutated?.call();
+  }
+}
+
 class SupabaseBubbleBoardStorage extends BubbleBoardStorage {
   const SupabaseBubbleBoardStorage({required this.tableName});
 
@@ -156,10 +195,17 @@ String _encodeBubblePayload(BubbleEntry entry) {
   if (entry.solutionText.trim().isEmpty) {
     return entry.text;
   }
-  return '$_bubbleStorageMarker${jsonEncode(<String, dynamic>{
-        'text': entry.text,
-        'solution_text': entry.solutionText,
-      })}';
+  return '$_bubbleStorageMarker${jsonEncode(<String, dynamic>{'text': entry.text, 'solution_text': entry.solutionText})}';
+}
+
+BubbleEntry _cloneEntry(BubbleEntry entry) {
+  return BubbleEntry(
+    id: entry.id,
+    text: entry.text,
+    solutionText: entry.solutionText,
+    offset: entry.offset,
+    createdAt: entry.createdAt,
+  );
 }
 
 (String, String) _decodeBubblePayload(Object? rawText) {

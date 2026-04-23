@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mind_buddy/features/insights/habit_completion_stats.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
 class HabitStreaksSummary extends StatefulWidget {
   const HabitStreaksSummary({
@@ -22,8 +21,6 @@ class HabitStreaksSummary extends StatefulWidget {
 }
 
 class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
-  final SupabaseClient supabase = Supabase.instance.client;
-
   bool _loading = true;
   bool _refreshing = false;
   String? _error;
@@ -59,18 +56,7 @@ class _HabitStreaksSummaryState extends State<HabitStreaksSummary> {
     }
 
     try {
-      final user = supabase.auth.currentUser;
-      if (user == null) {
-        if (!mounted) return;
-        setState(() {
-          _loading = false;
-          _refreshing = false;
-        });
-        return;
-      }
-
       final stats = await fetchHabitMonthlyCompletionStats(
-        supabase: supabase,
         selectedMonth: widget.month,
       );
 

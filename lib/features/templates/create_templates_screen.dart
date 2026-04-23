@@ -1,22 +1,27 @@
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-class CreateLogTemplateScreen extends StatefulWidget {
+import 'package:mind_buddy/features/templates/data/repository/custom_templates_repository.dart';
+import 'package:mind_buddy/features/templates/data/repository/template_logs_repository.dart';
+
+class CreateLogTemplateScreen extends ConsumerStatefulWidget {
   const CreateLogTemplateScreen({super.key, this.templateId});
 
   final String? templateId;
 
   @override
-  State<CreateLogTemplateScreen> createState() =>
+  ConsumerState<CreateLogTemplateScreen> createState() =>
       _CreateLogTemplateScreenState();
 }
 
-class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
+class _CreateLogTemplateScreenState
+    extends ConsumerState<CreateLogTemplateScreen> {
   final supabase = Supabase.instance.client;
   final nameCtrl = TextEditingController();
   final keyCtrl = TextEditingController();
@@ -28,9 +33,6 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     _FieldDraft(label: 'Item', key: '', type: 'text'),
   ];
   List<_FieldDraft> _originalFields = const <_FieldDraft>[];
-
-  static const tTemplates = 'log_templates_v2';
-  static const tFields = 'log_template_fields_v2';
 
   bool get _isEditing => widget.templateId != null;
 
@@ -94,22 +96,6 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     return underscored.replaceAll(RegExp(r'_+'), '_');
   }
 
-  Future<String> _uniqueTemplateKey(String baseKey, String userId) async {
-    var key = baseKey;
-    var i = 2;
-    while (true) {
-      final existing = await supabase
-          .from(tTemplates)
-          .select('id')
-          .eq('user_id', userId)
-          .eq('template_key', key)
-          .maybeSingle();
-      if (existing == null) return key;
-      key = '${baseKey}_$i';
-      i++;
-    }
-  }
-
   Future<void> _loadExistingTemplate() async {
     final user = supabase.auth.currentUser;
     final templateId = widget.templateId;
@@ -117,12 +103,11 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
 
     setState(() => _loadingTemplate = true);
     try {
-      final tpl = await supabase
-          .from(tTemplates)
-          .select('id, name, template_key, user_id')
-          .eq('id', templateId)
-          .eq('user_id', user.id)
-          .maybeSingle();
+      final repo = ref.read(customTemplatesRepositoryProvider);
+      final tpl = await repo.loadTemplateById(
+        templateId: templateId,
+        userId: user.id,
+      );
       if (tpl == null) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -133,21 +118,12 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
         Navigator.pop(context);
         return;
       }
-
-      final fieldRows = await supabase
-          .from(tFields)
-          .select('id, field_key, label, field_type, options, sort_order')
-          .eq('template_id', templateId)
-          .eq('is_hidden', false)
-          .order('sort_order');
-      final loadedFields = List<Map<String, dynamic>>.from(
-        fieldRows,
-      ).map(_FieldDraft.fromDatabase).toList();
+      final loadedFields = tpl.fields.map(_FieldDraft.fromDatabase).toList();
 
       if (!mounted) return;
       setState(() {
-        nameCtrl.text = (tpl['name'] ?? '').toString();
-        keyCtrl.text = (tpl['template_key'] ?? '').toString();
+        nameCtrl.text = tpl.name;
+        keyCtrl.text = tpl.templateKey;
         fields
           ..clear()
           ..addAll(
@@ -201,34 +177,14 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
 
     final user = supabase.auth.currentUser;
     if (user == null) return false;
-    final templateKey = keyCtrl.text.trim();
-    final logTable = templateKey.isEmpty
-        ? null
-        : '${_slugify(templateKey)}_logs';
-
-    try {
-      if (logTable != null) {
-        final response = await supabase
-            .from(logTable)
-            .select('id')
-            .eq('user_id', user.id)
-            .limit(1);
-        if ((response as List).isNotEmpty) return true;
-      }
-    } catch (_) {
-      // Some custom templates may not have a dedicated logs table yet.
-    }
-
-    try {
-      final genericRows = await supabase
-          .from('log_entries')
-          .select('id')
-          .eq('template_id', widget.templateId!)
-          .limit(1);
-      return (genericRows as List).isNotEmpty;
-    } catch (_) {
-      return false;
-    }
+    final templateKey = keyCtrl.text.trim().toLowerCase();
+    final repo = ref.read(templateLogsRepositoryProvider);
+    final localEntries = await repo.loadEntries(
+      templateId: widget.templateId!,
+      templateKey: templateKey,
+      userId: user.id,
+    );
+    return localEntries.isNotEmpty;
   }
 
   Future<bool> _confirmDefinitionChangeIfNeeded() async {
@@ -287,77 +243,47 @@ class _CreateLogTemplateScreenState extends State<CreateLogTemplateScreen> {
     setState(() => saving = true);
 
     try {
-      late final String templateId;
+      final repo = ref.read(customTemplatesRepositoryProvider);
       if (_isEditing) {
-        templateId = widget.templateId!;
-        await supabase
-            .from(tTemplates)
-            .update({'name': name})
-            .eq('id', templateId)
-            .eq('user_id', user.id);
+        await repo.saveTemplate(
+          templateId: widget.templateId!,
+          userId: user.id,
+          name: name,
+          templateKey: keyCtrl.text.trim(),
+          fields: cleanedFields
+              .map(
+                (field) => CustomTemplateDraftField(
+                  id: field.id,
+                  label: field.label,
+                  fieldKey: field.key,
+                  fieldType: field.type,
+                  options: field.optionsJson?.toString(),
+                ),
+              )
+              .toList(growable: false),
+        );
       } else {
         final baseKey = _slugify(keyCtrl.text.isEmpty ? name : keyCtrl.text);
-        final templateKey = await _uniqueTemplateKey(baseKey, user.id);
-
-        final tpl = await supabase
-            .from(tTemplates)
-            .insert({
-              'user_id': user.id,
-              'template_key': templateKey,
-              'name': name,
-            })
-            .select()
-            .single();
-        templateId = (tpl['id'] ?? '').toString();
-      }
-
-      final incomingIds = <String>{};
-      for (final entry in cleanedFields.asMap().entries) {
-        final index = entry.key;
-        final field = entry.value;
-        final fieldId = field.id;
-        final payload = {
-          'user_id': user.id,
-          'template_id': templateId,
-          'field_key': field.key,
-          'label': field.label,
-          'field_type': field.type,
-          'sort_order': index,
-          'options': field.optionsJson,
-          'is_hidden': false,
-        };
-
-        if (fieldId == null) {
-          final inserted = await supabase
-              .from(tFields)
-              .insert(payload)
-              .select('id')
-              .single();
-          final insertedId = (inserted['id'] ?? '').toString();
-          if (insertedId.isNotEmpty) incomingIds.add(insertedId);
-        } else {
-          incomingIds.add(fieldId);
-          await supabase
-              .from(tFields)
-              .update(payload)
-              .eq('id', fieldId)
-              .eq('template_id', templateId);
-        }
-      }
-
-      if (_isEditing) {
-        final existingIds = _originalFields
-            .map((field) => field.id)
-            .whereType<String>()
-            .toSet();
-        final removedIds = existingIds.difference(incomingIds);
-        if (removedIds.isNotEmpty) {
-          await supabase
-              .from(tFields)
-              .update({'is_hidden': true})
-              .inFilter('id', removedIds.toList())
-              .eq('template_id', templateId);
-        }
+        final templateKey = await repo.uniqueTemplateKey(
+          userId: user.id,
+          baseKey: baseKey,
+        );
+        await repo.saveTemplate(
+          userId: user.id,
+          name: name,
+          templateKey: templateKey,
+          fields: cleanedFields
+              .map(
+                (field) => CustomTemplateDraftField(
+                  id: field.id,
+                  label: field.label,
+                  fieldKey: field.key,
+                  fieldType: field.type,
+                  options: field.optionsJson?.toString(),
+                ),
+              )
+              .toList(growable: false),
+        );
       }
 
       if (!mounted) return;

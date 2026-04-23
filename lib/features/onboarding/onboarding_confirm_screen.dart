@@ -38,7 +38,7 @@ class OnboardingConfirmScreen extends ConsumerWidget {
     }
 
     if (context.mounted) {
-      context.go('/home');
+      context.go('/');
     }
   }
 

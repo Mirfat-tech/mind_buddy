@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:mind_buddy/features/bubble_coins/bubble_coin_reward_service.dart';
 import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'package:mind_buddy/features/insights/habit_streaks_summary.dart';
 import 'package:mind_buddy/features/habits/habit_home_widget_service.dart';
@@ -24,15 +25,19 @@ class _HabitsScreenState extends State<HabitsScreen>
     with WidgetsBindingObserver {
   static const String _widgetTipDismissedKey = 'habits_widget_tip_dismissed';
   static const String _widgetTipSeenKey = 'habits_widget_tip_seen_once';
-  static const String _widgetTipLastShownAtKey = 'habits_widget_tip_last_shown_at';
+  static const String _widgetTipLastShownAtKey =
+      'habits_widget_tip_last_shown_at';
   static const String _widgetTipStateVersionKey = 'habits_widget_tip_state_v';
   static const int _widgetTipStateVersion = 1;
   static const Duration _widgetTipCooldown = Duration(days: 7);
 
+  final BubbleCoinRewardService _bubbleCoinRewardService =
+      BubbleCoinRewardService();
   DateTime month = DateTime(DateTime.now().year, DateTime.now().month, 1);
   bool _hideStreaks = false;
   bool _needsHideStreaksRefresh = false;
   bool _showWidgetTip = false;
+  int _bubbleCoinBalance = 0;
   Timer? _widgetTipAutoHideTimer;
   final GlobalKey _monthChevronLeftKey = GlobalKey();
   final GlobalKey _monthChevronRightKey = GlobalKey();
@@ -48,6 +53,7 @@ class _HabitsScreenState extends State<HabitsScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadHideStreaks();
+    _loadBubbleCoinBalance();
     _prepareWidgetTip();
     Future<void>.microtask(() async {
       await HabitHomeWidgetService.flushPendingWidgetToggles();
@@ -99,8 +105,17 @@ class _HabitsScreenState extends State<HabitsScreen>
 
   void _refreshSummary() {
     _loadHideStreaks();
+    _loadBubbleCoinBalance();
     setState(() => refreshTick++);
     HabitHomeWidgetService.syncTodaySnapshot();
+  }
+
+  Future<void> _loadBubbleCoinBalance() async {
+    final wallet = await _bubbleCoinRewardService.loadWallet();
+    if (!mounted) return;
+    setState(() {
+      _bubbleCoinBalance = wallet.balance;
+    });
   }
 
   Future<void> _showWidgetHowTo() async {
@@ -262,7 +277,7 @@ class _HabitsScreenState extends State<HabitsScreen>
             if (Navigator.of(context).canPop()) {
               Navigator.of(context).pop();
             } else {
-              context.go('/home');
+              context.go('/');
             }
           },
         ),
@@ -283,12 +298,6 @@ class _HabitsScreenState extends State<HabitsScreen>
               _refreshSummary();
             },
           ),
-          MbGlowIconButton(
-            key: _resetButtonKey,
-            tooltip: 'Refresh',
-            icon: Icons.refresh,
-            onPressed: _refreshSummary,
-          ),
         ],
       ),
       body: MbFloatingHintOverlay(
@@ -306,6 +315,8 @@ class _HabitsScreenState extends State<HabitsScreen>
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 10),
+                _BubbleCoinWalletChip(balance: _bubbleCoinBalance),
+                const SizedBox(height: 12),
                 if (!_hideStreaks)
                   _GlowPanel(
                     child: HabitStreaksSummary(
@@ -438,6 +449,48 @@ class _GlowPanel extends StatelessWidget {
         ],
       ),
       child: child,
+    );
+  }
+}
+
+class _BubbleCoinWalletChip extends StatelessWidget {
+  const _BubbleCoinWalletChip({required this.balance});
+
+  final int balance;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: scheme.outline.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.toll_rounded, size: 18, color: scheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            'Bubble Coins',
+            style: textTheme.labelLarge?.copyWith(
+              color: scheme.onSurface,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '$balance',
+            style: textTheme.titleSmall?.copyWith(
+              color: scheme.primary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

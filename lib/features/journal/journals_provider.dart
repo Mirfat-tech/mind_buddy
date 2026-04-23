@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/services/username_resolver_service.dart';
 import 'package:mind_buddy/services/journal_repository.dart';
+import 'package:mind_buddy/features/journal/journal_local_repository.dart';
 
 import 'journal_folder_support.dart';
 
@@ -10,10 +11,13 @@ final journalRepositoryProvider = Provider<JournalRepository>((ref) {
   return JournalRepository();
 });
 
+final journalLocalRepositoryProvider = Provider<JournalLocalRepository>((ref) {
+  return JournalLocalRepository();
+});
+
 final journalsProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>((
   ref,
 ) async {
-  final repository = ref.watch(journalRepositoryProvider);
   final user = Supabase.instance.client.auth.currentUser;
   if (user == null) return [];
   developer.log(
@@ -21,7 +25,9 @@ final journalsProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>(
     name: 'journal_share',
   );
   try {
-    final rows = await repository.fetchOwnedJournals();
+    final rows = await ref
+        .watch(journalLocalRepositoryProvider)
+        .loadOwnedJournals();
     final sample = rows
         .take(5)
         .map((r) => r['id']?.toString() ?? '')
@@ -32,9 +38,9 @@ final journalsProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>(
       name: 'journal_share',
     );
     return rows;
-  } on PostgrestException catch (e) {
+  } catch (e) {
     developer.log(
-      'journal_share event=journals_list_fetch_fail data={code: ${e.code}, message: ${e.message}, details: ${e.details}, hint: ${e.hint}}',
+      'journal_share event=journals_list_fetch_fail data={error: $e}',
       name: 'journal_share',
     );
     rethrow;
@@ -136,13 +142,19 @@ final sharedWithMeProvider = FutureProvider.autoDispose<List<Map<String, dynamic
 final journalFoldersProvider = FutureProvider.autoDispose<List<JournalFolder>>((
   ref,
 ) async {
-  return JournalFolderSupport.fetchFolders();
+  return ref.watch(journalLocalRepositoryProvider).loadFolders();
 });
 
 final addJournalProvider = FutureProvider.family
     .autoDispose<void, Map<String, dynamic>>((ref, payload) async {
-      final supa = Supabase.instance.client;
-      await supa.from('journals').insert(payload);
-      // refresh list after insert
+      final repo = ref.watch(journalLocalRepositoryProvider);
+      await repo.saveJournal(
+        journalId: payload['id']?.toString(),
+        title: (payload['title'] ?? '').toString(),
+        body: (payload['text'] ?? '').toString(),
+        dayId: (payload['day_id'] ?? '').toString(),
+        folderId: payload['folder_id']?.toString(),
+        now: DateTime.now(),
+      );
       ref.invalidate(journalsProvider);
     });

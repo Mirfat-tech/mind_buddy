@@ -101,35 +101,39 @@ const List<NotificationCategory> notificationCategories = [
     title: 'Mood',
     description: 'Log how you feel today',
     subtitle: 'Mood',
-    morningMessages: [
-      'How are you arriving today, even if it is messy?',
-    ],
-    eveningMessages: [
-      'Want to check in with how today actually felt?',
-    ],
+    morningMessages: ['How are you arriving today, even if it is messy?'],
+    eveningMessages: ['Want to check in with how today actually felt?'],
   ),
   NotificationCategory(
     id: 'sleep',
     title: 'Sleep',
     description: 'Check in with your sleep',
     subtitle: 'Sleep',
-    morningMessages: [
-      'Did you feel rested, or just awake?',
-    ],
-    eveningMessages: [
-      'Your body might be ready to slow down. No pressure.',
-    ],
+    morningMessages: ['Did you feel rested, or just awake?'],
+    eveningMessages: ['Your body might be ready to slow down. No pressure.'],
   ),
   NotificationCategory(
     id: 'water',
     title: 'Water',
     description: 'Log your water',
     subtitle: 'Water',
-    morningMessages: [
-      'Tiny reminder to sip, not chug.',
-    ],
+    morningMessages: ['Tiny reminder to sip, not chug.'],
     eveningMessages: [
       'If you have not had water yet, this is your soft nudge.',
+    ],
+  ),
+  NotificationCategory(
+    id: 'medication',
+    title: 'Medication',
+    description: 'Medication reminder notifications',
+    subtitle: 'Medication',
+    morningMessages: [
+      'A gentle medication reminder, if it helps.',
+      'Time for your medication check-in.',
+    ],
+    eveningMessages: [
+      'A soft reminder for your medication.',
+      'If it is time for medication, this is your gentle nudge.',
     ],
   ),
   NotificationCategory(
@@ -137,47 +141,45 @@ const List<NotificationCategory> notificationCategories = [
     title: 'Meditation',
     description: 'Open a quiet moment',
     subtitle: 'Meditation',
-    morningMessages: [
-      'One quiet minute counts too.',
-    ],
-    eveningMessages: [
-      'You do not have to clear your mind, just sit with it.',
-    ],
+    morningMessages: ['One quiet minute counts too.'],
+    eveningMessages: ['You do not have to clear your mind, just sit with it.'],
   ),
   NotificationCategory(
     id: 'goals',
     title: 'Goals',
     description: 'Choose one gentle priority',
     subtitle: 'Goals',
-    morningMessages: [
-      'One small thing that matters today is enough.',
-    ],
-    eveningMessages: [
-      'Want to choose one gentle priority?',
-    ],
+    morningMessages: ['One small thing that matters today is enough.'],
+    eveningMessages: ['Want to choose one gentle priority?'],
   ),
   NotificationCategory(
     id: 'tasks',
     title: 'Tasks',
     description: 'Log tasks',
     subtitle: 'Tasks',
-    morningMessages: [
-      'What is the kindest thing to cross off today?',
-    ],
-    eveningMessages: [
-      'If you stop now, that is still okay.',
-    ],
+    morningMessages: ['What is the kindest thing to cross off today?'],
+    eveningMessages: ['If you stop now, that is still okay.'],
   ),
   NotificationCategory(
     id: 'study',
     title: 'Study',
     description: 'Open your study space',
     subtitle: 'Study',
+    morningMessages: ['Ten focused minutes is still progress.'],
+    eveningMessages: ['Only if it feels right, want to open your study space?'],
+  ),
+  NotificationCategory(
+    id: 'meals',
+    title: 'Meals',
+    description: 'Meal reminder notifications',
+    subtitle: 'Meals',
     morningMessages: [
-      'Ten focused minutes is still progress.',
+      'A gentle reminder to check in with your meals.',
+      'Want to log or plan your next meal?',
     ],
     eveningMessages: [
-      'Only if it feels right, want to open your study space?',
+      'A soft meal reminder, if it helps.',
+      'Want to check in with meals for today?',
     ],
   ),
   NotificationCategory(
@@ -185,161 +187,107 @@ const List<NotificationCategory> notificationCategories = [
     title: 'Workout',
     description: 'Log movement',
     subtitle: 'Workout',
-    morningMessages: [
-      'Movement can be soft today.',
-    ],
-    eveningMessages: [
-      'Stretching counts. Rest counts too.',
-    ],
+    morningMessages: ['Movement can be soft today.'],
+    eveningMessages: ['Stretching counts. Rest counts too.'],
   ),
   NotificationCategory(
     id: 'fast',
     title: 'Fast',
     description: 'Check in with food and fasting',
     subtitle: 'Fast',
-    morningMessages: [
-      'Check in with your body. What does it need right now?',
-    ],
-    eveningMessages: [
-      'No pressure, just a gentle check in.',
-    ],
+    morningMessages: ['Check in with your body. What does it need right now?'],
+    eveningMessages: ['No pressure, just a gentle check in.'],
   ),
   NotificationCategory(
     id: 'skin_care',
     title: 'Skin Care',
     description: 'A small moment of care',
     subtitle: 'Skin care',
-    morningMessages: [
-      'A small moment of care, just for you.',
-    ],
-    eveningMessages: [
-      'If it helps, your skin care space is here.',
-    ],
+    morningMessages: ['A small moment of care, just for you.'],
+    eveningMessages: ['If it helps, your skin care space is here.'],
   ),
   NotificationCategory(
     id: 'expenses',
     title: 'Expenses',
     description: 'Log expenses',
     subtitle: 'Expenses',
-    morningMessages: [
-      'Want a quick glance at today’s numbers?',
-    ],
-    eveningMessages: [
-      'Information only, no judgment here.',
-    ],
+    morningMessages: ['Want a quick glance at today’s numbers?'],
+    eveningMessages: ['Information only, no judgment here.'],
   ),
   NotificationCategory(
     id: 'income',
     title: 'Income',
     description: 'Log income',
     subtitle: 'Income',
-    morningMessages: [
-      'Want a quick glance at today’s numbers?',
-    ],
-    eveningMessages: [
-      'Information only, no judgment here.',
-    ],
+    morningMessages: ['Want a quick glance at today’s numbers?'],
+    eveningMessages: ['Information only, no judgment here.'],
   ),
   NotificationCategory(
     id: 'bills',
     title: 'Bills',
     description: 'Log bills',
     subtitle: 'Bills',
-    morningMessages: [
-      'Want to check in on bills, just for clarity?',
-    ],
-    eveningMessages: [
-      'Information only, no judgment here.',
-    ],
+    morningMessages: ['Want to check in on bills, just for clarity?'],
+    eveningMessages: ['Information only, no judgment here.'],
   ),
   NotificationCategory(
     id: 'social',
     title: 'Social',
     description: 'Log social moments',
     subtitle: 'Social',
-    morningMessages: [
-      'Who felt safe to talk to lately?',
-    ],
-    eveningMessages: [
-      'Even thinking about connection counts.',
-    ],
+    morningMessages: ['Who felt safe to talk to lately?'],
+    eveningMessages: ['Even thinking about connection counts.'],
   ),
   NotificationCategory(
     id: 'places',
     title: 'Places',
     description: 'Log places',
     subtitle: 'Places',
-    morningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
-    eveningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
+    morningMessages: ['Want to log something that brought you a little joy?'],
+    eveningMessages: ['Want to log something that brought you a little joy?'],
   ),
   NotificationCategory(
     id: 'restaurants',
     title: 'Restaurants',
     description: 'Log a restaurant',
     subtitle: 'Restaurants',
-    morningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
-    eveningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
+    morningMessages: ['Want to log something that brought you a little joy?'],
+    eveningMessages: ['Want to log something that brought you a little joy?'],
   ),
   NotificationCategory(
     id: 'movies',
     title: 'Movie Log',
     description: 'Log a movie',
     subtitle: 'Movies',
-    morningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
-    eveningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
+    morningMessages: ['Want to log something that brought you a little joy?'],
+    eveningMessages: ['Want to log something that brought you a little joy?'],
   ),
   NotificationCategory(
     id: 'tv',
     title: 'TV Log',
     description: 'Log a TV show',
     subtitle: 'TV log',
-    morningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
-    eveningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
+    morningMessages: ['Want to log something that brought you a little joy?'],
+    eveningMessages: ['Want to log something that brought you a little joy?'],
   ),
   NotificationCategory(
     id: 'books',
     title: 'Books',
     description: 'Log a book',
     subtitle: 'Books',
-    morningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
-    eveningMessages: [
-      'Want to log something that brought you a little joy?',
-    ],
+    morningMessages: ['Want to log something that brought you a little joy?'],
+    eveningMessages: ['Want to log something that brought you a little joy?'],
   ),
   NotificationCategory(
     id: 'wishlist',
     title: 'Wishlist',
     description: 'Add something you want',
     subtitle: 'Wishlist',
-    morningMessages: [
-      'It is okay to want things.',
-    ],
-    eveningMessages: [
-      'It is okay to want things.',
-    ],
+    morningMessages: ['It is okay to want things.'],
+    eveningMessages: ['It is okay to want things.'],
   ),
 ];
 
 Map<String, bool> defaultNotificationCategoryState() {
-  return {
-    for (final category in notificationCategories) category.id: true,
-  };
+  return {for (final category in notificationCategories) category.id: true};
 }

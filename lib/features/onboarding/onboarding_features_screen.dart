@@ -24,7 +24,8 @@ class _OnboardingFeaturesScreenState extends State<OnboardingFeaturesScreen> {
     _FeatureSlide(
       icon: Icons.insights_outlined,
       title: 'See patterns clearly',
-      subtitle: 'Insights help you notice what is working and what needs care.',
+      subtitle:
+          'Plus Support Mode includes Insights to help you notice what is working and what needs care.',
     ),
     _FeatureSlide(
       icon: Icons.favorite_outline,

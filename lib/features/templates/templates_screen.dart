@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'log_table_screen.dart';
 import 'create_templates_screen.dart';
@@ -12,27 +13,25 @@ import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
 import 'package:mind_buddy/features/templates/template_preview_store.dart';
+import 'package:mind_buddy/features/templates/data/repository/custom_templates_repository.dart';
 
 enum _CustomTemplateAction { edit, delete }
 
 class _TemplateDeleteResult {
-  const _TemplateDeleteResult({
-    required this.success,
-    this.message,
-  });
+  const _TemplateDeleteResult({required this.success, this.message});
 
   final bool success;
   final String? message;
 }
 
-class TemplatesScreen extends StatefulWidget {
+class TemplatesScreen extends ConsumerStatefulWidget {
   const TemplatesScreen({super.key});
 
   @override
-  State<TemplatesScreen> createState() => _TemplatesScreenState();
+  ConsumerState<TemplatesScreen> createState() => _TemplatesScreenState();
 }
 
-class _TemplatesScreenState extends State<TemplatesScreen> {
+class _TemplatesScreenState extends ConsumerState<TemplatesScreen> {
   final supabase = Supabase.instance.client;
   final TextEditingController _searchController = TextEditingController();
   bool loading = true;
@@ -45,6 +44,7 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
   final GlobalKey _hideToggleKey = GlobalKey();
   final GlobalKey _addTemplateButtonKey = GlobalKey();
   final Set<String> _deletingTemplateIds = <String>{};
+  static const _hiddenPrefsKey = 'hidden_template_ids_local';
 
   @override
   void initState() {
@@ -71,6 +71,10 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
         return 'water_logs';
       case 'sleep':
         return 'sleep_logs';
+      case 'medication':
+        return 'medication_logs';
+      case 'meals':
+        return 'meals_logs';
       case 'cycle':
         return 'menstrual_logs';
       case 'books':
@@ -122,47 +126,41 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
       if (user == null) return;
       final info = await SubscriptionLimits.fetchForCurrentUser();
       _isPending = info.isPending;
-
-      final hiddenRows = await supabase
-          .from('user_template_settings')
-          .select('template_id')
-          .eq('user_id', user.id)
-          .eq('is_hidden', true);
-      _hiddenTemplateIds = (hiddenRows as List)
-          .map((r) => (r['template_id'] ?? '').toString())
-          .where((id) => id.isNotEmpty)
-          .toSet();
-
-      // FIX: Fetch where user_id is the current user OR user_id is NULL (System Templates)
-      final base = supabase
-          .from('log_templates_v2')
-          .select()
-          .or('user_id.eq.${user.id},user_id.is.null');
-      final rows = await base.order('name', ascending: true);
-
-      debugPrint('--- TEMPLATE KEYS FROM DB (${rows.length}) ---');
-      for (final r in rows) {
-        debugPrint(
-          'name=${r['name']}  key=${r['template_key']}  user_id=${r['user_id']}',
-        );
-      }
-      debugPrint('--- END ---');
+      final prefs = await SharedPreferences.getInstance();
+      _hiddenTemplateIds =
+          prefs.getStringList(_hiddenPrefsKey)?.toSet() ?? <String>{};
+      final repo = ref.read(customTemplatesRepositoryProvider);
+      final records = await repo.loadTemplates(userId: user.id);
+      final all = records
+          .where((t) => t.templateKey != 'habits')
+          .map(
+            (t) => <String, dynamic>{
+              'id': t.id,
+              'name': t.name,
+              'template_key': t.templateKey,
+              'user_id': t.userId,
+              'is_built_in': t.isBuiltIn,
+            },
+          )
+          .toList(growable: false);
 
       if (mounted) {
         setState(() {
-          // Filter out 'habits' if you want it hidden from this view
-          final all = List<Map<String, dynamic>>.from(
-            rows,
-          ).where((t) => (t['template_key'] ?? '') != 'habits').toList();
+          final sorted = List<Map<String, dynamic>>.from(all)
+            ..sort(
+              (a, b) => (a['name'] ?? '').toString().toLowerCase().compareTo(
+                (b['name'] ?? '').toString().toLowerCase(),
+              ),
+            );
           templates = _showHidden
-              ? all
+              ? sorted
                     .where(
                       (t) => _hiddenTemplateIds.contains(
                         (t['id'] ?? '').toString(),
                       ),
                     )
                     .toList()
-              : all
+              : sorted
                     .where(
                       (t) => !_hiddenTemplateIds.contains(
                         (t['id'] ?? '').toString(),
@@ -202,85 +200,37 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     }
 
     try {
-      final existingTemplate = await supabase
-          .from('log_templates_v2')
-          .select('id')
-          .eq('id', templateId)
-          .eq('user_id', user.id)
-          .maybeSingle();
+      final repo = ref.read(customTemplatesRepositoryProvider);
+      final existingTemplate = await repo.loadTemplateById(
+        templateId: templateId,
+        userId: user.id,
+      );
       if (existingTemplate == null) {
         return const _TemplateDeleteResult(
           success: true,
           message: 'That template is already gone.',
         );
       }
-
-      final rpcDeleted = await _deleteTemplateViaRpc(templateId);
-      if (rpcDeleted == true) {
-        try {
-          await TemplatePreviewStore.saveEntries(
-            userId: user.id,
-            tableName: _tableNameForTemplateKey(templateKey),
-            entries: const <Map<String, dynamic>>[],
-          );
-        } catch (_) {}
-        _hiddenTemplateIds.remove(templateId);
-        await _load();
-        return const _TemplateDeleteResult(success: true);
-      }
-
-      final tableName = _tableNameForTemplateKey(templateKey);
-
-      await _deleteOptionalTableRows(
-        tableName,
-        filters: (query) => query.eq('user_id', user.id),
-      );
-      await _deleteOptionalTableRows(
-        'log_entries',
-        filters: (query) =>
-            query.eq('template_id', templateId).eq('user_id', user.id),
-      );
-      await _deleteOptionalTableRows(
-        'user_template_settings',
-        filters: (query) =>
-            query.eq('template_id', templateId).eq('user_id', user.id),
-      );
-      await _deleteOptionalTableRows(
-        'log_template_fields_v2',
-        filters: (query) =>
-            query.eq('template_id', templateId).eq('user_id', user.id),
-      );
-
-      await supabase
-          .from('log_templates_v2')
-          .delete()
-          .eq('id', templateId)
-          .eq('user_id', user.id);
-
-      final remainingTemplate = await supabase
-          .from('log_templates_v2')
-          .select('id')
-          .eq('id', templateId)
-          .eq('user_id', user.id)
-          .maybeSingle();
-      if (remainingTemplate != null) {
-        return const _TemplateDeleteResult(
-          success: false,
-          message: 'Supabase did not confirm the template deletion.',
-        );
-      }
-
       try {
         await TemplatePreviewStore.saveEntries(
           userId: user.id,
-          tableName: tableName,
+          tableName: _tableNameForTemplateKey(templateKey),
           entries: const <Map<String, dynamic>>[],
         );
       } catch (_) {
-        // Keep the remote deletion successful even if local preview cleanup fails.
+        // Keep the local deletion successful even if preview cleanup fails.
       }
-
+      await repo.deleteTemplate(
+        templateId: templateId,
+        templateKey: templateKey,
+        userId: user.id,
+      );
       _hiddenTemplateIds.remove(templateId);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(
+        _hiddenPrefsKey,
+        _hiddenTemplateIds.toList(growable: false),
+      );
       await _load();
       return const _TemplateDeleteResult(success: true);
     } catch (e) {
@@ -292,80 +242,23 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     }
   }
 
-  Future<void> _deleteOptionalTableRows(
-    String tableName, {
-    required PostgrestFilterBuilder<dynamic> Function(
-      PostgrestFilterBuilder<dynamic> query,
-    )
-    filters,
-  }) async {
-    try {
-      await filters(supabase.from(tableName).delete());
-    } on PostgrestException catch (e) {
-      if (_isMissingRelationError(e)) {
-        return;
-      }
-      rethrow;
-    }
-  }
-
-  Future<bool?> _deleteTemplateViaRpc(String templateId) async {
-    try {
-      final res = await supabase.rpc(
-        'delete_my_log_template',
-        params: {'p_template_id': templateId},
-      );
-      if (res is Map) {
-        final deleted = res['deleted'];
-        if (deleted is bool) return deleted;
-      }
-      if (res is bool) return res;
-      return true;
-    } on PostgrestException catch (e) {
-      final code = (e.code ?? '').toUpperCase();
-      final message =
-          '${e.message} ${e.details} ${e.hint}'.toLowerCase();
-      final missingRpc = code == 'PGRST202' ||
-          code == '42883' ||
-          message.contains('delete_my_log_template');
-      if (missingRpc) {
-        return null;
-      }
-      rethrow;
-    }
-  }
-
-  bool _isMissingRelationError(PostgrestException error) {
-    final code = (error.code ?? '').toUpperCase();
-    final message =
-        '${error.message} ${error.details} ${error.hint}'.toLowerCase();
-    return code == 'PGRST205' ||
-        code == '42P01' ||
-        message.contains('schema cache') ||
-        message.contains('could not find the table');
-  }
-
   String _deleteFailureMessage(Object error) {
-    if (error is PostgrestException) {
-      final message =
-          (error.message.isNotEmpty ? error.message : 'Supabase rejected the delete request.')
-              .trim();
-      return message;
-    }
     return error.toString();
   }
 
   Future<void> _setHidden(String templateId, bool hidden) async {
     try {
-      final user = supabase.auth.currentUser;
-      if (user == null) return;
-      await supabase.from('user_template_settings').upsert({
-        'user_id': user.id,
-        'template_id': templateId,
-        'is_hidden': hidden,
-        'updated_at': DateTime.now().toIso8601String(),
-      });
-      _load();
+      final prefs = await SharedPreferences.getInstance();
+      final next = Set<String>.from(_hiddenTemplateIds);
+      if (hidden) {
+        next.add(templateId);
+      } else {
+        next.remove(templateId);
+      }
+      await prefs.setStringList(_hiddenPrefsKey, next.toList(growable: false));
+      if (!mounted) return;
+      setState(() => _hiddenTemplateIds = next);
+      await _load();
     } catch (e) {
       debugPrint('Hide failed: $e');
       if (mounted) {
@@ -454,6 +347,8 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
     final t = title.toLowerCase();
     if (t.contains('menstrual') || t.contains('cycle')) return Icons.water_drop;
     if (t.contains('sleep')) return Icons.bedtime_outlined;
+    if (t.contains('medication')) return Icons.medication_outlined;
+    if (t.contains('meal')) return Icons.restaurant_menu_outlined;
     if (t.contains('bill')) return Icons.receipt_long_outlined;
     if (t.contains('income')) return Icons.payments_outlined;
     if (t.contains('expense')) return Icons.shopping_cart_outlined;
@@ -651,54 +546,60 @@ class _TemplatesScreenState extends State<TemplatesScreen> {
                               onTap: isDeleting
                                   ? null
                                   : () async {
-                                if (isHidden) {
-                                  final unhide = await showDialog<bool>(
-                                    context: context,
-                                    builder: (_) => AlertDialog(
-                                      title: const Text('Unhide template?'),
-                                      content: const Text(
-                                        'This will show it in your list again.',
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context, false),
-                                          child: const Text('Cancel'),
-                                        ),
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context, true),
-                                          child: Text(
-                                            'Unhide',
-                                            style: TextStyle(
-                                              color: scheme.primary,
+                                      if (isHidden) {
+                                        final unhide = await showDialog<bool>(
+                                          context: context,
+                                          builder: (_) => AlertDialog(
+                                            title: const Text(
+                                              'Unhide template?',
+                                            ),
+                                            content: const Text(
+                                              'This will show it in your list again.',
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () => Navigator.pop(
+                                                  context,
+                                                  false,
+                                                ),
+                                                child: const Text('Cancel'),
+                                              ),
+                                              TextButton(
+                                                onPressed: () => Navigator.pop(
+                                                  context,
+                                                  true,
+                                                ),
+                                                child: Text(
+                                                  'Unhide',
+                                                  style: TextStyle(
+                                                    color: scheme.primary,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                        if (unhide == true) {
+                                          await _setHidden(templateId, false);
+                                        }
+                                        return;
+                                      }
+                                      GuideManager.dismissActiveGuideForPage(
+                                        'templates',
+                                      );
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => themed(
+                                            LogTableScreen(
+                                              templateId: templateId,
+                                              templateKey: t['template_key'],
+                                              dayId: _today(),
                                             ),
                                           ),
                                         ),
-                                      ],
-                                    ),
-                                  );
-                                  if (unhide == true) {
-                                    await _setHidden(templateId, false);
-                                  }
-                                  return;
-                                }
-                                GuideManager.dismissActiveGuideForPage(
-                                  'templates',
-                                );
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => themed(
-                                      LogTableScreen(
-                                        templateId: templateId,
-                                        templateKey: t['template_key'],
-                                        dayId: _today(),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
+                                      );
+                                    },
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 14,
@@ -917,7 +818,7 @@ class _TrialBanner extends StatelessWidget {
           const SizedBox(width: 8),
           TextButton(onPressed: onSkip, child: const Text('Skip for now')),
           const SizedBox(width: 6),
-          FilledButton(onPressed: onUpgrade, child: const Text('View modes')),
+          FilledButton(onPressed: onUpgrade, child: const Text('See plans')),
         ],
       ),
     );

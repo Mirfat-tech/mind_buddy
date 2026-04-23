@@ -6,11 +6,24 @@ import 'package:mind_buddy/features/bubbles/bubble_board_storage.dart';
 import 'package:mind_buddy/features/bubbles/bubble_entry.dart';
 
 class GratitudeBubbleScreen extends StatefulWidget {
-  const GratitudeBubbleScreen({super.key});
+  const GratitudeBubbleScreen({
+    super.key,
+    this.storage,
+    this.onBackPressed,
+    this.onOpenJournal,
+    this.onOpenCarousel,
+    this.onOpenHistory,
+  });
 
   static const BubbleBoardStorage _localStorage = SharedPrefsBubbleBoardStorage(
     storageKey: 'gratitude_bubble_entries_v1',
   );
+
+  final BubbleBoardStorage? storage;
+  final VoidCallback? onBackPressed;
+  final Future<void> Function()? onOpenJournal;
+  final Future<void> Function(List<String> seededBubbleTexts)? onOpenCarousel;
+  final VoidCallback? onOpenHistory;
 
   @override
   State<GratitudeBubbleScreen> createState() => _GratitudeBubbleScreenState();
@@ -86,6 +99,10 @@ class _GratitudeBubbleScreenState extends State<GratitudeBubbleScreen> {
   Future<void> _openJournal() async {
     _resetMode();
     if (!mounted) return;
+    if (widget.onOpenJournal != null) {
+      await widget.onOpenJournal!.call();
+      return;
+    }
     context.push('/journals/new');
   }
 
@@ -97,6 +114,10 @@ class _GratitudeBubbleScreenState extends State<GratitudeBubbleScreen> {
         .toList();
     _resetMode();
     if (!mounted) return;
+    if (widget.onOpenCarousel != null) {
+      await widget.onOpenCarousel!(seededTexts);
+      return;
+    }
     context.push(
       '/gratitude-carousel',
       extra: <String, dynamic>{'seededBubbleTexts': seededTexts},
@@ -107,7 +128,7 @@ class _GratitudeBubbleScreenState extends State<GratitudeBubbleScreen> {
   Widget build(BuildContext context) {
     return BubbleBoardScreen(
       title: 'Gratitude Bubble',
-      storage: GratitudeBubbleScreen._localStorage,
+      storage: widget.storage ?? GratitudeBubbleScreen._localStorage,
       centerPromptText: 'What is making you feel blessed today ✨',
       editSheetHintText: 'What is making you feel blessed right now?',
       saveButtonText: 'Keep Gratitude',
@@ -115,11 +136,14 @@ class _GratitudeBubbleScreenState extends State<GratitudeBubbleScreen> {
       deleteSnackBarText: 'Gratitude bubble cleared...',
       floatingHintKey: 'hint_gratitude_bubble',
       floatingHintText: 'Long press to pop. Tap to edit. Drag to move.',
+      onBackPressed: widget.onBackPressed,
       bubbleVisualBuilder: _bubbleVisual,
       appBarActionsBuilder: (context, controller) => <Widget>[
         MbGlowIconButton(
           icon: Icons.photo_library_outlined,
-          onPressed: () => context.push('/gratitude-carousel/history'),
+          onPressed:
+              widget.onOpenHistory ??
+              () => context.push('/gratitude-carousel/history'),
         ),
       ],
       onBubbleTap: (context, entry, controller) {
@@ -154,10 +178,7 @@ class _GratitudeBubbleScreenState extends State<GratitudeBubbleScreen> {
 }
 
 class _DeepGratitudeCard extends StatelessWidget {
-  const _DeepGratitudeCard({
-    required this.enabled,
-    required this.onToggle,
-  });
+  const _DeepGratitudeCard({required this.enabled, required this.onToggle});
 
   final bool enabled;
   final VoidCallback onToggle;
@@ -189,9 +210,9 @@ class _DeepGratitudeCard extends StatelessWidget {
                   enabled
                       ? 'Which of these makes you feel the most blessed ?'
                       : 'Deep Gratitude Mode',
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
                 ),
               ),
               Switch.adaptive(value: enabled, onChanged: (_) => onToggle()),
@@ -234,9 +255,9 @@ class _GratitudeSelectionCard extends StatelessWidget {
         children: [
           Text(
             'Which of these makes you feel the most blessed ?',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 8),
           Text(
@@ -295,9 +316,9 @@ class _GratitudeExpressionCard extends StatelessWidget {
         children: [
           Text(
             'How would you like to express this gratitude?',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: 12),
           TextButton.icon(

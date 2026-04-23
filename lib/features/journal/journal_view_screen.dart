@@ -18,6 +18,9 @@ import 'package:mind_buddy/features/journal/journal_canvas_layer.dart';
 import 'package:mind_buddy/features/journal/quill_embeds.dart';
 import 'package:mind_buddy/features/journal/journal_media.dart';
 import 'package:mind_buddy/features/journal/journal_media_viewer.dart';
+import 'package:mind_buddy/features/journal/journal_local_repository.dart';
+import 'package:mind_buddy/features/journal/journal_page_codec.dart';
+import 'package:mind_buddy/features/journal/journal_page_widgets.dart';
 import 'package:mind_buddy/services/journal_access_service.dart';
 import 'package:mind_buddy/services/journal_document_codec.dart';
 import 'package:mind_buddy/services/subscription_limits.dart';
@@ -59,8 +62,20 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
   static const _recentShareCacheKey = 'recent_share_usernames_v1';
   Timer? _replyRefreshTimer;
   final JournalRepository _journalRepository = JournalRepository();
+  final JournalLocalRepository _journalLocalRepository =
+      JournalLocalRepository();
+  final PageController _pageController = PageController();
+  int _currentPageIndex = 0;
 
   String get _activeJournalId => _resolvedJournalId ?? widget.journalId;
+  bool _isLocalPrivateJournalId(String id) => id.startsWith('journal-');
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _replyRefreshTimer?.cancel();
+    super.dispose();
+  }
 
   void _shareLog(String event, [Map<String, dynamic> data = const {}]) {
     if (!kDebugMode) return;
@@ -121,6 +136,12 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
   }
 
   Future<Map<String, dynamic>?> _fetchEntryForView(String journalId) async {
+    if (_isLocalPrivateJournalId(journalId)) {
+      debugPrint(
+        'JOURNAL_REMOTE_CALL_BLOCKED reason=private_flow method=_fetchEntryForView id=$journalId',
+      );
+      return null;
+    }
     final variants = <Map<String, dynamic>>[
       {'p_journal_id': journalId},
       {'journal_id': journalId},
@@ -148,6 +169,12 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
     required String table,
     required String journalId,
   }) async {
+    if (_isLocalPrivateJournalId(journalId)) {
+      debugPrint(
+        'JOURNAL_REMOTE_CALL_BLOCKED reason=private_flow method=_fetchEntryFromTableCandidate id=$journalId',
+      );
+      return null;
+    }
     final row = await Supabase.instance.client
         .from(table)
         .select()
@@ -159,6 +186,12 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
   Future<Map<String, dynamic>?> _fetchEntryByTableFallback(
     String journalId,
   ) async {
+    if (_isLocalPrivateJournalId(journalId)) {
+      debugPrint(
+        'JOURNAL_REMOTE_CALL_BLOCKED reason=private_flow method=_fetchEntryByTableFallback id=$journalId',
+      );
+      return null;
+    }
     const candidates = <String>['journals', 'journal_entries'];
     for (final table in candidates) {
       try {
@@ -199,6 +232,12 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
   Future<Map<String, dynamic>?> _fetchEntryViaShareJoinFallback(
     String incomingId,
   ) async {
+    if (_isLocalPrivateJournalId(incomingId)) {
+      debugPrint(
+        'JOURNAL_REMOTE_CALL_BLOCKED reason=private_flow method=_fetchEntryViaShareJoinFallback id=$incomingId',
+      );
+      return null;
+    }
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return null;
 
@@ -334,12 +373,6 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
     });
   }
 
-  @override
-  void dispose() {
-    _replyRefreshTimer?.cancel();
-    super.dispose();
-  }
-
   Future<void> _refreshShareAndReplies() async {
     try {
       await _loadShareState();
@@ -348,6 +381,9 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
   }
 
   Future<Map<String, dynamic>?> _load() async {
+    if (_isLocalPrivateJournalId(widget.journalId)) {
+      return _loadPrivateEntryLocal(widget.journalId);
+    }
     _shareLog('entry_open_attempt', {'incoming_id': widget.journalId});
     if (_useSeededEntry && widget.initialEntry != null) {
       final seeded = await _hydrateForViewer(
@@ -551,6 +587,11 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
   }
 
   Future<void> _resolveDoodlePreview(Map<String, dynamic> data) async {
+    if (_isLocalPrivateJournalId(_activeJournalId)) {
+      debugPrint('JOURNAL_PRIVATE_DOODLE_REMOTE_BLOCKED id=$_activeJournalId');
+      data['doodle_preview_url'] = null;
+      return;
+    }
     final path = data['doodle_storage_path']?.toString();
     final updatedRaw = data['doodle_updated_at']?.toString();
     final updatedAt = updatedRaw == null ? null : DateTime.tryParse(updatedRaw);
@@ -595,6 +636,13 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
 
     if (ok != true) return;
 
+    if (_isLocalPrivateJournalId(_activeJournalId)) {
+      await _journalLocalRepository.deleteJournal(_activeJournalId);
+      if (!mounted) return;
+      context.pop(true);
+      return;
+    }
+
     await Supabase.instance.client
         .from('journals')
         .delete()
@@ -605,6 +653,9 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
   }
 
   Future<void> _loadShareState() async {
+    if (_isLocalPrivateJournalId(_activeJournalId)) {
+      return;
+    }
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
     try {
@@ -674,6 +725,9 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
   }
 
   Future<void> _loadReplies() async {
+    if (_isLocalPrivateJournalId(_activeJournalId)) {
+      return;
+    }
     final viewerUserId = Supabase.instance.client.auth.currentUser?.id ?? '';
     _shareLog('replies_fetch_start', {
       'journal_id': _activeJournalId,
@@ -845,6 +899,22 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
       _shareLog('replies_fetch_fail', {'error': e.toString()});
       _replies = <Map<String, dynamic>>[];
     }
+  }
+
+  Future<Map<String, dynamic>?> _loadPrivateEntryLocal(String journalId) async {
+    debugPrint('JOURNAL_PRIVATE_VIEW_LOAD_LOCAL id=$journalId');
+    final row =
+        widget.initialEntry != null &&
+            (widget.initialEntry!['id']?.toString() ?? '') == journalId
+        ? Map<String, dynamic>.from(widget.initialEntry!)
+        : await _journalLocalRepository.loadJournalForEditor(journalId);
+    if (row == null) return null;
+    _resolvedJournalId = journalId;
+    _loaded = row;
+    _journalOwnerId = row['user_id']?.toString();
+    _isOwner = true;
+    row['doodle_preview_url'] = null;
+    return row;
   }
 
   Future<List<Map<String, dynamic>>> _loadRecentRecipientsFromCache() async {
@@ -1085,9 +1155,7 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'FREE MODE can receive shares but cannot share entries.',
-            ),
+            content: Text('Sharing is not available on your current plan.'),
           ),
         );
       }
@@ -1772,17 +1840,20 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
                   ).format(DateTime.parse(createdAtRaw).toLocal())
                 : null;
             final raw = row['text']?.toString() ?? '';
-            final content = JournalDocumentCodec.decodeContent(raw);
-            final doc = content.document;
+            final pagesData = JournalPageCodec.decode(raw);
+            final pages = pagesData.pages.isEmpty
+                ? const <JournalEntryPageData>[
+                    JournalEntryPageData(id: 'page-1', body: ''),
+                  ]
+                : pagesData.pages;
+            final safePageIndex = _currentPageIndex.clamp(0, pages.length - 1);
+            if (safePageIndex != _currentPageIndex) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                setState(() => _currentPageIndex = safePageIndex);
+              });
+            }
             final doodleUrl = row['doodle_preview_url']?.toString();
-            final controller = quill.QuillController(
-              document: doc,
-              selection: const TextSelection.collapsed(offset: 0),
-              readOnly: true,
-            );
-            final media = extractMediaFromDelta(
-              controller.document.toDelta().toJson(),
-            );
             final editorStyles = JournalDocumentCodec.buildEditorStyles(
               context,
             );
@@ -1828,64 +1899,108 @@ class _JournalViewScreenState extends State<JournalViewScreen> {
                           ),
                         ),
                       const SizedBox(height: 10),
+                      JournalPageControls(
+                        currentPage: safePageIndex,
+                        pageCount: pages.length,
+                        isBookmarked: pages[safePageIndex].isBookmarked,
+                        onAddPage: () {},
+                        onDeletePage: () {},
+                        onToggleBookmark: () {},
+                      ),
+                      const SizedBox(height: 8),
                       Expanded(
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Container(
-                              color: Theme.of(context).scaffoldBackgroundColor,
-                            ),
-                            if (doodleUrl != null && doodleUrl.isNotEmpty)
-                              Positioned.fill(
-                                child: IgnorePointer(
-                                  child: Image.network(
-                                    doodleUrl,
-                                    fit: BoxFit.fill,
-                                    errorBuilder: (_, __, ___) =>
-                                        const SizedBox.shrink(),
+                        child: PageView.builder(
+                          controller: _pageController,
+                          itemCount: pages.length,
+                          onPageChanged: (index) {
+                            if (!mounted) return;
+                            setState(() => _currentPageIndex = index);
+                          },
+                          itemBuilder: (context, index) {
+                            final controller = quill.QuillController(
+                              document: JournalDocumentCodec.decodeContent(
+                                pages[index].body,
+                              ).document,
+                              selection: const TextSelection.collapsed(
+                                offset: 0,
+                              ),
+                              readOnly: true,
+                            );
+                            final content = JournalDocumentCodec.decodeContent(
+                              pages[index].body,
+                            );
+                            return Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                Container(
+                                  color: Theme.of(
+                                    context,
+                                  ).scaffoldBackgroundColor,
+                                ),
+                                if (doodleUrl != null && doodleUrl.isNotEmpty)
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: Image.network(
+                                        doodleUrl,
+                                        fit: BoxFit.fill,
+                                        errorBuilder: (_, __, ___) =>
+                                            const SizedBox.shrink(),
+                                      ),
+                                    ),
+                                  ),
+                                quill.QuillEditor.basic(
+                                  controller: controller,
+                                  config: quill.QuillEditorConfig(
+                                    expands: true,
+                                    padding: const EdgeInsets.all(12),
+                                    autoFocus: false,
+                                    customStyles: editorStyles,
+                                    embedBuilders:
+                                        (_isOwner || _recipientMediaVisible)
+                                        ? const [
+                                            LocalImageEmbedBuilder(),
+                                            LocalVideoEmbedBuilder(),
+                                          ]
+                                        : const [],
                                   ),
                                 ),
-                              ),
-                            quill.QuillEditor.basic(
-                              controller: controller,
-                              config: quill.QuillEditorConfig(
-                                expands: true,
-                                padding: const EdgeInsets.all(12),
-                                autoFocus: false,
-                                customStyles: editorStyles,
-                                embedBuilders:
-                                    (_isOwner || _recipientMediaVisible)
-                                    ? const [
-                                        LocalImageEmbedBuilder(),
-                                        LocalVideoEmbedBuilder(),
-                                      ]
-                                    : const [],
-                              ),
-                            ),
-                            if (content.canvasObjects.isNotEmpty)
-                              Positioned.fill(
-                                child: JournalCanvasLayer(
-                                  objects: content.canvasObjects,
-                                  selectedObjectId: null,
-                                  onSelectObject: (_) {},
-                                  onUpdateObject: (_) {},
-                                  onDeleteObject: (_) {},
-                                ),
-                              ),
-                          ],
+                                if (content.canvasObjects.isNotEmpty)
+                                  Positioned.fill(
+                                    child: JournalCanvasLayer(
+                                      objects: content.canvasObjects,
+                                      selectedObjectId: null,
+                                      onSelectObject: (_) {},
+                                      onUpdateObject: (_) {},
+                                      onDeleteObject: (_) {},
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
                       ),
                       if (_isOwner || _recipientMediaVisible)
-                        _MediaPreviewStrip(
-                          items: media,
-                          onTap: (index) {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => JournalMediaViewer(
-                                  items: media,
-                                  initialIndex: index,
-                                ),
-                              ),
+                        Builder(
+                          builder: (context) {
+                            final activeContent =
+                                JournalDocumentCodec.decodeContent(
+                                  pages[safePageIndex].body,
+                                );
+                            final media = extractMediaFromDelta(
+                              activeContent.document.toDelta().toJson(),
+                            );
+                            return _MediaPreviewStrip(
+                              items: media,
+                              onTap: (index) {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => JournalMediaViewer(
+                                      items: media,
+                                      initialIndex: index,
+                                    ),
+                                  ),
+                                );
+                              },
                             );
                           },
                         ),

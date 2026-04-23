@@ -529,7 +529,7 @@ class _OnboardingUsernameScreenState extends State<OnboardingUsernameScreen> {
 
       await CompletionGateRepository.markUsernameCompleted();
       if (!mounted) return;
-      context.go('/home');
+      context.go('/');
     } on PostgrestException catch (e) {
       if (!mounted) return;
       final isProfileRlsBlocked = e.code == '42501';
@@ -540,7 +540,7 @@ class _OnboardingUsernameScreenState extends State<OnboardingUsernameScreen> {
             content: Text('Username will be synced later. Continuing for now.'),
           ),
         );
-        context.go('/home');
+        context.go('/');
         return;
       }
       final uniqueConflict = e.code == '23505';

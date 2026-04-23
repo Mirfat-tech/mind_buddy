@@ -388,10 +388,7 @@ class CompletionGateRepository {
             ? null
             : _fromProfile(bundle.profileRow);
         await _backfillLegacyProfileFlagsIfNeeded(user.id, bundle.profileRow);
-        final merged = _mergeCompletionState(
-          remote: remote,
-          cached: cached,
-        );
+        final merged = _mergeCompletionState(remote: remote, cached: cached);
         await _backfillMergedFlagsIfNeeded(merged, remote);
         if (kDebugMode) {
           debugPrint(

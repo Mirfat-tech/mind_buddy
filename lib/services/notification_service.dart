@@ -6,8 +6,12 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
+import '../core/database/app_database.dart';
 import '../features/settings/settings_model.dart';
+import '../features/settings/data/local/notifications_local_data_source.dart';
+import '../features/templates/template_reminder_support.dart';
 import 'daily_quote_service.dart';
+import 'notification_catalog.dart';
 
 @pragma('vm:entry-point')
 void notificationTapBackground(NotificationResponse response) async {
@@ -27,7 +31,7 @@ class NotificationService {
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
-  static const int _maxReminderTimesPerDay = 50;
+  final AppDatabase _database = AppDatabase.shared();
   bool _initialized = false;
 
   Future<void> init() async {
@@ -90,10 +94,7 @@ class NotificationService {
 
     await _scheduleHabitNotifications(settings);
     await _scheduleDailyQuoteNotifications(settings);
-
-    if (settings.calendarRemindersEnabled) {
-      await _scheduleCalendarReminders(settings);
-    }
+    await _scheduleTemplateNotifications(settings);
   }
 
   Future<void> showPomodoroFinishedNotification({
@@ -270,7 +271,11 @@ class NotificationService {
       return;
     }
 
-    for (var index = 0; index < quoteSettings.notificationTimes.length; index++) {
+    for (
+      var index = 0;
+      index < quoteSettings.notificationTimes.length;
+      index++
+    ) {
       final time = _parseTime(quoteSettings.notificationTimes[index]);
       if (time == null) continue;
       final scheduled = _nextInstanceOfTime(time);
@@ -301,17 +306,12 @@ class NotificationService {
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
-    final rows = await supabase
-        .from('user_habits')
-        .select('id, name')
-        .eq('user_id', user.id)
-        .eq('is_active', true)
-        .order('sort_order');
+    final localDataSource = NotificationsLocalDataSource(_database);
+    final habits = await localDataSource.loadHabitSnapshot(userId: user.id);
 
-    for (final raw in rows as List) {
-      final habit = Map<String, dynamic>.from(raw as Map);
-      final habitId = (habit['id'] ?? '').toString().trim();
-      final habitName = (habit['name'] ?? '').toString().trim();
+    for (final habit in habits) {
+      final habitId = habit.id;
+      final habitName = habit.name;
       if (habitId.isEmpty || habitName.isEmpty) continue;
 
       final setting = settings.notificationSpaceSettings['habit:$habitId'];
@@ -377,193 +377,110 @@ class NotificationService {
     }
   }
 
-  Future<void> _scheduleCalendarReminders(SettingsModel settings) async {
+  Future<void> _scheduleTemplateNotifications(SettingsModel settings) async {
     final supabase = Supabase.instance.client;
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
-    final now = DateTime.now();
-    final horizon = now.add(const Duration(days: 30));
+    final targets = await loadTemplateReminderTargetsLocal(
+      database: _database,
+      userId: user.id,
+    );
 
-    List<Map<String, dynamic>> reminders = [];
+    final seen = <String>{};
+    for (final target in targets) {
+      if (!seen.add(target.spaceId)) continue;
+      final setting = settings.notificationSpaceSettings[target.spaceId];
+      if (setting == null || !setting.enabled) continue;
+      if (setting.frequency == 'remember') continue;
 
-    try {
-      final rows = await supabase
-          .from('reminders')
-          .select(
-            'id, title, day, time, repeat, repeat_days, end_day, is_completed, is_done',
-          )
-          .eq('user_id', user.id);
+      final times = templateReminderTimesOfDay(setting);
+      if (times.isEmpty) continue;
 
-      reminders = List<Map<String, dynamic>>.from(rows);
-    } catch (e) {
-      try {
-        final rows = await supabase
-            .from('calendar_events')
-            .select('id, title, datetime, type')
-            .eq('user_id', user.id)
-            .eq('type', 'reminder');
-        reminders = List<Map<String, dynamic>>.from(rows);
-      } catch (err) {
-        debugPrint('Reminder fetch failed: $err');
-        return;
-      }
-    }
+      final category = notificationCategories
+          .cast<NotificationCategory?>()
+          .firstWhere(
+            (item) => item?.id == target.templateKey,
+            orElse: () => null,
+          );
 
-    List<Map<String, dynamic>> skips = [];
-    try {
-      final rows = await supabase
-          .from('reminders_skips')
-          .select('reminder_id, day')
-          .eq('user_id', user.id)
-          .gte('day', _formatDate(now))
-          .lte('day', _formatDate(horizon));
-      skips = List<Map<String, dynamic>>.from(rows);
-    } catch (e) {
-      debugPrint('Reminder skips fetch failed: $e');
-    }
-    final skippedKeys = skips
-        .map((r) => '${r['reminder_id']}-${r['day']}')
-        .toSet();
-
-    for (final reminder in reminders) {
-      final title = (reminder['title'] ?? 'Reminder').toString();
-      final occurrences = _generateReminderOccurrences(
-        reminder,
-        now,
-        horizon,
-        skippedKeys,
-      );
-      for (final occurrence in occurrences) {
-        if (occurrence.isBefore(now)) continue;
-        final id = _reminderOccurrenceId(reminder['id'], occurrence);
-        await _plugin.zonedSchedule(
-          id,
-          'Reminder',
-          '$title\nReminder',
-          tz.TZDateTime.from(occurrence, tz.local),
-          _defaultDetails(
-            hapticsEnabled: settings.hapticsEnabled,
-            soundsEnabled: settings.soundsEnabled,
-          ),
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-          uiLocalNotificationDateInterpretation:
-              UILocalNotificationDateInterpretation.absoluteTime,
-          matchDateTimeComponents: null,
-        );
-      }
-    }
-  }
-
-  List<DateTime> _generateReminderOccurrences(
-    Map<String, dynamic> reminder,
-    DateTime start,
-    DateTime end,
-    Set<String> skippedKeys,
-  ) {
-    final dayStr = reminder['day']?.toString() ?? '';
-    final endStr = reminder['end_day']?.toString() ?? '';
-    final baseDate = DateTime.tryParse(dayStr);
-    final endDate = endStr.isEmpty ? null : DateTime.tryParse(endStr);
-    if (baseDate == null) return [];
-
-    final times = _parseReminderTimes(
-      reminder['time'],
-    ).take(_maxReminderTimesPerDay).toList();
-    if (times.isEmpty) {
-      return [];
-    }
-    final repeat = (reminder['repeat'] ?? 'never').toString().toLowerCase();
-    final repeatDaysRaw = (reminder['repeat_days'] ?? '')
-        .toString()
-        .toLowerCase();
-    final repeatDays = repeatDaysRaw
-        .split(',')
-        .map((d) => d.trim())
-        .where((d) => d.isNotEmpty)
-        .toSet();
-
-    final occurrences = <DateTime>[];
-    DateTime cursor = DateTime(start.year, start.month, start.day);
-    while (!cursor.isAfter(end)) {
-      final dateOnly = DateTime(cursor.year, cursor.month, cursor.day);
-      final reminderBase = DateTime(
-        baseDate.year,
-        baseDate.month,
-        baseDate.day,
-      );
-      if (dateOnly.isBefore(reminderBase)) {
-        cursor = cursor.add(const Duration(days: 1));
+      if (setting.frequency == 'monthly') {
+        for (final time in times) {
+          final title = target.title;
+          final body = category != null
+              ? _notificationBodyForCategory(
+                  category: category,
+                  style: setting.style,
+                  time: time,
+                )
+              : _notificationBodyForTitle(
+                  title: target.title,
+                  style: setting.style,
+                );
+          final suffix =
+              'monthly-${time.hour.toString().padLeft(2, '0')}${time.minute.toString().padLeft(2, '0')}';
+          await _plugin.zonedSchedule(
+            _spaceNotificationId(target.spaceId, suffix),
+            title,
+            body,
+            _nextInstanceOfMonthDayTime(setting.dayOfMonth, time),
+            _defaultDetails(
+              hapticsEnabled: settings.hapticsEnabled,
+              soundsEnabled: settings.soundsEnabled,
+            ),
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            matchDateTimeComponents: DateTimeComponents.dayOfMonthAndTime,
+          );
+        }
         continue;
       }
-      if (endDate != null) {
-        final end = DateTime(endDate.year, endDate.month, endDate.day);
-        if (dateOnly.isAfter(end)) {
-          cursor = cursor.add(const Duration(days: 1));
-          continue;
+
+      final weekdays = switch (setting.frequency) {
+        'weekly' => setting.days.isEmpty ? <String>['mon'] : setting.days,
+        'certain' => setting.days.isEmpty ? <String>['mon'] : setting.days,
+        'most' =>
+          setting.skipWeekends
+              ? <String>['mon', 'tue', 'wed', 'thu', 'fri']
+              : <String>['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
+        _ => <String>[],
+      };
+
+      for (final day in weekdays) {
+        final weekday = _weekdayFromKey(day);
+        if (weekday == null) continue;
+        for (final time in times) {
+          final title = target.title;
+          final body = category != null
+              ? _notificationBodyForCategory(
+                  category: category,
+                  style: setting.style,
+                  time: time,
+                )
+              : _notificationBodyForTitle(
+                  title: target.title,
+                  style: setting.style,
+                );
+          final suffix =
+              '$day-${time.hour.toString().padLeft(2, '0')}${time.minute.toString().padLeft(2, '0')}';
+          await _plugin.zonedSchedule(
+            _spaceNotificationId(target.spaceId, suffix),
+            title,
+            body,
+            _nextInstanceOfWeekdayTime(weekday, time),
+            _defaultDetails(
+              hapticsEnabled: settings.hapticsEnabled,
+              soundsEnabled: settings.soundsEnabled,
+            ),
+            androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+            uiLocalNotificationDateInterpretation:
+                UILocalNotificationDateInterpretation.absoluteTime,
+            matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+          );
         }
       }
-
-      bool match = false;
-      switch (repeat) {
-        case 'never':
-          match = dateOnly == reminderBase;
-          break;
-        case 'daily':
-          match = true;
-          break;
-        case 'weekly':
-          match = dateOnly.weekday == reminderBase.weekday;
-          break;
-        case 'fortnightly':
-          match = dateOnly.difference(reminderBase).inDays % 14 == 0;
-          break;
-        case 'monthly':
-          match = dateOnly.day == reminderBase.day;
-          break;
-        case 'weekdays':
-          match =
-              dateOnly.weekday >= DateTime.monday &&
-              dateOnly.weekday <= DateTime.friday;
-          break;
-        case 'weekends':
-          match =
-              dateOnly.weekday == DateTime.saturday ||
-              dateOnly.weekday == DateTime.sunday;
-          break;
-        case 'custom':
-          match = repeatDays.contains(_weekdayKey(dateOnly.weekday));
-          break;
-      }
-
-      if (match) {
-        final key = '${reminder['id']}-${_formatDate(dateOnly)}';
-        if (!skippedKeys.contains(key)) {
-          for (final time in times) {
-            occurrences.add(
-              DateTime(
-                dateOnly.year,
-                dateOnly.month,
-                dateOnly.day,
-                time.hour,
-                time.minute,
-              ),
-            );
-          }
-        }
-      }
-      cursor = cursor.add(const Duration(days: 1));
     }
-    return occurrences;
-  }
-
-  int _reminderOccurrenceId(dynamic id, DateTime date) {
-    final base = _reminderNotificationId(id);
-    final y = date.year % 100;
-    final m = date.month;
-    final d = date.day;
-    final hhmm = (date.hour * 100) + date.minute;
-    return base + (y * 1000000) + (m * 10000) + (d * 100) + hhmm;
   }
 
   tz.TZDateTime _nextInstanceOfWeekdayTime(int weekday, TimeOfDay time) {
@@ -649,20 +566,12 @@ class NotificationService {
     return 300000 + ('habit:$habitId:$suffix').hashCode.abs() % 500000;
   }
 
-  int _reminderNotificationId(dynamic id) {
-    final value = int.tryParse(id?.toString() ?? '');
-    if (value != null) return 200000 + value;
-    return 200000 + id.hashCode.abs() % 80000;
+  int _spaceNotificationId(String id, String suffix) {
+    return 850000 + ('$id:$suffix').hashCode.abs() % 40000;
   }
 
   int _dailyQuoteNotificationId(int index) {
     return 700000 + index;
-  }
-
-  String _formatDate(DateTime date) {
-    return '${date.year.toString().padLeft(4, '0')}-'
-        '${date.month.toString().padLeft(2, '0')}-'
-        '${date.day.toString().padLeft(2, '0')}';
   }
 
   String _pickDailyQuote({
@@ -670,7 +579,8 @@ class NotificationService {
     required DateTime scheduled,
     required int slotIndex,
   }) {
-    final seed = (scheduled.year * 10000) +
+    final seed =
+        (scheduled.year * 10000) +
         (scheduled.month * 100) +
         scheduled.day +
         (slotIndex * 17) +
@@ -678,6 +588,35 @@ class NotificationService {
         scheduled.minute;
     final index = seed.abs() % quotes.length;
     return quotes[index];
+  }
+
+  String _notificationBodyForCategory({
+    required NotificationCategory category,
+    required String style,
+    required TimeOfDay time,
+  }) {
+    final messages = time.hour < 15
+        ? category.morningMessages
+        : category.eveningMessages;
+    final fallback = messages.isEmpty
+        ? category.description
+        : messages[(time.hour + (time.minute * 7)) % messages.length];
+    return switch (style) {
+      'simple' => category.subtitle,
+      'quiet' => '$fallback\n${category.subtitle}',
+      _ => '$fallback\n${category.title}',
+    };
+  }
+
+  String _notificationBodyForTitle({
+    required String title,
+    required String style,
+  }) {
+    return switch (style) {
+      'simple' => title,
+      'quiet' => '$title\nTemplate reminder',
+      _ => 'Gentle nudge for $title\nTemplate reminder',
+    };
   }
 
   int? _weekdayFromKey(String key) {
@@ -699,54 +638,6 @@ class NotificationService {
       default:
         return null;
     }
-  }
-
-  String _weekdayKey(int weekday) {
-    switch (weekday) {
-      case DateTime.monday:
-        return 'mon';
-      case DateTime.tuesday:
-        return 'tue';
-      case DateTime.wednesday:
-        return 'wed';
-      case DateTime.thursday:
-        return 'thu';
-      case DateTime.friday:
-        return 'fri';
-      case DateTime.saturday:
-        return 'sat';
-      case DateTime.sunday:
-        return 'sun';
-      default:
-        return '';
-    }
-  }
-
-  List<TimeOfDay> _parseReminderTimes(dynamic raw) {
-    final text = raw?.toString() ?? '';
-    if (text.trim().isEmpty) {
-      return const [TimeOfDay(hour: 9, minute: 0)];
-    }
-    final seen = <String>{};
-    final parsed = <TimeOfDay>[];
-    for (final token in text.split(',')) {
-      final t = _parseTime(token.trim());
-      if (t == null) continue;
-      final key =
-          '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-      if (seen.add(key)) {
-        parsed.add(t);
-      }
-    }
-    if (parsed.isEmpty) {
-      return const [TimeOfDay(hour: 9, minute: 0)];
-    }
-    parsed.sort((a, b) {
-      final am = a.hour * 60 + a.minute;
-      final bm = b.hour * 60 + b.minute;
-      return am.compareTo(bm);
-    });
-    return parsed;
   }
 
   NotificationDetails _defaultDetails({

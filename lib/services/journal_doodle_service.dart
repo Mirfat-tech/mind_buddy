@@ -19,8 +19,17 @@ class JournalDoodleService {
   JournalDoodleService._();
 
   static const String doodlesBucket = 'journal_doodles';
+  static bool isLocalPrivateJournalId(String id) => id.startsWith('journal-');
 
   static Future<JournalDoodleRecord> fetchDoodle(String journalEntryId) async {
+    if (isLocalPrivateJournalId(journalEntryId)) {
+      debugPrint('JOURNAL_PRIVATE_DOODLE_REMOTE_BLOCKED id=$journalEntryId');
+      return const JournalDoodleRecord(
+        storagePath: null,
+        bgStyle: null,
+        updatedAt: null,
+      );
+    }
     final row = await Supabase.instance.client
         .from('journals')
         .select('doodle_storage_path, doodle_bg_style, doodle_updated_at')
@@ -76,6 +85,10 @@ class JournalDoodleService {
     required Uint8List pngBytes,
     required String bgStyle,
   }) async {
+    if (isLocalPrivateJournalId(journalEntryId)) {
+      debugPrint('JOURNAL_PRIVATE_DOODLE_REMOTE_BLOCKED id=$journalEntryId');
+      return;
+    }
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) {
       throw Exception('User not authenticated');
@@ -121,6 +134,10 @@ class JournalDoodleService {
   }
 
   static Future<void> clearDoodle(String journalEntryId) async {
+    if (isLocalPrivateJournalId(journalEntryId)) {
+      debugPrint('JOURNAL_PRIVATE_DOODLE_REMOTE_BLOCKED id=$journalEntryId');
+      return;
+    }
     final supa = Supabase.instance.client;
     try {
       await supa

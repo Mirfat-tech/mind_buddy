@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
+import 'package:mind_buddy/features/subscription/subscription_plan_section.dart';
 import 'package:mind_buddy/services/subscription_plan_catalog.dart';
 import 'package:mind_buddy/services/subscription_purchase_service.dart';
 
@@ -134,42 +135,6 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return monthly * 2;
   }
 
-  List<String> _headlineBenefits(PlanBenefits plan) {
-    return <String>[
-      plan.insights ? 'Insights included' : 'Core tracking tools included',
-      plan.devices < 0
-          ? 'Unlimited devices'
-          : '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
-      'Unlimited journaling',
-      'Unlimited journal sharing',
-      'Custom templates included',
-    ];
-  }
-
-  List<String> _accessDetails(PlanBenefits plan) {
-    return <String>[
-      'Brain Fog, habits, journals, templates, and pomodoro included',
-      plan.insights
-          ? 'Insights for templates and habits are enabled'
-          : 'Insights are not included on this plan',
-    ];
-  }
-
-  List<String> _templateDetails(PlanBenefits plan) {
-    return <String>[
-      'Can create and save custom templates',
-      'Built-in templates save forever and show in calendar',
-    ];
-  }
-
-  List<String> _journalDetails(PlanBenefits plan) {
-    return <String>[
-      'Unlimited journal entries',
-      'Unlimited shares per day',
-      'Can receive unlimited shares',
-    ];
-  }
-
   @override
   Widget build(BuildContext context) {
     final ent = _controller.entitlement;
@@ -178,11 +143,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     return MbScaffold(
       applyBackground: true,
       appBar: AppBar(
-        title: const Text('🟣 MB - Subscriptions'),
+        title: const Text(SubscriptionPlanCatalog.title),
         centerTitle: true,
         leading: MbGlowBackButton(
-          onPressed: () =>
-              context.canPop() ? context.pop() : context.go('/home'),
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
         ),
       ),
       body: Center(
@@ -194,6 +158,20 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 child: ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
+                    Text(
+                      'Pick the support mode that feels right for you.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'A lighter comparison, clearer spacing, and all the important details in one place.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodyMedium?.copyWith(height: 1.45),
+                    ),
+                    const SizedBox(height: 18),
                     BillingToggle(
                       value: _billingPeriod,
                       onChanged: (next) =>
@@ -231,34 +209,48 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
 
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12),
-                        child: TierPlanCard(
-                          plan: plan,
-                          price: selectedPrice,
+                        child: SubscriptionPlanCard(
+                          plan: PlanBenefits(
+                            tier: plan.tier,
+                            name: plan.name,
+                            price: plan.tier == MbPlanTier.free
+                                ? plan.price
+                                : selectedPrice,
+                            normalizedAliases: plan.normalizedAliases,
+                            insights: plan.insights,
+                            devices: plan.devices,
+                            canCreateCustomTemplates:
+                                plan.canCreateCustomTemplates,
+                            templatesPreviewMode: plan.templatesPreviewMode,
+                            coreTemplatesSaveForever:
+                                plan.coreTemplatesSaveForever,
+                            canJournal: plan.canJournal,
+                            canShareEntries: plan.canShareEntries,
+                            sharesPerDay: plan.sharesPerDay,
+                            canReceiveUnlimitedShares:
+                                plan.canReceiveUnlimitedShares,
+                            toolsHeading: plan.toolsHeading,
+                            tools: plan.tools,
+                            plusExtras: plan.plusExtras,
+                            summary: yearlySubtitle(
+                              base: plan.summary,
+                              billingPeriod: _billingPeriod,
+                              yearlySavings: yearlySavings,
+                              tier: plan.tier,
+                            ),
+                            caption: _captionForPlan(
+                              plan,
+                              billingPeriod: _billingPeriod,
+                            ),
+                          ),
                           isCurrentTier: currentPlan.tier == plan.tier,
-                          isMostPopular: plan.tier == MbPlanTier.plusSupport,
-                          headlineBenefits: _headlineBenefits(plan),
-                          yearlySubtitle:
-                              (_billingPeriod == BillingPeriod.yearly &&
-                                  plan.tier != MbPlanTier.free)
-                              ? '2 months free${yearlySavings > 0 ? ' • Save ${_formatPrice(yearlySavings)}' : ''}'
-                              : null,
                           ctaLabel: plan.tier == MbPlanTier.free ? null : cta,
                           ctaEnabled: !_controller.busy && canPurchase,
-                          onCtaTap:
-                              (plan.tier == MbPlanTier.free || !canPurchase)
+                          onTap: (plan.tier == MbPlanTier.free || !canPurchase)
                               ? null
                               : () => _controller.purchaseProduct(
                                   offer.productId,
                                 ),
-                          aiDetails: _accessDetails(plan),
-                          deviceDetails: <String>[
-                            plan.devices < 0
-                                ? 'Unlimited devices'
-                                : '${plan.devices} ${plan.devices == 1 ? 'device' : 'devices'}',
-                          ],
-                          templateDetails: _templateDetails(plan),
-                          journalDetails: _journalDetails(plan),
-                          toolsDetails: plan.tools,
                         ),
                       );
                     }),
@@ -287,6 +279,12 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             children: [
               Expanded(
                 child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.primary,
+                    side: BorderSide(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
                   onPressed: _controller.busy
                       ? null
                       : _controller.restorePurchases,
@@ -295,7 +293,13 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: FilledButton(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.primary,
+                    side: BorderSide(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
                   onPressed: _controller.openManageSubscriptionPage,
                   child: const Text('Manage subscription'),
                 ),
@@ -305,6 +309,34 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         ),
       ),
     );
+  }
+
+  String yearlySubtitle({
+    required String base,
+    required BillingPeriod billingPeriod,
+    required double yearlySavings,
+    required MbPlanTier tier,
+  }) {
+    if (tier == MbPlanTier.free || billingPeriod != BillingPeriod.yearly) {
+      return base;
+    }
+    if (yearlySavings <= 0) {
+      return '$base Yearly billing keeps things simple with 2 months free.';
+    }
+    return '$base Yearly billing includes 2 months free and saves ${_formatPrice(yearlySavings)}.';
+  }
+
+  String _captionForPlan(
+    PlanBenefits plan, {
+    required BillingPeriod billingPeriod,
+  }) {
+    if (plan.tier == MbPlanTier.free) {
+      return plan.caption;
+    }
+    if (billingPeriod == BillingPeriod.yearly) {
+      return 'Billed yearly with a softer value option.';
+    }
+    return plan.caption;
   }
 }
 
@@ -403,14 +435,22 @@ class CurrentPlanCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: <Color>[
+            Color(0xFFF2FFF8),
+            Color(0xFFF1EAFF),
+            Color(0xFFFFF1F9),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
         borderRadius: BorderRadius.circular(20),
-        color: scheme.surface,
         border: Border.all(color: scheme.outline.withValues(alpha: 0.2)),
         boxShadow: [
           BoxShadow(
-            color: scheme.shadow.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+            color: const Color(0xFF8D7CFF).withValues(alpha: 0.10),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
@@ -419,221 +459,10 @@ class CurrentPlanCard extends StatelessWidget {
         children: [
           Text('Your plan', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 6),
-          Text('Current tier: ${plan.titleWithPrice}'),
+          Text('Current plan: ${plan.titleWithPrice}'),
           Text('Status: $status'),
           Text('Renews: $renewsAt'),
           Text('Expires: $expiresAt'),
-        ],
-      ),
-    );
-  }
-}
-
-class TierPlanCard extends StatelessWidget {
-  const TierPlanCard({
-    super.key,
-    required this.plan,
-    required this.price,
-    required this.isCurrentTier,
-    required this.isMostPopular,
-    required this.headlineBenefits,
-    required this.aiDetails,
-    required this.deviceDetails,
-    required this.templateDetails,
-    required this.journalDetails,
-    required this.toolsDetails,
-    this.yearlySubtitle,
-    this.ctaLabel,
-    this.ctaEnabled = false,
-    this.onCtaTap,
-  });
-
-  final PlanBenefits plan;
-  final String price;
-  final bool isCurrentTier;
-  final bool isMostPopular;
-  final List<String> headlineBenefits;
-  final List<String> aiDetails;
-  final List<String> deviceDetails;
-  final List<String> templateDetails;
-  final List<String> journalDetails;
-  final List<String> toolsDetails;
-  final String? yearlySubtitle;
-  final String? ctaLabel;
-  final bool ctaEnabled;
-  final VoidCallback? onCtaTap;
-
-  Color _dotColor(MbPlanTier tier, ColorScheme scheme) {
-    switch (tier) {
-      case MbPlanTier.free:
-        return const Color(0xFF34C759);
-      case MbPlanTier.plusSupport:
-        return const Color(0xFF8E44AD);
-      case MbPlanTier.pending:
-        return scheme.outline;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: isCurrentTier
-              ? scheme.primary.withValues(alpha: 0.4)
-              : scheme.outline.withValues(alpha: 0.2),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: (isMostPopular ? scheme.primary : scheme.shadow).withValues(
-              alpha: isMostPopular ? 0.14 : 0.08,
-            ),
-            blurRadius: isMostPopular ? 22 : 14,
-            offset: const Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 10,
-                height: 10,
-                margin: const EdgeInsets.only(top: 6),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _dotColor(plan.tier, scheme),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      plan.name,
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Text(
-                      '($price)',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    if (yearlySubtitle != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          yearlySubtitle!,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              if (isMostPopular)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  child: const Text('Most popular'),
-                ),
-              if (isCurrentTier)
-                Container(
-                  margin: const EdgeInsets.only(left: 6),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: scheme.secondary.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                  child: const Text('Current tier'),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ...headlineBenefits.take(6).map((text) => BenefitRow(text: text)),
-          const SizedBox(height: 6),
-          Theme(
-            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: EdgeInsets.zero,
-              title: const Text('See full breakdown'),
-              children: [
-                _Section(title: 'Access', items: aiDetails),
-                _Section(title: 'Devices', items: deviceDetails),
-                _Section(title: 'Templates', items: templateDetails),
-                _Section(title: 'Journaling', items: journalDetails),
-                _Section(title: 'Tools Included', items: toolsDetails),
-              ],
-            ),
-          ),
-          if (ctaLabel != null) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: ctaEnabled ? onCtaTap : null,
-                child: Text(ctaLabel!),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class BenefitRow extends StatelessWidget {
-  const BenefitRow({super.key, required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('• '),
-          Expanded(child: Text(text)),
-        ],
-      ),
-    );
-  }
-}
-
-class _Section extends StatelessWidget {
-  const _Section({required this.title, required this.items});
-
-  final String title;
-  final List<String> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 4),
-          ...items.map((item) => BenefitRow(text: item)),
         ],
       ),
     );

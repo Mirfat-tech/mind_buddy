@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:developer' as developer;
 
@@ -8,8 +9,15 @@ class JournalAccessService {
   JournalAccessService._();
 
   static const String mediaBucket = 'journal-media';
+  static bool _isLocalPrivateJournalId(String id) => id.startsWith('journal-');
 
   static Future<bool> canAccessEntry(String entryId) async {
+    if (_isLocalPrivateJournalId(entryId)) {
+      debugPrint(
+        'JOURNAL_REMOTE_CALL_BLOCKED reason=private_flow method=canAccessEntry id=$entryId',
+      );
+      return false;
+    }
     final supa = Supabase.instance.client;
     final user = supa.auth.currentUser;
     if (user == null) return false;
@@ -65,6 +73,10 @@ class JournalAccessService {
     required String? storagePath,
     DateTime? updatedAt,
   }) async {
+    if (_isLocalPrivateJournalId(entryId)) {
+      debugPrint('JOURNAL_PRIVATE_DOODLE_REMOTE_BLOCKED id=$entryId');
+      return null;
+    }
     final allowed = await canAccessEntry(entryId);
     if (!allowed) return null;
     return JournalDoodleService.resolvePreviewUrl(
@@ -77,6 +89,10 @@ class JournalAccessService {
     required String entryId,
     required String rawText,
   }) async {
+    if (_isLocalPrivateJournalId(entryId)) {
+      debugPrint('JOURNAL_PRIVATE_MEDIA_REMOTE_BLOCKED id=$entryId');
+      return rawText;
+    }
     if (rawText.trim().isEmpty) return rawText;
 
     final allowed = await canAccessEntry(entryId);

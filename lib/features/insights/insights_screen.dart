@@ -3,6 +3,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -10,12 +11,109 @@ import 'dart:math' as math;
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
+import 'package:mind_buddy/features/bills/bills_repository.dart';
+import 'package:mind_buddy/features/cycle/cycle_repository.dart';
+import 'package:mind_buddy/features/expenses/expenses_repository.dart';
+import 'package:mind_buddy/features/fast/fast_repository.dart';
+import 'package:mind_buddy/features/income/income_repository.dart';
 import 'package:mind_buddy/features/insights/brainbubble_insights.dart';
 import 'package:mind_buddy/features/insights/habit_completion_stats.dart';
+import 'package:mind_buddy/features/meditation/meditation_repository.dart';
 import 'package:mind_buddy/features/mood/mood_catalog.dart' as mood_catalog;
+import 'package:mind_buddy/features/mood/mood_repository.dart';
+import 'package:mind_buddy/features/social/social_repository.dart';
+import 'package:mind_buddy/features/study/study_repository.dart';
+import 'package:mind_buddy/features/water/water_repository.dart';
+import 'package:mind_buddy/features/workout/workout_repository.dart';
 import 'package:mind_buddy/guides/guide_manager.dart';
 
 import 'sleep_insights.dart';
+
+void _logInsightsLocalLoad(String source) {
+  debugPrint('INSIGHTS_LOAD_LOCAL source=$source');
+}
+
+void _logInsightsRemoteBlocked({
+  required String method,
+  String reason = 'local_only_mode',
+}) {
+  debugPrint('INSIGHTS_REMOTE_CALL_BLOCKED method=$method reason=$reason');
+}
+
+String? _currentInsightsUserId() {
+  return Supabase.instance.client.auth.currentUser?.id;
+}
+
+bool _isInsightsDayInRange(
+  dynamic rawDay,
+  String startDate,
+  String endExclusiveDate,
+) {
+  final text = rawDay?.toString().trim();
+  if (text == null || text.isEmpty) return false;
+  return text.compareTo(startDate) >= 0 && text.compareTo(endExclusiveDate) < 0;
+}
+
+Future<List<Map<String, dynamic>>> _loadInsightsLocalEntries(
+  BuildContext context, {
+  required String source,
+  required Future<List<Map<String, dynamic>>> Function(String userId) loader,
+}) async {
+  _logInsightsLocalLoad(source);
+  final userId = _currentInsightsUserId();
+  if (userId == null) return const <Map<String, dynamic>>[];
+  return loader(userId);
+}
+
+Future<List<Map<String, dynamic>>> _loadInsightsLocalTableRows(
+  BuildContext context, {
+  required String source,
+  required String table,
+}) {
+  final container = ProviderScope.containerOf(context, listen: false);
+  switch (table) {
+    case 'study_logs':
+      return _loadInsightsLocalEntries(
+        context,
+        source: source,
+        loader: (userId) =>
+            container.read(studyRepositoryProvider).loadEntries(userId: userId),
+      );
+    case 'water_logs':
+      return _loadInsightsLocalEntries(
+        context,
+        source: source,
+        loader: (userId) =>
+            container.read(waterRepositoryProvider).loadEntries(userId: userId),
+      );
+    case 'workout_logs':
+      return _loadInsightsLocalEntries(
+        context,
+        source: source,
+        loader: (userId) => container
+            .read(workoutRepositoryProvider)
+            .loadEntries(userId: userId),
+      );
+    case 'social_logs':
+      return _loadInsightsLocalEntries(
+        context,
+        source: source,
+        loader: (userId) => container
+            .read(socialRepositoryProvider)
+            .loadEntries(userId: userId),
+      );
+    case 'fast_logs':
+      return _loadInsightsLocalEntries(
+        context,
+        source: source,
+        loader: (userId) =>
+            container.read(fastRepositoryProvider).loadEntries(userId: userId),
+      );
+    default:
+      _logInsightsRemoteBlocked(method: 'table:$table');
+      return Future.value(const <Map<String, dynamic>>[]);
+  }
+}
 
 class InsightsScreen extends StatefulWidget {
   const InsightsScreen({super.key});
@@ -435,8 +533,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
         title: const Text('Insights'),
         leading: MbGlowBackButton(
           key: _insightsBackButtonKey,
-          onPressed: () =>
-              context.canPop() ? context.pop() : context.go('/home'),
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
         ),
         actions: [
           MbGlowIconButton(
@@ -984,10 +1081,7 @@ class HabitStepLineChartContainer extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     return FutureBuilder<HabitMonthlyCompletionStats>(
-      future: fetchHabitMonthlyCompletionStats(
-        supabase: Supabase.instance.client,
-        selectedMonth: selectedMonth,
-      ),
+      future: fetchHabitMonthlyCompletionStats(selectedMonth: selectedMonth),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -1293,7 +1387,7 @@ class FinanceInsights extends StatelessWidget {
     final endExclusiveDate = _ymd(endExclusive);
 
     return FutureBuilder<Map<String, List<Map<String, dynamic>>>>(
-      future: _fetchAllFinanceData(startDate, endExclusiveDate),
+      future: _fetchAllFinanceData(context, startDate, endExclusiveDate),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -1573,34 +1667,53 @@ class FinanceInsights extends StatelessWidget {
   }
 
   Future<Map<String, List<Map<String, dynamic>>>> _fetchAllFinanceData(
+    BuildContext context,
     String startDate,
     String endExclusiveDate,
   ) async {
+    final container = ProviderScope.containerOf(context, listen: false);
     final results = await Future.wait([
-      Supabase.instance.client
-          .from('income_logs')
-          .select('day, amount')
-          .gte('day', startDate)
-          .lt('day', endExclusiveDate)
-          .catchError((_) => []),
-      Supabase.instance.client
-          .from('expense_logs')
-          .select('day, cost')
-          .gte('day', startDate)
-          .lt('day', endExclusiveDate)
-          .catchError((_) => []),
-      Supabase.instance.client
-          .from('bill_logs')
-          .select('day, amount')
-          .gte('day', startDate)
-          .lt('day', endExclusiveDate)
-          .catchError((_) => []),
-    ], eagerError: false);
+      _loadInsightsLocalEntries(
+        context,
+        source: 'finance',
+        loader: (userId) => container
+            .read(incomeRepositoryProvider)
+            .loadEntries(userId: userId),
+      ),
+      _loadInsightsLocalEntries(
+        context,
+        source: 'finance',
+        loader: (userId) => container
+            .read(expensesRepositoryProvider)
+            .loadEntries(userId: userId),
+      ),
+      _loadInsightsLocalEntries(
+        context,
+        source: 'finance',
+        loader: (userId) =>
+            container.read(billsRepositoryProvider).loadEntries(userId: userId),
+      ),
+    ], eagerError: true);
 
     return {
-      'income': List<Map<String, dynamic>>.from(results[0] as List? ?? []),
-      'expenses': List<Map<String, dynamic>>.from(results[1] as List? ?? []),
-      'bills': List<Map<String, dynamic>>.from(results[2] as List? ?? []),
+      'income': List<Map<String, dynamic>>.from(
+        (results[0] as List<Map<String, dynamic>>).where(
+          (row) =>
+              _isInsightsDayInRange(row['day'], startDate, endExclusiveDate),
+        ),
+      ),
+      'expenses': List<Map<String, dynamic>>.from(
+        (results[1] as List<Map<String, dynamic>>).where(
+          (row) =>
+              _isInsightsDayInRange(row['day'], startDate, endExclusiveDate),
+        ),
+      ),
+      'bills': List<Map<String, dynamic>>.from(
+        (results[2] as List<Map<String, dynamic>>).where(
+          (row) =>
+              _isInsightsDayInRange(row['day'], startDate, endExclusiveDate),
+        ),
+      ),
     };
   }
 
@@ -1943,11 +2056,14 @@ class CycleInsights extends StatelessWidget {
     final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from('menstrual_logs')
-          .select('day, flow')
-          .gte('day', _ymd(historyStart))
-          .lt('day', endExclusiveDay),
+      future: _loadInsightsLocalEntries(
+        context,
+        source: 'cycle',
+        loader: (userId) => ProviderScope.containerOf(
+          context,
+          listen: false,
+        ).read(cycleRepositoryProvider).loadEntries(userId: userId),
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -2249,13 +2365,16 @@ class _MoodInsightsState extends State<MoodInsights> {
       );
     }
     try {
-      final result = await Supabase.instance.client
-          .from('mood_logs')
-          .select('day, feeling, intensity')
-          .gte('day', start)
-          .lt('day', endExclusive)
-          .timeout(const Duration(seconds: 12));
-      final rows = List<Map<String, dynamic>>.from(result as List? ?? []);
+      if (userId == null) {
+        return const <Map<String, dynamic>>[];
+      }
+      final rows = await ProviderScope.containerOf(context, listen: false)
+          .read(moodRepositoryProvider)
+          .loadEntriesForRange(
+            userId: userId,
+            startDayInclusive: start,
+            endDayExclusive: endExclusive,
+          );
       if (kDebugMode) {
         final sample = rows.isEmpty ? '{}' : rows.first.toString();
         debugPrint(
@@ -2651,11 +2770,14 @@ class MeditationInsights extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from('meditation_logs')
-          .select('day, duration_minutes')
-          .gte('day', _ymd(_startOfPreviousMonth(selectedMonth)))
-          .lt('day', _ymd(_startOfNextMonth(selectedMonth))),
+      future: _loadInsightsLocalEntries(
+        context,
+        source: 'meditation',
+        loader: (userId) => ProviderScope.containerOf(
+          context,
+          listen: false,
+        ).read(meditationRepositoryProvider).loadEntries(userId: userId),
+      ),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
@@ -2908,11 +3030,11 @@ class ActivityTrendItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from(table)
-          .select('day, $valueColumn')
-          .gte('day', _ymd(_startOfMonth(selectedMonth)))
-          .lt('day', _ymd(_startOfNextMonth(selectedMonth))),
+      future: _loadInsightsLocalTableRows(
+        context,
+        source: title.toLowerCase().replaceAll(' ', '_'),
+        table: table,
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SizedBox(
@@ -3429,6 +3551,7 @@ class WorkoutInsights extends StatelessWidget {
 
     return FutureBuilder<Map<String, dynamic>>(
       future: _fetchWorkoutData(
+        context: context,
         startDay: startDay,
         endExclusiveDay: endExclusiveDay,
       ),
@@ -3551,39 +3674,38 @@ class WorkoutInsights extends StatelessWidget {
   }
 
   Future<Map<String, dynamic>> _fetchWorkoutData({
+    required BuildContext context,
     required String startDay,
     required String endExclusiveDay,
   }) async {
     try {
-      // Fetch all workouts for the month
-      final workoutRows = await Supabase.instance.client
-          .from('workout_logs')
-          .select('day, exercise')
-          .gte('day', startDay)
-          .lt('day', endExclusiveDay);
-
-      // Fetch the most recent weight log from workout_logs
-      final weightRows = await Supabase.instance.client
-          .from('workout_logs')
-          .select('weight_kg')
-          .not(
-            'weight_kg',
-            'is',
-            null,
-          ) // Only get rows where weight_kg is NOT null
-          .order('created_at', ascending: false)
-          .limit(1);
+      _logInsightsLocalLoad('workout');
+      final userId = _currentInsightsUserId();
+      if (userId == null) {
+        return {'workouts': [], 'lastWeight': null};
+      }
+      final workoutRows = await ProviderScope.containerOf(
+        context,
+        listen: false,
+      ).read(workoutRepositoryProvider).loadEntries(userId: userId);
+      final filteredWorkoutRows = workoutRows.where(
+        (row) => _isInsightsDayInRange(row['day'], startDay, endExclusiveDay),
+      );
 
       String? lastWeight;
-      if (weightRows.isNotEmpty && weightRows[0]['weight_kg'] != null) {
-        final weight = (weightRows[0]['weight_kg'] as num?)?.toDouble();
-        if (weight != null) {
+      DateTime? latestWeightDay;
+      for (final row in workoutRows) {
+        final weight = (row['weight_kg'] as num?)?.toDouble();
+        final parsedDay = DateTime.tryParse((row['day'] ?? '').toString());
+        if (weight == null || parsedDay == null) continue;
+        if (latestWeightDay == null || parsedDay.isAfter(latestWeightDay)) {
+          latestWeightDay = parsedDay;
           lastWeight = '${weight.toStringAsFixed(1)} kg';
         }
       }
 
       return {
-        'workouts': List<Map<String, dynamic>>.from(workoutRows ?? []),
+        'workouts': List<Map<String, dynamic>>.from(filteredWorkoutRows),
         'lastWeight': lastWeight,
       };
     } catch (e) {
@@ -3636,11 +3758,14 @@ class SocialOutingsInsights extends StatelessWidget {
     final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from('social_logs')
-          .select('day')
-          .gte('day', startDay)
-          .lt('day', endExclusiveDay),
+      future: _loadInsightsLocalEntries(
+        context,
+        source: 'social',
+        loader: (userId) => ProviderScope.containerOf(
+          context,
+          listen: false,
+        ).read(socialRepositoryProvider).loadEntries(userId: userId),
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -3754,11 +3879,14 @@ class FastingInsights extends StatelessWidget {
     final endExclusiveDay = _ymd(endExclusive);
 
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from('fast_logs')
-          .select('day, duration_hours')
-          .gte('day', startDay)
-          .lt('day', endExclusiveDay),
+      future: _loadInsightsLocalEntries(
+        context,
+        source: 'fast',
+        loader: (userId) => ProviderScope.containerOf(
+          context,
+          listen: false,
+        ).read(fastRepositoryProvider).loadEntries(userId: userId),
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
           return const SizedBox(
@@ -4151,6 +4279,7 @@ class WaterInsights extends StatelessWidget {
 
     return FutureBuilder<Map<String, dynamic>>(
       future: _fetchWaterData(
+        context: context,
         selectedMonth: selectedMonth,
         startDay: startDay,
         endExclusiveDay: endExclusiveDay,
@@ -4386,17 +4515,43 @@ class WaterInsights extends StatelessWidget {
   }
 
   Future<Map<String, dynamic>> _fetchWaterData({
+    required BuildContext context,
     required DateTime selectedMonth,
     required String startDay,
     required String endExclusiveDay,
   }) async {
     try {
-      final rows = await Supabase.instance.client
-          .from('water_logs')
-          .select('day, amount, unit, goal_reached')
-          .gte('day', startDay)
-          .lt('day', endExclusiveDay)
-          .order('day', ascending: true);
+      _logInsightsLocalLoad('water');
+      final userId = _currentInsightsUserId();
+      if (userId == null) {
+        return {
+          'daily': <int, double>{},
+          'goalStatus': <int, bool>{},
+          'totalLiters': 0.0,
+          'goalsReached': 0,
+          'previousGoalsReached': 0,
+          'strongestDay': null,
+        };
+      }
+      final allRows = await ProviderScope.containerOf(
+        context,
+        listen: false,
+      ).read(waterRepositoryProvider).loadEntries(userId: userId);
+      final rows =
+          allRows
+              .where(
+                (row) => _isInsightsDayInRange(
+                  row['day'],
+                  startDay,
+                  endExclusiveDay,
+                ),
+              )
+              .toList(growable: false)
+            ..sort(
+              (a, b) => (a['day'] ?? '').toString().compareTo(
+                (b['day'] ?? '').toString(),
+              ),
+            );
 
       final Map<int, double> dailyWater = {};
       final Map<int, bool> dailyGoalStatus = {};
@@ -4712,11 +4867,11 @@ class ActivityTrendLineChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: Supabase.instance.client
-          .from(table)
-          .select('day, $valueColumn')
-          .gte('day', _ymd(_startOfMonth(selectedMonth)))
-          .lt('day', _ymd(_startOfNextMonth(selectedMonth))),
+      future: _loadInsightsLocalTableRows(
+        context,
+        source: '${title.toLowerCase().replaceAll(' ', '_')}_line',
+        table: table,
+      ),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const SizedBox(

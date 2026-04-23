@@ -55,17 +55,17 @@ class _BootstrapGateScreenState extends ConsumerState<BootstrapGateScreen>
         preferCache: false,
       ).timeout(const Duration(seconds: 6));
       if (kDebugMode) {
-        debugPrint('[BootstrapGate] preload complete, routing to /home');
+        debugPrint('[BootstrapGate] preload complete, routing to /');
       }
     } catch (_) {
       // Startup errors should not block entry.
       if (kDebugMode) {
-        debugPrint('[BootstrapGate] preload failed, routing to /home anyway');
+        debugPrint('[BootstrapGate] preload failed, routing to / anyway');
       }
     }
     if (!mounted || _navigated) return;
     _navigated = true;
-    context.go('/home');
+    context.go('/');
   }
 
   @override

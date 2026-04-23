@@ -15,41 +15,44 @@ class OnboardingDoorwayScreen extends ConsumerStatefulWidget {
 
 class _OnboardingDoorwayScreenState
     extends ConsumerState<OnboardingDoorwayScreen> {
-  late Set<String> _selected;
+  String? _selected;
 
   static const _options = <(String, String)>[
-    ('mental', 'My mental headspace'),
-    ('admin', 'My admin, money, or "adulting"'),
-    ('body', 'My body and routines'),
-    ('everything', 'Honestly? Everything'),
-    ('nothing', 'Nothing right now'),
+    ('gratitude', 'My Gratitude'),
+    ('brain_fog', 'My Brain Fog'),
   ];
 
   @override
   void initState() {
     super.initState();
-    _selected = {...ref.read(onboardingControllerProvider).slipFirst};
+    final previous = ref.read(onboardingControllerProvider).slipFirst;
+    _selected = previous.isEmpty ? null : previous.first;
   }
 
   void _toggle(String value) {
     setState(() {
-      if (_selected.contains(value)) {
-        _selected.remove(value);
-      } else {
-        _selected.add(value);
-      }
+      _selected = value;
     });
+    ref.read(onboardingControllerProvider.notifier).setSlipFirst({value});
     debugPrint(
-      '[OnboardingDoorway] option_tapped value=$value selected=${_selected.contains(value)} current_page=0',
+      '[OnboardingDoorway] option_tapped value=$value selected=true current_page=0',
     );
+    _continue();
   }
 
   void _continue() {
+    final selected = _selected;
+    if (selected == null) return;
+    final nextRoute = switch (selected) {
+      'gratitude' => '/onboarding/experience/gratitude',
+      'brain_fog' => '/onboarding/experience/brain-fog',
+      _ => '/onboarding/doorway',
+    };
     debugPrint(
-      '[OnboardingDoorway] continue_tapped selected=$_selected current_page=0 next=/onboarding/expression',
+      '[OnboardingDoorway] continue_tapped selected=$selected current_page=0 next=$nextRoute',
     );
-    ref.read(onboardingControllerProvider.notifier).setSlipFirst(_selected);
-    context.go('/onboarding/expression');
+    ref.read(onboardingControllerProvider.notifier).setSlipFirst({selected});
+    context.go(nextRoute);
   }
 
   Future<void> _skipQuestion() async {
@@ -58,14 +61,9 @@ class _OnboardingDoorwayScreenState
     controller.clearSlipFirst();
     controller.clearExpressionStyle();
     controller.clearLookingBack();
-    controller.setSkippedPersonalization(true);
-    await OnboardingController.setSetupCompleted(true);
-    await CompletionGateRepository.markOnboardingCompleted();
-    debugPrint(
-      '[OnboardingDoorway] skip_saved onboarding_completed=true next=/bootstrap',
-    );
+    debugPrint('[OnboardingDoorway] skip_saved next=/auth');
     if (!mounted) return;
-    context.go('/bootstrap');
+    context.go('/auth');
   }
 
   @override
@@ -79,13 +77,12 @@ class _OnboardingDoorwayScreenState
           children: [
             Expanded(
               child: OnboardingBubbleCloud(
-                centerText:
-                    'Life is a lot to hold.\nWhen things get busy, what\'s usually the first thing to slip through the cracks?',
+                centerText: 'What would your mind like to focus on today?',
                 choices: [
                   for (final (value, label) in _options)
                     BubbleChoice(
                       label: label,
-                      selected: _selected.contains(value),
+                      selected: _selected == value,
                       onTap: () => _toggle(value),
                     ),
                 ],
@@ -95,7 +92,7 @@ class _OnboardingDoorwayScreenState
             SizedBox(
               width: double.infinity,
               child: FilledButton(
-                onPressed: _selected.isEmpty ? null : _continue,
+                onPressed: _selected == null ? null : _continue,
                 child: const Text('Continue'),
               ),
             ),

@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:mind_buddy/features/journal/journal_local_repository.dart';
 
 class JournalFolder {
   const JournalFolder({
@@ -139,16 +140,7 @@ class JournalFolderSupport {
   }
 
   static Future<List<JournalFolder>> fetchFolders() async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return const <JournalFolder>[];
-    final response = await Supabase.instance.client
-        .from('journal_folders')
-        .select()
-        .eq('user_id', user.id)
-        .order('updated_at', ascending: false);
-    return (response as List)
-        .map((row) => JournalFolder.fromMap(Map<String, dynamic>.from(row)))
-        .toList();
+    return JournalLocalRepository().loadFolders();
   }
 
   static Future<void> createFolder({
@@ -174,15 +166,14 @@ class JournalFolderSupport {
       'journal_folder event=create_payload data={payload: $payload}',
       name: 'journal_folder',
     );
-    await _debugSanityCheckJournalFoldersTable();
     try {
-      final inserted = await Supabase.instance.client
-          .from('journal_folders')
-          .insert(payload)
-          .select(
-            'id, user_id, name, color, icon_style, created_at, updated_at',
-          )
-          .single();
+      await JournalLocalRepository().saveFolder(
+        folderId: null,
+        name: name.trim(),
+        colorKey: colorKey,
+        iconStyle: iconStyle,
+      );
+      final inserted = payload;
       developer.log(
         'journal_folder event=create_success data={row: $inserted}',
         name: 'journal_folder',
@@ -222,14 +213,13 @@ class JournalFolderSupport {
       name: 'journal_folder',
     );
     try {
-      final updated = await Supabase.instance.client
-          .from('journal_folders')
-          .update(payload)
-          .eq('id', folderId)
-          .select(
-            'id, user_id, name, color, icon_style, created_at, updated_at',
-          )
-          .single();
+      await JournalLocalRepository().saveFolder(
+        folderId: folderId,
+        name: name.trim(),
+        colorKey: colorKey,
+        iconStyle: iconStyle,
+      );
+      final updated = payload;
       developer.log(
         'journal_folder event=update_success data={row: $updated}',
         name: 'journal_folder',
@@ -258,10 +248,7 @@ class JournalFolderSupport {
       'journal_folder event=delete_call data={folder_id: $folderId}',
       name: 'journal_folder',
     );
-    await Supabase.instance.client.rpc(
-      'delete_journal_folder',
-      params: {'p_folder_id': folderId},
-    );
+    await JournalLocalRepository().deleteFolder(folderId);
   }
 
   static Future<void> assignEntryToFolder(
@@ -281,15 +268,13 @@ class JournalFolderSupport {
       'journal_folder event=assign_call data={journal_id: $journalId, folder_id: $folderId, user_id: ${user.id}, payload: $payload}',
       name: 'journal_folder',
     );
-    await _debugSanityCheckJournalsFolderColumn();
     try {
-      final updated = await Supabase.instance.client
-          .from('journals')
-          .update(payload)
-          .eq('id', journalId)
-          .eq('user_id', user.id)
-          .select('id, user_id, folder_id')
-          .single();
+      await JournalLocalRepository().assignEntryToFolder(journalId, folderId);
+      final updated = <String, dynamic>{
+        'id': journalId,
+        'user_id': user.id,
+        'folder_id': folderId,
+      };
       developer.log(
         'journal_folder event=assign_success data={row: $updated}',
         name: 'journal_folder',
@@ -305,72 +290,6 @@ class JournalFolderSupport {
     } catch (error, stackTrace) {
       developer.log(
         'journal_folder event=assign_unknown_error data={error: $error}',
-        name: 'journal_folder',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
-  }
-
-  static Future<void> _debugSanityCheckJournalFoldersTable() async {
-    developer.log(
-      'journal_folder event=sanity_check_start',
-      name: 'journal_folder',
-    );
-    try {
-      final result = await Supabase.instance.client
-          .from('journal_folders')
-          .select('id')
-          .limit(1);
-      developer.log(
-        'journal_folder event=sanity_check_success data={result: $result}',
-        name: 'journal_folder',
-      );
-    } on PostgrestException catch (error, stackTrace) {
-      developer.log(
-        'journal_folder event=sanity_check_postgrest_error data={message: ${error.message}, details: ${error.details}, hint: ${error.hint}, code: ${error.code}}',
-        name: 'journal_folder',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    } catch (error, stackTrace) {
-      developer.log(
-        'journal_folder event=sanity_check_unknown_error data={error: $error}',
-        name: 'journal_folder',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    }
-  }
-
-  static Future<void> _debugSanityCheckJournalsFolderColumn() async {
-    developer.log(
-      'journal_folder event=journals_folder_column_check_start',
-      name: 'journal_folder',
-    );
-    try {
-      final result = await Supabase.instance.client
-          .from('journals')
-          .select('id, folder_id')
-          .limit(1);
-      developer.log(
-        'journal_folder event=journals_folder_column_check_success data={result: $result}',
-        name: 'journal_folder',
-      );
-    } on PostgrestException catch (error, stackTrace) {
-      developer.log(
-        'journal_folder event=journals_folder_column_check_postgrest_error data={message: ${error.message}, details: ${error.details}, hint: ${error.hint}, code: ${error.code}}',
-        name: 'journal_folder',
-        error: error,
-        stackTrace: stackTrace,
-      );
-      rethrow;
-    } catch (error, stackTrace) {
-      developer.log(
-        'journal_folder event=journals_folder_column_check_unknown_error data={error: $error}',
         name: 'journal_folder',
         error: error,
         stackTrace: stackTrace,

@@ -62,7 +62,7 @@ class OnboardingAuthScreen extends StatelessWidget {
                 const SizedBox(height: 8),
                 GlowFilledButton(
                   onPressed: () => context.push('/signin'),
-                  child: const Text('Continue with email'),
+                  child: const Text('Sign in'),
                 ),
                 const SizedBox(height: 14),
                 TextButton(

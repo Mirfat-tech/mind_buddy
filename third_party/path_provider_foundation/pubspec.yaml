@@ -1,0 +1,23 @@
+name: path_provider_foundation
+description: Local compatibility override for iOS and macOS path_provider implementation without Objective-C FFI.
+version: 2.6.0
+publish_to: "none"
+
+environment:
+  sdk: ^3.10.0
+  flutter: ">=3.22.0"
+
+flutter:
+  plugin:
+    implements: path_provider
+    platforms:
+      ios:
+        dartPluginClass: PathProviderFoundation
+      macos:
+        dartPluginClass: PathProviderFoundation
+
+dependencies:
+  flutter:
+    sdk: flutter
+  path_provider_platform_interface: ^2.1.0
+  plugin_platform_interface: ^2.1.8

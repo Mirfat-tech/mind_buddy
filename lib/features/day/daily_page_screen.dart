@@ -193,7 +193,7 @@ class _DailyPageScreenState extends State<DailyPageScreen> {
               if (Navigator.of(context).canPop()) {
                 Navigator.of(context).pop();
               } else {
-                context.go('/home');
+                context.go('/');
               }
             },
           ),

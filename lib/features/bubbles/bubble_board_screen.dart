@@ -70,7 +70,10 @@ typedef BubbleTapHandler =
       BubbleBoardController controller,
     );
 typedef BubbleAppBarActionsBuilder =
-    List<Widget> Function(BuildContext context, BubbleBoardController controller);
+    List<Widget> Function(
+      BuildContext context,
+      BubbleBoardController controller,
+    );
 
 class BubbleBoardScreen extends StatefulWidget {
   const BubbleBoardScreen({
@@ -100,6 +103,7 @@ class BubbleBoardScreen extends StatefulWidget {
     this.onBubbleTap,
     this.appBarActionsBuilder,
     this.onLoaded,
+    this.onBackPressed,
     this.popEffect = BubblePopEffect.none,
     this.popAnimationDuration = const Duration(milliseconds: 220),
   });
@@ -129,6 +133,7 @@ class BubbleBoardScreen extends StatefulWidget {
   final BubbleTapHandler? onBubbleTap;
   final BubbleAppBarActionsBuilder? appBarActionsBuilder;
   final VoidCallback? onLoaded;
+  final VoidCallback? onBackPressed;
   final BubblePopEffect popEffect;
   final Duration popAnimationDuration;
 
@@ -455,13 +460,15 @@ class _BubbleBoardScreenState extends State<BubbleBoardScreen>
       appBar: AppBar(
         title: Text(widget.title),
         leading: MbGlowBackButton(
-          onPressed: () {
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go('/home');
-            }
-          },
+          onPressed:
+              widget.onBackPressed ??
+              () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/');
+                }
+              },
         ),
         actions: [
           ...?widget.appBarActionsBuilder?.call(context, controller),
@@ -622,7 +629,9 @@ class _BubbleBoardScreenState extends State<BubbleBoardScreen>
     final visual = _bubbleVisualSpec(context, entry, controller);
     final hasSolution = entry.solutionText.trim().isNotEmpty;
     final solutionBubbleSize = bubbleSize * 0.46;
-    final totalWidth = hasSolution ? bubbleSize + (solutionBubbleSize * 0.82) : bubbleSize;
+    final totalWidth = hasSolution
+        ? bubbleSize + (solutionBubbleSize * 0.82)
+        : bubbleSize;
     final totalHeight = hasSolution
         ? math.max(bubbleSize, bubbleSize * 0.86 + solutionBubbleSize * 0.42)
         : bubbleSize;
@@ -652,85 +661,89 @@ class _BubbleBoardScreenState extends State<BubbleBoardScreen>
                   left: 0,
                   top: 0,
                   child: Container(
-                  width: bubbleSize,
-                  height: bubbleSize,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: visual.color,
-                    boxShadow: [
-                      BoxShadow(
-                        color: cs.primary.withOpacity(visual.glowStrength),
-                        blurRadius: 18,
-                        blurStyle: BlurStyle.outer,
+                    width: bubbleSize,
+                    height: bubbleSize,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: visual.color,
+                      boxShadow: [
+                        BoxShadow(
+                          color: cs.primary.withOpacity(visual.glowStrength),
+                          blurRadius: 18,
+                          blurStyle: BlurStyle.outer,
+                        ),
+                      ],
+                      border: Border.all(
+                        color: _isDeleteMode
+                            ? Colors.red
+                            : cs.primary.withOpacity(0.25),
                       ),
-                    ],
-                    border: Border.all(
-                      color: _isDeleteMode
-                          ? Colors.red
-                          : cs.primary.withOpacity(0.25),
+                    ),
+                    child: Stack(
+                      children: [
+                        Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(15),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: Text(
+                                entry.text.isEmpty
+                                    ? widget.bubblePlaceholderText
+                                    : entry.text,
+                                textAlign: TextAlign.center,
+                                maxLines: 5,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: cs.onSurface,
+                                  fontSize: 12,
+                                  decoration: TextDecoration.none,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (_isDeleteMode)
+                          const Positioned(
+                            top: 0,
+                            right: 0,
+                            child: CircleAvatar(
+                              radius: 12,
+                              backgroundColor: Colors.red,
+                              child: Icon(
+                                Icons.remove,
+                                size: 16,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        if (visual.badgeText != null)
+                          Positioned(
+                            top: 6,
+                            left: 6,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    visual.badgeBackgroundColor ??
+                                    cs.primary.withOpacity(0.85),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                visual.badgeText!,
+                                style: TextStyle(
+                                  color: visual.badgeTextColor,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  child: Stack(
-                    children: [
-                      Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(15),
-                          child: Material(
-                            color: Colors.transparent,
-                            child: Text(
-                              entry.text.isEmpty
-                                  ? widget.bubblePlaceholderText
-                                  : entry.text,
-                              textAlign: TextAlign.center,
-                              maxLines: 5,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: cs.onSurface,
-                                fontSize: 12,
-                                decoration: TextDecoration.none,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      if (_isDeleteMode)
-                        const Positioned(
-                          top: 0,
-                          right: 0,
-                          child: CircleAvatar(
-                            radius: 12,
-                            backgroundColor: Colors.red,
-                            child: Icon(Icons.remove, size: 16, color: Colors.white),
-                          ),
-                        ),
-                      if (visual.badgeText != null)
-                        Positioned(
-                          top: 6,
-                          left: 6,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color:
-                                  visual.badgeBackgroundColor ??
-                                  cs.primary.withOpacity(0.85),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              visual.badgeText!,
-                              style: TextStyle(
-                                color: visual.badgeTextColor,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
                 ),
                 if (hasSolution) ...[
                   Positioned(
@@ -787,15 +800,14 @@ class _BubbleBoardScreenState extends State<BubbleBoardScreen>
                       ),
                     ),
                   ),
-                ] else if (widget.solutionBubblePromptText != null && entry.text.trim().isNotEmpty) ...[
+                ] else if (widget.solutionBubblePromptText != null &&
+                    entry.text.trim().isNotEmpty) ...[
                   Positioned(
                     left: bubbleSize * 0.78,
                     top: bubbleSize * 0.52,
                     child: IgnorePointer(
                       child: Container(
-                        constraints: BoxConstraints(
-                          maxWidth: bubbleSize * 0.7,
-                        ),
+                        constraints: BoxConstraints(maxWidth: bubbleSize * 0.7),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
                           vertical: 6,
@@ -860,10 +872,7 @@ class _BubbleBoardScreenState extends State<BubbleBoardScreen>
 }
 
 class _DropletBurstPainter extends CustomPainter {
-  const _DropletBurstPainter({
-    required this.progress,
-    required this.accent,
-  });
+  const _DropletBurstPainter({required this.progress, required this.accent});
 
   final double progress;
   final Color accent;
@@ -875,85 +884,132 @@ class _DropletBurstPainter extends CustomPainter {
     final center = Offset(size.width / 2, size.height / 2);
     final eased = Curves.easeOutCubic.transform(progress);
     final travel = size.width * 0.38 * eased;
-    final droplets = <({double angle, double radius, double scale, Color color, double arc})>[
-      (
-        angle: -1.82,
-        radius: travel * 1.18,
-        scale: 1.26,
-        color: Color.lerp(accent, Colors.white, 0.48)!.withValues(alpha: 0.96 * fade),
-        arc: 0.12,
-      ),
-      (
-        angle: -0.96,
-        radius: travel * 1.34,
-        scale: 1.06,
-        color: Color.lerp(accent, const Color(0xFFAEE7FF), 0.32)!.withValues(alpha: 0.88 * fade),
-        arc: 0.08,
-      ),
-      (
-        angle: -0.16,
-        radius: travel * 1.46,
-        scale: 1.0,
-        color: Color.lerp(accent, const Color(0xFFFFE2F4), 0.4)!.withValues(alpha: 0.84 * fade),
-        arc: 0.05,
-      ),
-      (
-        angle: 0.68,
-        radius: travel * 1.28,
-        scale: 1.18,
-        color: Color.lerp(accent, Colors.white, 0.3)!.withValues(alpha: 0.92 * fade),
-        arc: -0.03,
-      ),
-      (
-        angle: 1.42,
-        radius: travel * 1.18,
-        scale: 0.9,
-        color: Color.lerp(accent, const Color(0xFFBFEFFF), 0.26)!.withValues(alpha: 0.82 * fade),
-        arc: -0.08,
-      ),
-      (
-        angle: 2.28,
-        radius: travel * 1.36,
-        scale: 1.04,
-        color: Color.lerp(accent, Colors.white, 0.54)!.withValues(alpha: 0.88 * fade),
-        arc: -0.1,
-      ),
-      (
-        angle: -2.6,
-        radius: travel * 1.24,
-        scale: 0.86,
-        color: Color.lerp(accent, const Color(0xFFD8F3FF), 0.34)!.withValues(alpha: 0.8 * fade),
-        arc: 0.12,
-      ),
-      (
-        angle: -1.36,
-        radius: travel * 1.42,
-        scale: 0.74,
-        color: Color.lerp(accent, Colors.white, 0.6)!.withValues(alpha: 0.86 * fade),
-        arc: 0.14,
-      ),
-      (
-        angle: 0.12,
-        radius: travel * 1.54,
-        scale: 0.8,
-        color: Color.lerp(accent, const Color(0xFFFFE7F6), 0.45)!.withValues(alpha: 0.84 * fade),
-        arc: 0.02,
-      ),
-      (
-        angle: 1.96,
-        radius: travel * 1.28,
-        scale: 0.88,
-        color: Color.lerp(accent, const Color(0xFFA8E6FF), 0.28)!.withValues(alpha: 0.82 * fade),
-        arc: -0.12,
-      ),
-      (
-        angle: 2.9,
-        radius: travel * 1.18,
-        scale: 0.72,
-        color: Color.lerp(accent, Colors.white, 0.5)!.withValues(alpha: 0.78 * fade),
-        arc: -0.02,
-      ),
-    ];
+    final droplets =
+        <
+          ({double angle, double radius, double scale, Color color, double arc})
+        >[
+          (
+            angle: -1.82,
+            radius: travel * 1.18,
+            scale: 1.26,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.48,
+            )!.withValues(alpha: 0.96 * fade),
+            arc: 0.12,
+          ),
+          (
+            angle: -0.96,
+            radius: travel * 1.34,
+            scale: 1.06,
+            color: Color.lerp(
+              accent,
+              const Color(0xFFAEE7FF),
+              0.32,
+            )!.withValues(alpha: 0.88 * fade),
+            arc: 0.08,
+          ),
+          (
+            angle: -0.16,
+            radius: travel * 1.46,
+            scale: 1.0,
+            color: Color.lerp(
+              accent,
+              const Color(0xFFFFE2F4),
+              0.4,
+            )!.withValues(alpha: 0.84 * fade),
+            arc: 0.05,
+          ),
+          (
+            angle: 0.68,
+            radius: travel * 1.28,
+            scale: 1.18,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.3,
+            )!.withValues(alpha: 0.92 * fade),
+            arc: -0.03,
+          ),
+          (
+            angle: 1.42,
+            radius: travel * 1.18,
+            scale: 0.9,
+            color: Color.lerp(
+              accent,
+              const Color(0xFFBFEFFF),
+              0.26,
+            )!.withValues(alpha: 0.82 * fade),
+            arc: -0.08,
+          ),
+          (
+            angle: 2.28,
+            radius: travel * 1.36,
+            scale: 1.04,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.54,
+            )!.withValues(alpha: 0.88 * fade),
+            arc: -0.1,
+          ),
+          (
+            angle: -2.6,
+            radius: travel * 1.24,
+            scale: 0.86,
+            color: Color.lerp(
+              accent,
+              const Color(0xFFD8F3FF),
+              0.34,
+            )!.withValues(alpha: 0.8 * fade),
+            arc: 0.12,
+          ),
+          (
+            angle: -1.36,
+            radius: travel * 1.42,
+            scale: 0.74,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.6,
+            )!.withValues(alpha: 0.86 * fade),
+            arc: 0.14,
+          ),
+          (
+            angle: 0.12,
+            radius: travel * 1.54,
+            scale: 0.8,
+            color: Color.lerp(
+              accent,
+              const Color(0xFFFFE7F6),
+              0.45,
+            )!.withValues(alpha: 0.84 * fade),
+            arc: 0.02,
+          ),
+          (
+            angle: 1.96,
+            radius: travel * 1.28,
+            scale: 0.88,
+            color: Color.lerp(
+              accent,
+              const Color(0xFFA8E6FF),
+              0.28,
+            )!.withValues(alpha: 0.82 * fade),
+            arc: -0.12,
+          ),
+          (
+            angle: 2.9,
+            radius: travel * 1.18,
+            scale: 0.72,
+            color: Color.lerp(
+              accent,
+              Colors.white,
+              0.5,
+            )!.withValues(alpha: 0.78 * fade),
+            arc: -0.02,
+          ),
+        ];
 
     for (final droplet in droplets) {
       final offset = Offset(
@@ -1011,20 +1067,18 @@ class _DropletBurstPainter extends CustomPainter {
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
     final fill = Paint()
       ..style = PaintingStyle.fill
-      ..shader = LinearGradient(
-        colors: [
-          Colors.white.withValues(alpha: 0.78),
-          color,
-        ],
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-      ).createShader(
-        Rect.fromCenter(
-          center: center,
-          width: radius * 2.2,
-          height: radius * 2.8,
-        ),
-      );
+      ..shader =
+          LinearGradient(
+            colors: [Colors.white.withValues(alpha: 0.78), color],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ).createShader(
+            Rect.fromCenter(
+              center: center,
+              width: radius * 2.2,
+              height: radius * 2.8,
+            ),
+          );
     canvas.drawPath(transformed, glow);
     canvas.drawPath(transformed, fill);
   }
@@ -1036,10 +1090,7 @@ class _DropletBurstPainter extends CustomPainter {
 }
 
 class _BubbleEditResult {
-  const _BubbleEditResult({
-    required this.text,
-    required this.solutionText,
-  });
+  const _BubbleEditResult({required this.text, required this.solutionText});
 
   final String text;
   final String solutionText;
@@ -1047,9 +1098,7 @@ class _BubbleEditResult {
 
 class _SecondaryFieldResult {
   const _SecondaryFieldResult.save(this.solutionText) : remove = false;
-  const _SecondaryFieldResult.remove()
-    : solutionText = '',
-      remove = true;
+  const _SecondaryFieldResult.remove() : solutionText = '', remove = true;
 
   final String solutionText;
   final bool remove;
@@ -1131,9 +1180,7 @@ class _BubbleEditSheetState extends State<_BubbleEditSheet> {
                 decoration: BoxDecoration(
                   color: cs.surfaceContainerHighest.withValues(alpha: 0.42),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: cs.primary.withValues(alpha: 0.10),
-                  ),
+                  border: Border.all(color: cs.primary.withValues(alpha: 0.10)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1243,9 +1290,9 @@ class _SecondaryFieldSheetState extends State<_SecondaryFieldSheet> {
           children: [
             Text(
               widget.promptText,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 8),
             if (widget.entryText.trim().isNotEmpty)

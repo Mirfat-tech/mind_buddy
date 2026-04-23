@@ -84,8 +84,42 @@ class DeviceSessionService {
   static const _storage = FlutterSecureStorage();
   static const _legacyPrefsKey = 'mb_device_id';
   static const _deviceLimitErrorCode = _kDeviceLimitErrorCode;
+  static const _registrationReuseWindow = Duration(seconds: 5);
+
+  static String? _cachedDeviceId;
+  static Future<String>? _deviceIdFuture;
+  static Future<DeviceRegistrationResult>? _registrationFuture;
+  static String? _registrationFutureUserId;
+  static DeviceRegistrationResult? _lastRegistrationResult;
+  static String? _lastRegistrationUserId;
+  static String? _lastRegistrationDeviceId;
+  static DateTime? _lastRegistrationAt;
 
   static Future<String> getOrCreateDeviceId() async {
+    final cached = _cachedDeviceId;
+    if (cached != null && cached.isNotEmpty) {
+      return cached;
+    }
+
+    final inFlight = _deviceIdFuture;
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    final future = _loadOrCreateDeviceId();
+    _deviceIdFuture = future;
+    try {
+      final deviceId = await future;
+      _cachedDeviceId = deviceId;
+      return deviceId;
+    } finally {
+      if (identical(_deviceIdFuture, future)) {
+        _deviceIdFuture = null;
+      }
+    }
+  }
+
+  static Future<String> _loadOrCreateDeviceId() async {
     final prefs = await SharedPreferences.getInstance();
     final legacy = prefs.getString(_legacyPrefsKey);
 
@@ -161,9 +195,48 @@ class DeviceSessionService {
       );
     }
 
+    final now = DateTime.now();
+    final cachedResult = _lastRegistrationResult;
+    final cachedAt = _lastRegistrationAt;
+    if (cachedResult != null &&
+        cachedAt != null &&
+        _lastRegistrationUserId == user.id &&
+        _lastRegistrationDeviceId == deviceId &&
+        now.difference(cachedAt) <= _registrationReuseWindow) {
+      return cachedResult;
+    }
+
+    final inFlight = _registrationFuture;
+    if (inFlight != null && _registrationFutureUserId == user.id) {
+      return inFlight;
+    }
+
+    final future = _registerDeviceForUser(user.id, deviceId);
+    _registrationFuture = future;
+    _registrationFutureUserId = user.id;
+
+    try {
+      final result = await future;
+      _lastRegistrationResult = result;
+      _lastRegistrationUserId = user.id;
+      _lastRegistrationDeviceId = deviceId;
+      _lastRegistrationAt = DateTime.now();
+      return result;
+    } finally {
+      if (identical(_registrationFuture, future)) {
+        _registrationFuture = null;
+        _registrationFutureUserId = null;
+      }
+    }
+  }
+
+  static Future<DeviceRegistrationResult> _registerDeviceForUser(
+    String userId,
+    String deviceId,
+  ) async {
     final deviceInfo = await _getDeviceInfo();
     final payload = {
-      'user_id': user.id,
+      'user_id': userId,
       'device_id': deviceId,
       'device_name': deviceInfo.name,
       'platform': deviceInfo.platform,
@@ -187,8 +260,8 @@ class DeviceSessionService {
         debugPrint('DeviceRegistration rpc_response=$res');
       }
       final parsed = _parseRpcResult(deviceId, res);
-      final normalized = await _normalizeForEntitlement(user.id, parsed);
-      _debugLog(user.id, deviceId, normalized);
+      final normalized = await _normalizeForEntitlement(userId, parsed);
+      _debugLog(userId, deviceId, normalized);
       return normalized;
     } on PostgrestException catch (e) {
       final rpcMissingFromSchemaCache =
@@ -202,19 +275,19 @@ class DeviceSessionService {
         // Backward-compatible fallback when the newer RPC signature is not
         // deployed yet or PostgREST has not refreshed its schema cache.
         final fallbackResult = await _legacyUpsertFallback(payload, deviceId);
-        _debugLog(user.id, deviceId, fallbackResult);
+        _debugLog(userId, deviceId, fallbackResult);
         return fallbackResult;
       }
       final message = e.message.toLowerCase();
       if (e.code == _deviceLimitErrorCode || message.contains('device limit')) {
-        if (!await _isEnforcedDeviceLimitTier(user.id)) {
+        if (!await _isEnforcedDeviceLimitTier(userId)) {
           final result = DeviceRegistrationResult(
             allowed: true,
             deviceId: deviceId,
-            tier: await _fetchEntitlementTier(user.id),
+            tier: await _fetchEntitlementTier(userId),
             deviceLimit: null,
           );
-          _debugLog(user.id, deviceId, result);
+          _debugLog(userId, deviceId, result);
           return result;
         }
         final result = DeviceRegistrationResult(
@@ -222,7 +295,7 @@ class DeviceSessionService {
           deviceId: deviceId,
           errorCode: _deviceLimitErrorCode,
         );
-        _debugLog(user.id, deviceId, result);
+        _debugLog(userId, deviceId, result);
         return result;
       }
       if (kDebugMode) {
@@ -236,7 +309,7 @@ class DeviceSessionService {
         deviceId,
         onFailure: DeviceRegistrationResult.graceAllowed(deviceId),
       );
-      _debugLog(user.id, deviceId, result);
+      _debugLog(userId, deviceId, result);
       return result;
     } catch (e, st) {
       if (kDebugMode) {
@@ -248,7 +321,7 @@ class DeviceSessionService {
         deviceId,
         onFailure: DeviceRegistrationResult.graceAllowed(deviceId),
       );
-      _debugLog(user.id, deviceId, result);
+      _debugLog(userId, deviceId, result);
       return result;
     }
   }

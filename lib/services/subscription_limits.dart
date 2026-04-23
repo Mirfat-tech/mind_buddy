@@ -33,7 +33,7 @@ class SubscriptionInfo {
 
 class SubscriptionLimits {
   static const String trialUpgradeMessage =
-      'Pick a BrainBubble mode to continue.';
+      'Choose the mode that feels right for you.';
 
   static Future<void> showTrialUpgradeDialog(
     BuildContext context, {
@@ -48,7 +48,7 @@ class SubscriptionLimits {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('🟣 MB - Subscriptions'),
+        title: const Text(SubscriptionPlanCatalog.title),
         content: const Text(trialUpgradeMessage),
         actions: [
           TextButton(
@@ -64,7 +64,7 @@ class SubscriptionLimits {
                 GoRouter.of(context).go('/subscription');
               }
             },
-            child: const Text('View modes'),
+            child: const Text('See plans'),
           ),
         ],
       ),

@@ -7,6 +7,7 @@ import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_responsive.dart';
 import 'package:mind_buddy/features/auth/auth_layout.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_experience_session.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/services/oauth_sign_in_coordinator.dart';
 
@@ -69,6 +70,12 @@ class _SignInScreenState extends State<SignInScreen> {
             ),
           ),
         );
+      }
+
+      final completedFeatureExperience =
+          OnboardingExperienceSession.consumeFeatureExperienceCompleted();
+      if (completedFeatureExperience) {
+        await CompletionGateRepository.markOnboardingCompleted();
       }
 
       if (!mounted) return;

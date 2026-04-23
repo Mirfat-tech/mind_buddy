@@ -103,14 +103,16 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
       final now = DateTime.now();
       final startOfDay = DateTime(now.year, now.month, now.day);
       final endOfDay = startOfDay.add(const Duration(days: 1));
-      final countResponse = await Supabase.instance.client
-          .from('journals')
-          .select()
-          .eq('user_id', user.id)
-          .gte('created_at', startOfDay.toIso8601String())
-          .lt('created_at', endOfDay.toIso8601String())
-          .count();
-      final used = countResponse.count;
+      final localEntries = await ref
+          .read(journalLocalRepositoryProvider)
+          .loadOwnedJournals();
+      final used = localEntries.where((entry) {
+        final createdAt = DateTime.tryParse(
+          (entry['created_at'] ?? '').toString(),
+        )?.toLocal();
+        if (createdAt == null) return false;
+        return !createdAt.isBefore(startOfDay) && createdAt.isBefore(endOfDay);
+      }).length;
       if (info.journalLimit >= 0 && used >= info.journalLimit) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -292,29 +294,26 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
     Future<void> archiveAllVisible(List<Map<String, dynamic>> items) async {
       if (items.isEmpty) return;
       final ids = items.map((e) => e['id']).toList();
-      await Supabase.instance.client
-          .from('journals')
-          .update({'is_archived': true})
-          .inFilter('id', ids);
+      await ref
+          .read(journalLocalRepositoryProvider)
+          .setArchived(ids.map((id) => id.toString()), true);
       ref.invalidate(journalsProvider);
     }
 
     Future<void> restoreAllVisible(List<Map<String, dynamic>> items) async {
       if (items.isEmpty) return;
       final ids = items.map((e) => e['id']).toList();
-      await Supabase.instance.client
-          .from('journals')
-          .update({'is_archived': false})
-          .inFilter('id', ids);
+      await ref
+          .read(journalLocalRepositoryProvider)
+          .setArchived(ids.map((id) => id.toString()), false);
       ref.invalidate(journalsProvider);
     }
 
     Future<void> archiveSelected() async {
       if (selectedIds.isEmpty) return;
-      await Supabase.instance.client
-          .from('journals')
-          .update({'is_archived': true})
-          .inFilter('id', selectedIds.toList());
+      await ref
+          .read(journalLocalRepositoryProvider)
+          .setArchived(selectedIds, true);
       ref.read(_selectedIdsProvider.notifier).state = {};
       ref.read(_selectionModeProvider.notifier).state = false;
       ref.invalidate(journalsProvider);
@@ -322,10 +321,9 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
 
     Future<void> restoreSelected() async {
       if (selectedIds.isEmpty) return;
-      await Supabase.instance.client
-          .from('journals')
-          .update({'is_archived': false})
-          .inFilter('id', selectedIds.toList());
+      await ref
+          .read(journalLocalRepositoryProvider)
+          .setArchived(selectedIds, false);
       ref.read(_selectedIdsProvider.notifier).state = {};
       ref.read(_selectionModeProvider.notifier).state = false;
       ref.invalidate(journalsProvider);
@@ -351,10 +349,9 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
         ),
       );
       if (ok != true) return;
-      await Supabase.instance.client
-          .from('journals')
-          .delete()
-          .inFilter('id', selectedIds.toList());
+      for (final id in selectedIds) {
+        await ref.read(journalLocalRepositoryProvider).deleteJournal(id);
+      }
       ref.read(_selectedIdsProvider.notifier).state = {};
       ref.read(_selectionModeProvider.notifier).state = false;
       ref.invalidate(journalsProvider);
@@ -413,6 +410,12 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
         final archivedCount = ownedRows
             .where((r) => r['is_archived'] == true)
             .length;
+        final activeCount = ownedRows
+            .where((r) => r['is_archived'] != true)
+            .length;
+        debugPrint(
+          'JOURNAL_ARCHIVE_FILTER_LOCAL archivedCount=$archivedCount activeCount=$activeCount',
+        );
         final blockedCount = blockedRows.length;
         final sharedCount = sharedOwnedRows.length + sharedWithMeRows.length;
         final filtered = switch (filter) {
@@ -456,6 +459,11 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
                   )
                   .toList()
             : searchedBase;
+        if (foldersEnabled) {
+          debugPrint(
+            'JOURNAL_FOLDER_FILTER_LOCAL folderId=${selectedFolderId ?? '__none__'} count=${visibleEntries.length}',
+          );
+        }
         final folderCards = folders
             .map(
               (folder) => (
@@ -481,7 +489,7 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
             centerTitle: true,
             leading: MbGlowBackButton(
               onPressed: () =>
-                  context.canPop() ? context.pop() : context.go('/home'),
+                  context.canPop() ? context.pop() : context.go('/'),
             ),
             actions: [
               if (selectionMode)
@@ -659,8 +667,7 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
           title: const Text('Journal'),
           centerTitle: true,
           leading: MbGlowBackButton(
-            onPressed: () =>
-                context.canPop() ? context.pop() : context.go('/home'),
+            onPressed: () => context.canPop() ? context.pop() : context.go('/'),
           ),
         ),
         body: const Center(child: CircularProgressIndicator()),
@@ -671,8 +678,7 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
           title: const Text('Journal'),
           centerTitle: true,
           leading: MbGlowBackButton(
-            onPressed: () =>
-                context.canPop() ? context.pop() : context.go('/home'),
+            onPressed: () => context.canPop() ? context.pop() : context.go('/'),
           ),
         ),
         body: Center(child: Text('Failed to load journals: $e')),
@@ -1024,10 +1030,9 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
                         ),
                       );
                       if (ok != true) return;
-                      await Supabase.instance.client
-                          .from('journals')
-                          .delete()
-                          .eq('id', openJournalId);
+                      await ref
+                          .read(journalLocalRepositoryProvider)
+                          .deleteJournal(openJournalId);
                       ref.invalidate(journalsProvider);
                       ref.invalidate(journalFoldersProvider);
                     },
@@ -1069,17 +1074,15 @@ class _JournalsListScreenState extends ConsumerState<JournalsListScreen> {
                         ref.invalidate(journalFoldersProvider);
                       }
                       if (value == 'archive') {
-                        await Supabase.instance.client
-                            .from('journals')
-                            .update({'is_archived': true})
-                            .eq('id', openJournalId);
+                        await ref
+                            .read(journalLocalRepositoryProvider)
+                            .setArchived(<String>{openJournalId}, true);
                         ref.invalidate(journalsProvider);
                       }
                       if (value == 'unarchive') {
-                        await Supabase.instance.client
-                            .from('journals')
-                            .update({'is_archived': false})
-                            .eq('id', openJournalId);
+                        await ref
+                            .read(journalLocalRepositoryProvider)
+                            .setArchived(<String>{openJournalId}, false);
                         ref.invalidate(journalsProvider);
                       }
                       if (value == 'unshare') {
@@ -1274,7 +1277,7 @@ class _TrialBanner extends StatelessWidget {
               Expanded(
                 child: FilledButton(
                   onPressed: onUpgrade,
-                  child: const Text('View modes'),
+                  child: const Text('See plans'),
                 ),
               ),
             ],

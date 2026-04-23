@@ -8,6 +8,8 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/features/templates/templates_screen.dart';
 import 'package:mind_buddy/features/templates/template_screen.dart';
+import 'package:mind_buddy/features/templates/built_in_log_templates.dart';
+import 'package:mind_buddy/features/templates/data/template_local_first_support.dart';
 
 // screens
 import 'features/splash/bootstrap_gate_screen.dart';
@@ -15,8 +17,7 @@ import 'features/auth/sign_in_screen.dart';
 import 'features/auth/sign_up_screen.dart';
 import 'features/auth/auth_callback_screen.dart';
 import 'features/auth/reset_password_screen.dart';
-import 'package:mind_buddy/features/home/home_screen.dart';
-import 'calendar/calendar_screen.dart';
+import 'package:mind_buddy/features/home/overall_features_page.dart';
 import 'features/journal/new_journal_screen.dart';
 import 'features/journal/journals_list_screen.dart';
 import 'features/journal/journal_view_screen.dart';
@@ -33,6 +34,7 @@ import 'package:mind_buddy/features/onboarding/onboarding_features_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_expression_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_lookback_screen.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_confirm_screen.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_feature_experience_screens.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_username_screen.dart';
 //import 'package:mind_buddy/features/insights/habit_month_grid.dart';
@@ -48,16 +50,21 @@ import 'package:mind_buddy/features/templates/create_templates_screen.dart';
 import 'features/pomodoro/pomodoro_screen.dart';
 
 import 'package:mind_buddy/features/brain_fog/brain_fog_screen.dart';
+import 'package:mind_buddy/features/bubble_pool/bubble_pool_screen.dart';
 import 'package:mind_buddy/features/gratitude/gratitude_bubble_screen.dart';
 import 'package:mind_buddy/features/gratitude/gratitude_carousel_editor_screen.dart';
 import 'package:mind_buddy/features/quotes/quote_bubble_screen.dart';
+import 'package:mind_buddy/features/subscription/plus_feature_gate_screen.dart';
 import 'package:mind_buddy/features/subscription/subscription_screen.dart';
 import 'package:mind_buddy/features/settings/settings_screen.dart';
 import 'package:mind_buddy/features/settings/appearance_settings_screen.dart';
 import 'package:mind_buddy/features/settings/notifications_settings_screen.dart';
+import 'package:mind_buddy/features/settings/theme_preview_screen.dart';
+import 'package:mind_buddy/features/settings/custom_theme_builder_screen.dart';
 import 'package:mind_buddy/features/settings/usage_settings_screen.dart';
 import 'package:mind_buddy/features/settings/quiet_guide_screen.dart';
 import 'package:mind_buddy/features/settings/blocked_users_screen.dart';
+import 'package:mind_buddy/features/settings/pages/home_sphere_preview_screen.dart';
 import 'package:mind_buddy/features/test_page/test_page.dart';
 import 'package:mind_buddy/services/startup_user_data_service.dart';
 
@@ -79,6 +86,15 @@ class TemplateLogsLoaderScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final supabase = Supabase.instance.client;
+    final builtInTemplate = localFirstBuiltInTemplateForKey(templateKey);
+
+    if (builtInTemplate != null) {
+      return LogTableScreen(
+        templateId: builtInTemplate.id,
+        templateKey: builtInTemplate.templateKey,
+        dayId: dayId,
+      );
+    }
 
     return FutureBuilder<Map<String, dynamic>?>(
       future: supabase
@@ -87,14 +103,34 @@ class TemplateLogsLoaderScreen extends StatelessWidget {
           .eq('template_key', templateKey)
           .maybeSingle(),
       builder: (context, snap) {
-        if (!snap.hasData) {
+        if (snap.connectionState != ConnectionState.done) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
 
+        if (snap.hasError) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Log')),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text('Could not load template: ${snap.error}'),
+              ),
+            ),
+          );
+        }
+
         final tpl = snap.data;
         if (tpl == null) {
+          final builtIn = builtInLogTemplateByKey(templateKey);
+          if (builtIn != null) {
+            return LogTableScreen(
+              templateId: builtIn.id,
+              templateKey: builtIn.templateKey,
+              dayId: dayId,
+            );
+          }
           return Scaffold(
             appBar: AppBar(title: const Text('Log')),
             body: Center(child: Text('Template not found: $templateKey')),
@@ -111,6 +147,15 @@ class TemplateLogsLoaderScreen extends StatelessWidget {
       },
     );
   }
+}
+
+BuiltInLogTemplateDefinition? localFirstBuiltInTemplateForKey(
+  String templateKey,
+) {
+  final builtIn = builtInLogTemplateByKey(templateKey);
+  if (builtIn == null) return null;
+  if (!isLocalFirstTemplateKey(templateKey)) return null;
+  return builtIn;
 }
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -156,7 +201,7 @@ GoRouter createRouter() {
     redirect: (context, state) async {
       final incomingPath = state.uri.path.toLowerCase();
       if (incomingPath == '/toggle' || incomingPath == '/widget/toggle') {
-        return '/home';
+        return '/';
       }
       final session = supabase.auth.currentSession;
 
@@ -177,6 +222,10 @@ GoRouter createRouter() {
           state.matchedLocation == '/onboarding/expression';
       final onOnboardingLookback =
           state.matchedLocation == '/onboarding/lookback';
+      final onOnboardingGratitudeExperience =
+          state.matchedLocation == '/onboarding/experience/gratitude';
+      final onOnboardingBrainFogExperience =
+          state.matchedLocation == '/onboarding/experience/brain-fog';
       final onSetup = state.matchedLocation.startsWith('/setup/');
       final onSetupDoorway = state.matchedLocation == '/setup/doorway';
       final onShare = state.matchedLocation.startsWith('/share/');
@@ -189,13 +238,13 @@ GoRouter createRouter() {
       if (session == null) {
         if (kDebugMode) {
           debugPrint(
-            '[StartupGate] auth_user_present=false location=${state.matchedLocation} final_route=${onAuth || loggingIn || onSignup || onReset ? 'stay' : '/auth'}',
+            '[StartupGate] auth_user_present=false location=${state.matchedLocation} final_route=${onAuth || loggingIn || onSignup || onReset || onOnboarding ? 'stay' : '/onboarding/doorway'}',
           );
         }
-        if (onAuth || loggingIn || onSignup || onReset) {
+        if (onAuth || loggingIn || onSignup || onReset || onOnboarding) {
           return null;
         }
-        return '/auth';
+        return '/onboarding/doorway';
       }
 
       final completion = await CompletionGateRepository.fetchForCurrentUser(
@@ -207,14 +256,18 @@ GoRouter createRouter() {
       final subscriptionTier = (profileRow?['subscription_tier'] ?? '')
           .toString();
       final onQuestionsRoute =
-          onOnboardingDoorway || onOnboardingExpression || onOnboardingLookback;
+          onOnboardingDoorway ||
+          onOnboardingExpression ||
+          onOnboardingLookback ||
+          onOnboardingGratitudeExperience ||
+          onOnboardingBrainFogExperience;
       final chosenInitialRoute = !completion.onboardingCompleted
           ? '/onboarding/doorway'
           : !completion.subscriptionCompleted
           ? '/onboarding/plan'
           : !completion.usernameCompleted
           ? '/onboarding/username'
-          : '/home';
+          : '/';
       final routeReason = !completion.onboardingCompleted
           ? 'onboarding_incomplete'
           : !completion.subscriptionCompleted
@@ -259,9 +312,9 @@ GoRouter createRouter() {
         return '/onboarding/plan';
       }
 
-      if (chosenInitialRoute == '/home' &&
+      if (chosenInitialRoute == '/' &&
           (loggingIn || onSignup || onAuth || onOnboarding)) {
-        return '/home';
+        return '/';
       }
 
       if (onSetupDoorway || onSetup) return null;
@@ -326,6 +379,16 @@ GoRouter createRouter() {
             cupertinoPage(const OnboardingExpressionScreen(), state),
       ),
       GoRoute(
+        path: '/onboarding/experience/gratitude',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingGratitudeExperienceScreen(), state),
+      ),
+      GoRoute(
+        path: '/onboarding/experience/brain-fog',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OnboardingBrainFogExperienceScreen(), state),
+      ),
+      GoRoute(
         path: '/onboarding/lookback',
         pageBuilder: (context, state) =>
             cupertinoPage(const OnboardingLookbackScreen(), state),
@@ -360,24 +423,21 @@ GoRouter createRouter() {
 
       // HOME
       GoRoute(
-        path: '/home',
+        path: '/',
         pageBuilder: (context, state) =>
-            cupertinoPage(const HomeScreen(), state),
+            cupertinoPage(const HomeSpherePreviewScreen(), state),
+      ),
+      GoRoute(path: '/home', redirect: (_, __) => '/'),
+      GoRoute(
+        path: '/overall-features',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const OverallFeaturesPage(), state),
       ),
 
       GoRoute(
         path: '/test-page',
-        pageBuilder: (context, state) =>
-            cupertinoPage(const TestPage(), state),
+        pageBuilder: (context, state) => cupertinoPage(const TestPage(), state),
       ),
-
-      // CALENDAR
-      GoRoute(
-        path: '/calendar',
-        pageBuilder: (context, state) =>
-            cupertinoPage(const CalendarScreen(), state),
-      ),
-
       // JOURNAL
       GoRoute(
         path: '/journal/new',
@@ -470,6 +530,18 @@ GoRouter createRouter() {
             cupertinoPage(const AppearanceSettingsScreen(), state),
       ),
       GoRoute(
+        path: '/settings/theme-preview/:themeId',
+        pageBuilder: (context, state) {
+          final themeId = state.pathParameters['themeId']!;
+          return cupertinoPage(ThemePreviewScreen(themeId: themeId), state);
+        },
+      ),
+      GoRoute(
+        path: '/settings/custom-theme',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const CustomThemeBuilderScreen(), state),
+      ),
+      GoRoute(
         path: '/settings/notifications',
         pageBuilder: (context, state) =>
             cupertinoPage(const NotificationsSettingsScreen(), state),
@@ -488,6 +560,11 @@ GoRouter createRouter() {
         path: '/settings/guide',
         pageBuilder: (context, state) =>
             cupertinoPage(const QuietGuideScreen(), state),
+      ),
+      GoRoute(
+        path: '/settings/home-sphere-preview',
+        pageBuilder: (context, state) =>
+            cupertinoPage(const HomeSpherePreviewScreen(), state),
       ),
       GoRoute(
         path: '/pomodoro',
@@ -572,9 +649,22 @@ GoRouter createRouter() {
       ),
 
       GoRoute(
-        path: '/gratitude-bubble',
+        path: '/bubble-pool',
         pageBuilder: (context, state) =>
-            cupertinoPage(const GratitudeBubbleScreen(), state),
+            cupertinoPage(const BubblePoolScreen(), state),
+      ),
+
+      GoRoute(
+        path: '/gratitude-bubble',
+        pageBuilder: (context, state) => cupertinoPage(
+          const PlusFeatureGateScreen(
+            title: 'Gratitude Bubble',
+            message:
+                'Gratitude Bubble is part of Plus Support Mode. See plans to unlock it.',
+            child: GratitudeBubbleScreen(),
+          ),
+          state,
+        ),
       ),
 
       GoRoute(
@@ -594,9 +684,14 @@ GoRouter createRouter() {
             }
           }
           return cupertinoPage(
-            GratitudeCarouselEditorScreen(
-              entryId: entryId,
-              seededBubbleTexts: seededBubbleTexts,
+            PlusFeatureGateScreen(
+              title: 'Gratitude Carousel',
+              message:
+                  'Gratitude Bubble and Gratitude Carousel are part of Plus Support Mode.',
+              child: GratitudeCarouselEditorScreen(
+                entryId: entryId,
+                seededBubbleTexts: seededBubbleTexts,
+              ),
             ),
             state,
           );
@@ -605,8 +700,15 @@ GoRouter createRouter() {
 
       GoRoute(
         path: '/gratitude-carousel/history',
-        pageBuilder: (context, state) =>
-            cupertinoPage(const GratitudeCarouselHistoryScreen(), state),
+        pageBuilder: (context, state) => cupertinoPage(
+          const PlusFeatureGateScreen(
+            title: 'Gratitude Carousel',
+            message:
+                'Gratitude Bubble and Gratitude Carousel are part of Plus Support Mode.',
+            child: GratitudeCarouselHistoryScreen(),
+          ),
+          state,
+        ),
       ),
 
       GoRoute(

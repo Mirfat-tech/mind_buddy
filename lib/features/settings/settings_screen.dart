@@ -4,11 +4,11 @@ import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/core/database/database_providers.dart';
+import 'package:mind_buddy/features/auth/device_state_repository.dart';
 import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:mind_buddy/features/auth/device_session_service.dart';
-import 'package:mind_buddy/services/subscription_limits.dart';
 import 'package:mind_buddy/services/username_resolver_service.dart';
 
 class SettingsScreen extends ConsumerWidget {
@@ -28,8 +28,7 @@ class SettingsScreen extends ConsumerWidget {
         title: const Text('Settings'),
         centerTitle: true,
         leading: MbGlowBackButton(
-          onPressed: () =>
-              context.canPop() ? context.pop() : context.go('/home'),
+          onPressed: () => context.canPop() ? context.pop() : context.go('/'),
         ),
       ),
       body: ListView(
@@ -210,9 +209,16 @@ class SettingsScreen extends ConsumerWidget {
               children: [
                 _SettingsTile(
                   icon: Icons.science_outlined,
-                  title: 'Open TestPage',
-                  subtitle: 'Mood-guided bubble flow experiment',
+                  title: 'Bubble Test Page',
+                  subtitle: 'Soft prompt sphere and two bubble choices',
                   onTap: () => context.go('/test-page'),
+                ),
+                _SettingsTile(
+                  icon: Icons.auto_awesome_outlined,
+                  title: 'Home sphere preview',
+                  subtitle:
+                      'Theme-driven mock-up preview for the new home look',
+                  onTap: () => context.go('/settings/home-sphere-preview'),
                 ),
                 _SettingsTile(
                   icon: Icons.health_and_safety_outlined,
@@ -246,54 +252,48 @@ class _AccountActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<SubscriptionInfo>(
-      future: SubscriptionLimits.fetchForCurrentUser(),
-      builder: (context, snapshot) {
-        final info = snapshot.data;
-        final showSignIn = user == null || (info?.isPending ?? false);
+    final showSignIn = user == null;
 
-        if (showSignIn) {
-          return Column(
-            children: [
-              _SettingsTile(
-                icon: Icons.login,
-                title: 'Sign in',
-                subtitle: 'Continue onboarding and choose a plan',
-                onTap: () => context.push('/auth'),
-              ),
-              _SettingsTile(
-                icon: Icons.person_add_alt_1,
-                title: 'Create account',
-                subtitle: 'Start with email or social sign-in',
-                onTap: () => context.push('/auth'),
-              ),
-            ],
-          );
-        }
+    if (showSignIn) {
+      return Column(
+        children: [
+          _SettingsTile(
+            icon: Icons.login,
+            title: 'Sign in',
+            subtitle: 'Continue onboarding and choose a plan',
+            onTap: () => context.push('/auth'),
+          ),
+          _SettingsTile(
+            icon: Icons.person_add_alt_1,
+            title: 'Create account',
+            subtitle: 'Start with email or social sign-in',
+            onTap: () => context.push('/auth'),
+          ),
+        ],
+      );
+    }
 
-        return Column(
-          children: [
-            _SettingsTile(
-              icon: Icons.logout,
-              title: 'Sign out',
-              subtitle: 'Log out of this device',
-              onTap: () => _confirmSignOut(context),
-            ),
-            _SettingsTile(
-              icon: Icons.logout_outlined,
-              title: 'Sign out everywhere',
-              subtitle: 'Sign out of all devices',
-              onTap: () => _confirmGlobalSignOut(context),
-            ),
-            _SettingsTile(
-              icon: Icons.person_off_outlined,
-              title: 'Deactivate account',
-              subtitle: 'Temporarily disable until you sign in again',
-              onTap: () => _confirmDeactivateAccount(context),
-            ),
-          ],
-        );
-      },
+    return Column(
+      children: [
+        _SettingsTile(
+          icon: Icons.logout,
+          title: 'Sign out',
+          subtitle: 'Log out of this device',
+          onTap: () => _confirmSignOut(context),
+        ),
+        _SettingsTile(
+          icon: Icons.logout_outlined,
+          title: 'Sign out everywhere',
+          subtitle: 'Sign out of all devices',
+          onTap: () => _confirmGlobalSignOut(context),
+        ),
+        _SettingsTile(
+          icon: Icons.person_off_outlined,
+          title: 'Deactivate account',
+          subtitle: 'Temporarily disable until you sign in again',
+          onTap: () => _confirmDeactivateAccount(context),
+        ),
+      ],
     );
   }
 }
@@ -420,10 +420,10 @@ class _SettingsHeader extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        border: Border.all(color: scheme.outline.withValues(alpha: 0.25)),
         boxShadow: [
           BoxShadow(
-            color: scheme.primary.withOpacity(0.08),
+            color: scheme.primary.withValues(alpha: 0.08),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -432,7 +432,7 @@ class _SettingsHeader extends StatelessWidget {
       child: Row(
         children: [
           CircleAvatar(
-            backgroundColor: scheme.primary.withOpacity(0.15),
+            backgroundColor: scheme.primary.withValues(alpha: 0.15),
             child: Icon(Icons.person, color: scheme.primary),
           ),
           const SizedBox(width: 12),
@@ -473,10 +473,10 @@ class _SettingsSection extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: scheme.outline.withOpacity(0.25)),
+        border: Border.all(color: scheme.outline.withValues(alpha: 0.25)),
         boxShadow: [
           BoxShadow(
-            color: scheme.primary.withOpacity(0.08),
+            color: scheme.primary.withValues(alpha: 0.08),
             blurRadius: 18,
             offset: const Offset(0, 8),
           ),
@@ -524,40 +524,91 @@ class _SettingsTile extends StatelessWidget {
   }
 }
 
-class _DevicesList extends StatefulWidget {
+class _DevicesList extends ConsumerStatefulWidget {
   @override
-  State<_DevicesList> createState() => _DevicesListState();
+  ConsumerState<_DevicesList> createState() => _DevicesListState();
 }
 
-class _DevicesListState extends State<_DevicesList> {
+class _DevicesListState extends ConsumerState<_DevicesList> {
   late Future<_DeviceListData> _future;
 
   @override
   void initState() {
     super.initState();
-    _future = _loadDeviceListData();
+    _future = _loadDeviceListDataFromLocal();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refreshFromRemote();
+    });
   }
 
   void _refresh() {
     if (!mounted) return;
     setState(() {
-      _future = _loadDeviceListData();
+      _future = _loadDeviceListDataFromLocal();
     });
+    _refreshFromRemote();
   }
 
   Future<void> _removeDevice(String deviceId) async {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
-    await Supabase.instance.client
-        .from('user_devices')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('device_id', deviceId);
+    final repo = DeviceStateRepository(database: ref.read(appDatabaseProvider));
+    await repo.removeDeviceAndRefresh(deviceId: deviceId);
     if (!mounted) return;
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Device removed.')));
-    _refresh();
+    setState(() {
+      _future = _loadDeviceListDataFromLocal();
+    });
+  }
+
+  Future<_DeviceListData> _loadDeviceListDataFromLocal() async {
+    final repo = DeviceStateRepository(database: ref.read(appDatabaseProvider));
+    final local = await repo.loadLocal();
+    return _DeviceListData(
+      localDeviceId: local.localDeviceId,
+      sessions: local.sessions
+          .map(
+            (session) => _DeviceSession(
+              deviceId: session.deviceId,
+              deviceName: session.deviceName,
+              platform: session.platform,
+              lastSeen: session.lastSeen,
+              sortKey: session.sortKey,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  Future<void> _refreshFromRemote() async {
+    final repo = DeviceStateRepository(database: ref.read(appDatabaseProvider));
+    try {
+      final refreshed = await repo.refreshRemoteAuthoritative();
+      if (!mounted) return;
+      setState(() {
+        _future = Future<_DeviceListData>.value(
+          _DeviceListData(
+            localDeviceId: refreshed.localDeviceId,
+            sessions: refreshed.sessions
+                .map(
+                  (session) => _DeviceSession(
+                    deviceId: session.deviceId,
+                    deviceName: session.deviceName,
+                    platform: session.platform,
+                    lastSeen: session.lastSeen,
+                    sortKey: session.sortKey,
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        );
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _future = _loadDeviceListDataFromLocal();
+      });
+    }
   }
 
   @override
@@ -616,99 +667,6 @@ class _DevicesListState extends State<_DevicesList> {
       },
     );
   }
-}
-
-Future<_DeviceListData> _loadDeviceListData() async {
-  final user = Supabase.instance.client.auth.currentUser;
-  if (user == null) {
-    return const _DeviceListData(localDeviceId: '', sessions: []);
-  }
-
-  final localSnapshot = await DeviceSessionService.currentDeviceSnapshot();
-  final localDeviceId = localSnapshot.deviceId;
-  final registration = await DeviceSessionService.registerDevice();
-  List rows;
-  try {
-    rows = await Supabase.instance.client
-        .from('user_devices')
-        .select('device_id, device_name, platform, last_seen')
-        .eq('user_id', user.id)
-        .order('last_seen', ascending: false);
-  } on PostgrestException {
-    rows = await Supabase.instance.client
-        .from('user_sessions')
-        .select('device_id, device_name, platform, last_seen_at')
-        .eq('user_id', user.id)
-        .order('last_seen_at', ascending: false);
-  }
-
-  final sessions = rows
-      .map(
-        (row) => _DeviceSession(
-          deviceId: (row['device_id'] ?? '').toString(),
-          deviceName: (row['device_name'] ?? 'Unknown').toString(),
-          platform: (row['platform'] ?? 'Unknown').toString(),
-          lastSeen: _formatLastSeen(row['last_seen'] ?? row['last_seen_at']),
-          sortKey: (row['last_seen'] ?? row['last_seen_at'] ?? '').toString(),
-        ),
-      )
-      .where((session) => session.deviceId.isNotEmpty)
-      .fold<Map<String, _DeviceSession>>({}, (acc, session) {
-        acc.putIfAbsent(session.deviceId, () => session);
-        return acc;
-      })
-      .values
-      .toList();
-
-  if (registration.devices != null && registration.devices!.isNotEmpty) {
-    for (final row in registration.devices!) {
-      final session = _DeviceSession(
-        deviceId: (row['device_id'] ?? '').toString(),
-        deviceName: (row['device_name'] ?? 'Unknown').toString(),
-        platform: (row['platform'] ?? 'Unknown').toString(),
-        lastSeen: _formatLastSeen(row['last_seen']),
-        sortKey: (row['last_seen'] ?? '').toString(),
-      );
-      if (session.deviceId.isEmpty) continue;
-      final exists = sessions.any((item) => item.deviceId == session.deviceId);
-      if (!exists) {
-        sessions.add(session);
-      }
-    }
-  }
-
-  final hasCurrentDevice = sessions.any(
-    (session) => session.deviceId == localSnapshot.deviceId,
-  );
-  if (!hasCurrentDevice &&
-      (registration.allowed || registration.entitlementCheckFailed)) {
-    sessions.insert(
-      0,
-      _DeviceSession(
-        deviceId: localSnapshot.deviceId,
-        deviceName: localSnapshot.deviceName,
-        platform: localSnapshot.platform,
-        lastSeen: _formatLastSeen(localSnapshot.lastSeen.toIso8601String()),
-        sortKey: localSnapshot.lastSeen.toIso8601String(),
-      ),
-    );
-  }
-
-  sessions.sort((a, b) => b.sortKey.compareTo(a.sortKey));
-
-  return _DeviceListData(localDeviceId: localDeviceId, sessions: sessions);
-}
-
-String _formatLastSeen(dynamic value) {
-  if (value == null) return 'Unknown';
-  final parsed = DateTime.tryParse(value.toString());
-  if (parsed == null) return 'Unknown';
-  final local = parsed.toLocal();
-  final date =
-      '${local.year.toString().padLeft(4, '0')}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
-  final time =
-      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
-  return '$date $time';
 }
 
 class _DeviceListData {
