@@ -44,6 +44,7 @@ dependencies:
   # 🔐 Secure local storage
   flutter_secure_storage: ^9.2.2
   cryptography: ^2.7.0
+  sign_in_with_apple: ^6.1.4
 
   # 💾 Simple key-value storage
   shared_preferences: ^2.3.3

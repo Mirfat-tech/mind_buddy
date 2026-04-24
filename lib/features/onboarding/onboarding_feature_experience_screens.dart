@@ -8,6 +8,7 @@ import 'package:mind_buddy/features/gratitude/gratitude_bubble_screen.dart';
 import 'package:mind_buddy/features/gratitude/gratitude_carousel_editor_screen.dart';
 import 'package:mind_buddy/features/gratitude/gratitude_carousel_storage.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_experience_session.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 
 class OnboardingGratitudeExperienceScreen extends StatefulWidget {
   const OnboardingGratitudeExperienceScreen({super.key});
@@ -36,6 +37,7 @@ class _OnboardingGratitudeExperienceScreenState
     if (_isHandingOff) return;
     _isHandingOff = true;
     OnboardingExperienceSession.markFeatureExperienceCompleted();
+    await OnboardingController.setSeenLocally(true);
     if (!mounted) return;
     context.go('/auth');
   }
@@ -116,6 +118,7 @@ class _OnboardingBrainFogExperienceScreenState
     if (_isHandingOff) return;
     _isHandingOff = true;
     OnboardingExperienceSession.markFeatureExperienceCompleted();
+    await OnboardingController.setSeenLocally(true);
     if (!mounted) return;
     context.go('/auth');
   }

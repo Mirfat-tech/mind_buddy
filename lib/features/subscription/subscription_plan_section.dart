@@ -161,6 +161,7 @@ class SubscriptionPlanCard extends StatelessWidget {
     this.ctaLabel,
     this.onTap,
     this.ctaEnabled = true,
+    this.headerFooter,
   });
 
   final PlanBenefits plan;
@@ -168,6 +169,7 @@ class SubscriptionPlanCard extends StatelessWidget {
   final String? ctaLabel;
   final VoidCallback? onTap;
   final bool ctaEnabled;
+  final Widget? headerFooter;
 
   @override
   Widget build(BuildContext context) {
@@ -242,6 +244,10 @@ class SubscriptionPlanCard extends StatelessWidget {
                           context,
                         ).textTheme.bodyMedium?.copyWith(height: 1.45),
                       ),
+                      if (headerFooter != null) ...[
+                        const SizedBox(height: 12),
+                        headerFooter!,
+                      ],
                     ],
                   ),
                 ),

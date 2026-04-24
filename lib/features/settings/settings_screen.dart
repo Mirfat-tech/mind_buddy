@@ -5,9 +5,11 @@ import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/core/database/database_providers.dart';
+import 'package:mind_buddy/features/auth/device_session_service.dart';
 import 'package:mind_buddy/features/auth/device_state_repository.dart';
 import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
+import 'package:mind_buddy/services/startup_user_data_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mind_buddy/services/username_resolver_service.dart';
 
@@ -318,9 +320,21 @@ Future<void> _confirmSignOut(BuildContext context) async {
   );
 
   if (confirmed != true) return;
+  if (!context.mounted) return;
 
   try {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final container = ProviderScope.containerOf(context, listen: false);
+    await DeviceSessionService.markCurrentDeviceInactive();
     await Supabase.instance.client.auth.signOut();
+    DeviceSessionService.clearRegistrationCache();
+    if (userId != null) {
+      final repo = DeviceStateRepository(
+        database: container.read(appDatabaseProvider),
+      );
+      await repo.clearLocalForUser(userId);
+      StartupUserDataService.instance.invalidateUser(userId);
+    }
     if (!context.mounted) return;
     context.go('/signin');
   } catch (e) {
@@ -351,9 +365,29 @@ Future<void> _confirmGlobalSignOut(BuildContext context) async {
   );
 
   if (confirmed != true) return;
+  if (!context.mounted) return;
 
   try {
+    final user = Supabase.instance.client.auth.currentUser;
+    final userId = user?.id;
+    final container = ProviderScope.containerOf(context, listen: false);
+    final repo = DeviceStateRepository(
+      database: container.read(appDatabaseProvider),
+    );
+    final signOutResult = await DeviceSessionService.signOutEverywhere();
     await Supabase.instance.client.auth.signOut(scope: SignOutScope.global);
+    debugPrint('SIGN_OUT_EVERYWHERE_AUTH_GLOBAL_OK');
+    debugPrint(
+      'SIGN_OUT_EVERYWHERE_SESSIONS_REVOKED count=${signOutResult.revokedSessionCount}',
+    );
+    debugPrint(
+      'SIGN_OUT_EVERYWHERE_DEVICES_MARKED_INACTIVE count=${signOutResult.markedInactiveDeviceCount}',
+    );
+    DeviceSessionService.clearRegistrationCache();
+    if (userId != null) {
+      await repo.clearLocalForUser(userId);
+      StartupUserDataService.instance.invalidateUser(userId);
+    }
     if (!context.mounted) return;
     context.go('/signin');
   } catch (e) {

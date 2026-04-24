@@ -11,6 +11,7 @@ import 'package:mind_buddy/common/mb_glow_icon_button.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/features/pomodoro/study_buddy_controller.dart';
 import 'package:mind_buddy/features/pomodoro/study_buddy_panel.dart';
+import 'package:mind_buddy/features/bubble_pool/bubble_pool_launch_config.dart';
 import 'package:mind_buddy/features/settings/settings_provider.dart';
 import 'package:mind_buddy/paper/paper_styles.dart';
 import 'package:mind_buddy/services/notification_service.dart';
@@ -1246,7 +1247,10 @@ class _PomodoroStandaloneState extends ConsumerState<PomodoroStandalone>
         Material(
           color: Colors.transparent,
           child: InkWell(
-            onTap: () => context.go('/bubble-pool'),
+            onTap: () => openBubblePoolLaunchAware(
+              context,
+              featureKey: 'pomodoro_bubble',
+            ),
             borderRadius: BorderRadius.circular(20),
             child: Container(
               width: double.infinity,

@@ -9,6 +9,8 @@ import 'package:mind_buddy/services/subscription_purchase_service.dart';
 
 enum BillingPeriod { monthly, yearly }
 
+enum SubscriptionTierTab { freeMode, plusSupportMode }
+
 class SubscriptionScreen extends StatefulWidget {
   const SubscriptionScreen({super.key});
 
@@ -20,6 +22,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   final SubscriptionPurchaseController _controller =
       SubscriptionPurchaseController();
   BillingPeriod _billingPeriod = BillingPeriod.monthly;
+  SubscriptionTierTab _selectedTierTab = SubscriptionTierTab.plusSupportMode;
   String? _friendlyStoreError;
 
   static const Map<MbPlanTier, double> _fallbackMonthlyPrice = {
@@ -139,6 +142,13 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   Widget build(BuildContext context) {
     final ent = _controller.entitlement;
     final currentPlan = SubscriptionPlanCatalog.fromRaw(ent?.tier ?? 'free');
+    final visiblePlan = _selectedTierTab == SubscriptionTierTab.freeMode
+        ? SubscriptionPlanCatalog.allPlans.firstWhere(
+            (plan) => plan.tier == MbPlanTier.free,
+          )
+        : SubscriptionPlanCatalog.allPlans.firstWhere(
+            (plan) => plan.tier == MbPlanTier.plusSupport,
+          );
 
     return MbScaffold(
       applyBackground: true,
@@ -172,10 +182,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                       ).textTheme.bodyMedium?.copyWith(height: 1.45),
                     ),
                     const SizedBox(height: 18),
-                    BillingToggle(
-                      value: _billingPeriod,
+                    TierToggle(
+                      value: _selectedTierTab,
                       onChanged: (next) =>
-                          setState(() => _billingPeriod = next),
+                          setState(() => _selectedTierTab = next),
                     ),
                     const SizedBox(height: 12),
                     CurrentPlanCard(
@@ -195,65 +205,25 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                       ),
                     ],
                     const SizedBox(height: 12),
-                    ...SubscriptionPlanCatalog.allPlans.map((plan) {
-                      final selectedPrice = _displayPrice(plan, _billingPeriod);
-                      final yearlySavings = _yearlySavings(plan);
-                      final offer = _offerForPlan(plan, _billingPeriod);
-                      final canPurchase =
-                          offer != null &&
-                          _controller.productForId(offer.productId) != null;
-
-                      final cta = _billingPeriod == BillingPeriod.monthly
-                          ? 'Upgrade monthly'
-                          : 'Upgrade yearly (2 months free)';
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: SubscriptionPlanCard(
-                          plan: PlanBenefits(
-                            tier: plan.tier,
-                            name: plan.name,
-                            price: plan.tier == MbPlanTier.free
-                                ? plan.price
-                                : selectedPrice,
-                            normalizedAliases: plan.normalizedAliases,
-                            insights: plan.insights,
-                            devices: plan.devices,
-                            canCreateCustomTemplates:
-                                plan.canCreateCustomTemplates,
-                            templatesPreviewMode: plan.templatesPreviewMode,
-                            coreTemplatesSaveForever:
-                                plan.coreTemplatesSaveForever,
-                            canJournal: plan.canJournal,
-                            canShareEntries: plan.canShareEntries,
-                            sharesPerDay: plan.sharesPerDay,
-                            canReceiveUnlimitedShares:
-                                plan.canReceiveUnlimitedShares,
-                            toolsHeading: plan.toolsHeading,
-                            tools: plan.tools,
-                            plusExtras: plan.plusExtras,
-                            summary: yearlySubtitle(
-                              base: plan.summary,
-                              billingPeriod: _billingPeriod,
-                              yearlySavings: yearlySavings,
-                              tier: plan.tier,
-                            ),
-                            caption: _captionForPlan(
-                              plan,
-                              billingPeriod: _billingPeriod,
-                            ),
-                          ),
-                          isCurrentTier: currentPlan.tier == plan.tier,
-                          ctaLabel: plan.tier == MbPlanTier.free ? null : cta,
-                          ctaEnabled: !_controller.busy && canPurchase,
-                          onTap: (plan.tier == MbPlanTier.free || !canPurchase)
-                              ? null
-                              : () => _controller.purchaseProduct(
-                                  offer.productId,
-                                ),
-                        ),
-                      );
-                    }),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _VisiblePlanCard(
+                        plan: visiblePlan,
+                        currentPlan: currentPlan,
+                        billingPeriod: _billingPeriod,
+                        onBillingChanged: (next) =>
+                            setState(() => _billingPeriod = next),
+                        displayPrice: _displayPrice,
+                        yearlySavings: _yearlySavings,
+                        captionForPlan: _captionForPlan,
+                        yearlySubtitle: yearlySubtitle,
+                        offerForPlan: _offerForPlan,
+                        productForId: _controller.productForId,
+                        controllerBusy: _controller.busy,
+                        purchaseProduct: _controller.purchaseProduct,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                   ],
                 ),
               ),
@@ -340,8 +310,46 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   }
 }
 
-class BillingToggle extends StatelessWidget {
-  const BillingToggle({
+class TierToggle extends StatelessWidget {
+  const TierToggle({super.key, required this.value, required this.onChanged});
+
+  final SubscriptionTierTab value;
+  final ValueChanged<SubscriptionTierTab> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        color: scheme.surface.withValues(alpha: 0.8),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          Expanded(
+            child: _SegmentOption(
+              label: 'Free Mode',
+              selected: value == SubscriptionTierTab.freeMode,
+              onTap: () => onChanged(SubscriptionTierTab.freeMode),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _SegmentOption(
+              label: 'Plus Support Mode',
+              selected: value == SubscriptionTierTab.plusSupportMode,
+              onTap: () => onChanged(SubscriptionTierTab.plusSupportMode),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class PlusBillingToggle extends StatelessWidget {
+  const PlusBillingToggle({
     super.key,
     required this.value,
     required this.onChanged,
@@ -352,16 +360,17 @@ class BillingToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
-        color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.72),
+        color: scheme.surface.withValues(alpha: 0.72),
       ),
       padding: const EdgeInsets.all(4),
       child: Row(
         children: [
           Expanded(
-            child: _BillingOption(
+            child: _SegmentOption(
               label: 'Monthly',
               selected: value == BillingPeriod.monthly,
               onTap: () => onChanged(BillingPeriod.monthly),
@@ -369,8 +378,8 @@ class BillingToggle extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Expanded(
-            child: _BillingOption(
-              label: 'Yearly • 2 months free',
+            child: _SegmentOption(
+              label: 'Yearly',
               selected: value == BillingPeriod.yearly,
               onTap: () => onChanged(BillingPeriod.yearly),
             ),
@@ -381,8 +390,8 @@ class BillingToggle extends StatelessWidget {
   }
 }
 
-class _BillingOption extends StatelessWidget {
-  const _BillingOption({
+class _SegmentOption extends StatelessWidget {
+  const _SegmentOption({
     required this.label,
     required this.selected,
     required this.onTap,
@@ -402,15 +411,125 @@ class _BillingOption extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          color: selected ? scheme.primary.withValues(alpha: 0.16) : null,
+          color: selected
+              ? scheme.primary.withValues(alpha: 0.18)
+              : scheme.surface.withValues(alpha: 0.5),
         ),
         child: Text(
           label,
           textAlign: TextAlign.center,
-          maxLines: 2,
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+            color: selected ? scheme.primary : scheme.onSurface,
+            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+          ),
+          maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
       ),
+    );
+  }
+}
+
+class _VisiblePlanCard extends StatelessWidget {
+  const _VisiblePlanCard({
+    required this.plan,
+    required this.currentPlan,
+    required this.billingPeriod,
+    required this.onBillingChanged,
+    required this.displayPrice,
+    required this.yearlySavings,
+    required this.captionForPlan,
+    required this.yearlySubtitle,
+    required this.offerForPlan,
+    required this.productForId,
+    required this.controllerBusy,
+    required this.purchaseProduct,
+  });
+
+  final PlanBenefits plan;
+  final PlanBenefits currentPlan;
+  final BillingPeriod billingPeriod;
+  final ValueChanged<BillingPeriod> onBillingChanged;
+  final String Function(PlanBenefits, BillingPeriod) displayPrice;
+  final double Function(PlanBenefits) yearlySavings;
+  final String Function(PlanBenefits, {required BillingPeriod billingPeriod})
+  captionForPlan;
+  final String Function({
+    required String base,
+    required BillingPeriod billingPeriod,
+    required double yearlySavings,
+    required MbPlanTier tier,
+  })
+  yearlySubtitle;
+  final SubscriptionOffer? Function(PlanBenefits, BillingPeriod) offerForPlan;
+  final dynamic Function(String) productForId;
+  final bool controllerBusy;
+  final Future<void> Function(String) purchaseProduct;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedPrice = displayPrice(plan, billingPeriod);
+    final savings = yearlySavings(plan);
+    final offer = offerForPlan(plan, billingPeriod);
+    final canPurchase = offer != null && productForId(offer.productId) != null;
+    final cta = billingPeriod == BillingPeriod.monthly
+        ? 'Upgrade monthly'
+        : 'Upgrade yearly (2 months free)';
+
+    final normalizedPlan = PlanBenefits(
+      tier: plan.tier,
+      name: plan.name,
+      price: plan.tier == MbPlanTier.free ? plan.price : selectedPrice,
+      normalizedAliases: plan.normalizedAliases,
+      insights: plan.insights,
+      devices: plan.devices,
+      canCreateCustomTemplates: plan.canCreateCustomTemplates,
+      templatesPreviewMode: plan.templatesPreviewMode,
+      coreTemplatesSaveForever: plan.coreTemplatesSaveForever,
+      canJournal: plan.canJournal,
+      canShareEntries: plan.canShareEntries,
+      sharesPerDay: plan.sharesPerDay,
+      canReceiveUnlimitedShares: plan.canReceiveUnlimitedShares,
+      toolsHeading: plan.toolsHeading,
+      tools: plan.tools,
+      plusExtras: plan.plusExtras,
+      summary: yearlySubtitle(
+        base: plan.summary,
+        billingPeriod: billingPeriod,
+        yearlySavings: savings,
+        tier: plan.tier,
+      ),
+      caption: captionForPlan(plan, billingPeriod: billingPeriod),
+    );
+
+    if (plan.tier == MbPlanTier.free) {
+      return SubscriptionPlanCard(
+        plan: normalizedPlan,
+        isCurrentTier: currentPlan.tier == plan.tier,
+        ctaLabel: null,
+        ctaEnabled: false,
+        onTap: null,
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SubscriptionPlanCard(
+          plan: normalizedPlan,
+          isCurrentTier: currentPlan.tier == plan.tier,
+          ctaLabel: cta,
+          ctaEnabled: !controllerBusy && canPurchase,
+          onTap: !canPurchase ? null : () => purchaseProduct(offer.productId),
+          headerFooter: Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: PlusBillingToggle(
+              value: billingPeriod,
+              onChanged: onBillingChanged,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

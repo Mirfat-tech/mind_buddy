@@ -2,10 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mind_buddy/common/mb_scaffold.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
+import 'package:mind_buddy/features/onboarding/onboarding_state.dart';
 import 'package:mind_buddy/features/onboarding/onboarding_widgets.dart';
 
-class OnboardingAuthScreen extends StatelessWidget {
+class OnboardingAuthScreen extends StatefulWidget {
   const OnboardingAuthScreen({super.key});
+
+  @override
+  State<OnboardingAuthScreen> createState() => _OnboardingAuthScreenState();
+}
+
+class _OnboardingAuthScreenState extends State<OnboardingAuthScreen> {
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.microtask(() => OnboardingController.setSeenLocally(true));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +48,7 @@ class OnboardingAuthScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Start your MyBrainBubble journey',
+                  'Start your My Brain Bubble journey today',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     color: Theme.of(context).colorScheme.primary,
                     shadows: [

@@ -50,6 +50,7 @@ import 'package:mind_buddy/features/templates/create_templates_screen.dart';
 import 'features/pomodoro/pomodoro_screen.dart';
 
 import 'package:mind_buddy/features/brain_fog/brain_fog_screen.dart';
+import 'package:mind_buddy/features/bubble_pool/bubble_pool_launch_config.dart';
 import 'package:mind_buddy/features/bubble_pool/bubble_pool_screen.dart';
 import 'package:mind_buddy/features/gratitude/gratitude_bubble_screen.dart';
 import 'package:mind_buddy/features/gratitude/gratitude_carousel_editor_screen.dart';
@@ -236,15 +237,24 @@ GoRouter createRouter() {
       }
 
       if (session == null) {
+        final seenLocally = await OnboardingController.hasSeenLocally();
         if (kDebugMode) {
           debugPrint(
-            '[StartupGate] auth_user_present=false location=${state.matchedLocation} final_route=${onAuth || loggingIn || onSignup || onReset || onOnboarding ? 'stay' : '/onboarding/doorway'}',
+            '[StartupGate] auth_user_present=false location=${state.matchedLocation} onboarding_seen_locally=$seenLocally',
           );
         }
-        if (onAuth || loggingIn || onSignup || onReset || onOnboarding) {
+        if (!seenLocally) {
+          debugPrint('STARTUP_ROUTE_SIGNED_OUT_ONBOARDING');
+          if (onOnboarding || onAuth || loggingIn || onSignup || onReset) {
+            return null;
+          }
+          return '/onboarding/doorway';
+        }
+        debugPrint('STARTUP_ROUTE_SIGNED_OUT_AUTH_ALREADY_SEEN');
+        if (onAuth || loggingIn || onSignup || onReset) {
           return null;
         }
-        return '/onboarding/doorway';
+        return '/auth';
       }
 
       final completion = await CompletionGateRepository.fetchForCurrentUser(
@@ -261,22 +271,19 @@ GoRouter createRouter() {
           onOnboardingLookback ||
           onOnboardingGratitudeExperience ||
           onOnboardingBrainFogExperience;
-      final chosenInitialRoute = !completion.onboardingCompleted
-          ? '/onboarding/doorway'
-          : !completion.subscriptionCompleted
+      final chosenInitialRoute = !completion.subscriptionCompleted
           ? '/onboarding/plan'
           : !completion.usernameCompleted
           ? '/onboarding/username'
           : '/';
-      final routeReason = !completion.onboardingCompleted
-          ? 'onboarding_incomplete'
-          : !completion.subscriptionCompleted
+      final routeReason = !completion.subscriptionCompleted
           ? 'subscription_incomplete'
           : !completion.usernameCompleted
           ? 'username_incomplete'
           : 'all_setup_complete';
 
       if (kDebugMode) {
+        debugPrint('STARTUP_ROUTE_SIGNED_IN_SKIP_ONBOARDING');
         debugPrint(
           '[StartupGate] auth_user_present=true userId=${session.user.id} location=${state.matchedLocation} profile_loaded=${profileRow != null} onboarding_completed=${completion.onboardingCompleted} username_completed=${completion.usernameCompleted} subscription_completed=${completion.subscriptionCompleted} subscription_tier=$subscriptionTier final_route=$chosenInitialRoute reason=$routeReason',
         );
@@ -286,14 +293,6 @@ GoRouter createRouter() {
         debugPrint(
           '[CompletionGate] userId=${session.user.id} onboarding_completed=${completion.onboardingCompleted} username_completed=${completion.usernameCompleted} subscription_completed=${completion.subscriptionCompleted} route=$chosenInitialRoute reason=$routeReason',
         );
-      }
-
-      if (chosenInitialRoute == '/onboarding/doorway' &&
-          !onQuestionsRoute &&
-          !onAuth &&
-          !loggingIn &&
-          !onSignup) {
-        return '/onboarding/doorway';
       }
 
       if (chosenInitialRoute == '/onboarding/username' &&
@@ -315,6 +314,10 @@ GoRouter createRouter() {
       if (chosenInitialRoute == '/' &&
           (loggingIn || onSignup || onAuth || onOnboarding)) {
         return '/';
+      }
+
+      if (onQuestionsRoute && !onAuth && !loggingIn && !onSignup) {
+        return chosenInitialRoute;
       }
 
       if (onSetupDoorway || onSetup) return null;
@@ -652,6 +655,14 @@ GoRouter createRouter() {
         path: '/bubble-pool',
         pageBuilder: (context, state) =>
             cupertinoPage(const BubblePoolScreen(), state),
+      ),
+      GoRoute(
+        path: '/coming-soon/:featureKey',
+        pageBuilder: (context, state) {
+          final featureKey =
+              state.pathParameters['featureKey'] ?? 'bubble_pool';
+          return cupertinoPage(buildBubbleComingSoonPage(featureKey), state);
+        },
       ),
 
       GoRoute(

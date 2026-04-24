@@ -3,12 +3,15 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:video_player/video_player.dart';
 
 import 'package:mind_buddy/features/journal/journal_sticker_catalog.dart';
+import 'package:mind_buddy/features/settings/settings_provider.dart';
+import 'package:mind_buddy/paper/paper_styles.dart';
 
 import 'gratitude_carousel_models.dart';
 import 'gratitude_carousel_storage.dart';
@@ -388,276 +391,343 @@ class _GratitudeCarouselEditorScreenState
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final entry = _entry;
-    return Scaffold(
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      appBar: AppBar(
-        title: const Text('Gratitude Carousel'),
-        actions: [
-          IconButton(
-            tooltip: 'View memories',
-            onPressed:
-                widget.onOpenHistory ??
-                () => context.push('/gratitude-carousel/history'),
-            icon: const Icon(Icons.photo_library_outlined),
+    return Consumer(
+      builder: (context, ref, _) {
+        final themeId = ref.watch(settingsControllerProvider).settings.themeId;
+        final style = styleById(themeId);
+        final scheme = Theme.of(context).colorScheme;
+        final isDark =
+            ThemeData.estimateBrightnessForColor(style.paper) ==
+            Brightness.dark;
+        final accent = style.accent;
+        final chipFill = Color.alphaBlend(
+          accent.withValues(alpha: isDark ? 0.18 : 0.10),
+          style.boxFill.withValues(alpha: 0.96),
+        );
+        final mediaWellColor = Color.alphaBlend(
+          style.border.withValues(alpha: isDark ? 0.22 : 0.16),
+          style.paper,
+        );
+        return Scaffold(
+          backgroundColor: style.paper,
+          appBar: AppBar(
+            title: const Text('Gratitude Carousel'),
+            foregroundColor: style.text,
+            iconTheme: IconThemeData(color: accent),
+            actionsIconTheme: IconThemeData(color: accent),
+            actions: [
+              IconButton(
+                tooltip: 'View memories',
+                onPressed:
+                    widget.onOpenHistory ??
+                    () => context.push('/gratitude-carousel/history'),
+                icon: const Icon(Icons.photo_library_outlined),
+              ),
+              if (!_loading && !_isEditMode && widget.entryId != null)
+                TextButton(
+                  style: TextButton.styleFrom(foregroundColor: accent),
+                  onPressed: _enterEditMode,
+                  child: const Text('Edit'),
+                ),
+              if (_isEditMode)
+                IconButton(
+                  tooltip: 'Save',
+                  onPressed: _loading ? null : () => _save(),
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check_rounded),
+                ),
+              if (entry != null && _isEditMode)
+                IconButton(
+                  tooltip: 'Delete memory',
+                  onPressed: _deleteEntry,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+            ],
           ),
-          if (!_loading && !_isEditMode && widget.entryId != null)
-            TextButton(onPressed: _enterEditMode, child: const Text('Edit')),
-          if (_isEditMode)
-            IconButton(
-              tooltip: 'Save',
-              onPressed: _loading ? null : () => _save(),
-              icon: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.check_rounded),
-            ),
-          if (entry != null && _isEditMode)
-            IconButton(
-              tooltip: 'Delete memory',
-              onPressed: _deleteEntry,
-              icon: const Icon(Icons.delete_outline),
-            ),
-        ],
-      ),
-      body: _loading || entry == null
-          ? const Center(child: CircularProgressIndicator())
-          : SafeArea(
-              child: Column(
-                children: [
-                  Expanded(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (_isEditMode) ...[
-                            Text(
-                              'A memory scrapbook for the moments you want to keep close',
-                              style: Theme.of(context).textTheme.titleLarge
-                                  ?.copyWith(fontWeight: FontWeight.w800),
-                            ),
-                            const SizedBox(height: 14),
-                          ],
-                          if (_isEditMode)
-                            TextField(
-                              controller: _titleController,
-                              onChanged: (_) => _queueDraftSave(),
-                              decoration: const InputDecoration(
-                                labelText: 'Title',
-                                hintText: 'What would you call this memory?',
-                              ),
-                            )
-                          else
-                            Text(
-                              _titleController.text.trim().isEmpty
-                                  ? 'A soft grateful memory'
-                                  : _titleController.text.trim(),
-                              style: Theme.of(context).textTheme.headlineSmall
-                                  ?.copyWith(fontWeight: FontWeight.w900),
-                            ),
-                          const SizedBox(height: 12),
-                          if (_isEditMode)
-                            InkWell(
-                              borderRadius: BorderRadius.circular(18),
-                              onTap: _pickDate,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.calendar_today_outlined,
-                                    size: 18,
-                                    color: scheme.primary,
-                                  ),
-                                  const SizedBox(width: 8),
+          body: ColoredBox(
+            color: style.paper,
+            child: _loading || entry == null
+                ? const Center(child: CircularProgressIndicator())
+                : SafeArea(
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                if (_isEditMode) ...[
                                   Text(
-                                    _dateLabel(entry.date),
+                                    'A memory scrapbook for the moments you want to keep close',
                                     style: Theme.of(context)
                                         .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(fontWeight: FontWeight.w700),
+                                        .titleLarge
+                                        ?.copyWith(fontWeight: FontWeight.w800),
                                   ),
+                                  const SizedBox(height: 14),
                                 ],
-                              ),
-                            )
-                          else
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.calendar_today_outlined,
-                                  size: 18,
-                                  color: scheme.primary,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  _dateLabel(entry.date),
-                                  style: Theme.of(context).textTheme.bodyMedium
-                                      ?.copyWith(fontWeight: FontWeight.w700),
-                                ),
-                              ],
-                            ),
-                          if (_isEditMode &&
-                              entry.seededBubbleTexts.isNotEmpty) ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              'Started from these gratitude bubbles',
-                              style: Theme.of(context).textTheme.labelLarge
-                                  ?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                            ),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: entry.seededBubbleTexts
-                                  .map(
-                                    (text) => Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: scheme.surface.withValues(
-                                          alpha: 0.82,
-                                        ),
-                                        borderRadius: BorderRadius.circular(
-                                          999,
-                                        ),
-                                      ),
-                                      child: Text(text),
+                                if (_isEditMode)
+                                  TextField(
+                                    controller: _titleController,
+                                    onChanged: (_) => _queueDraftSave(),
+                                    decoration: const InputDecoration(
+                                      labelText: 'Title',
+                                      hintText:
+                                          'What would you call this memory?',
                                     ),
                                   )
-                                  .toList(),
-                            ),
-                          ],
-                          const SizedBox(height: 20),
-                          SizedBox(
-                            height: 560,
-                            child: Stack(
-                              children: [
-                                Positioned(
-                                  left: 22,
-                                  right: 22,
-                                  top: 10,
-                                  child: _FairyLightsDivider(scheme: scheme),
-                                ),
-                                Positioned.fill(
-                                  top: 32,
-                                  child: PageView.builder(
-                                    controller: _pageController,
-                                    itemCount: entry.items.length,
-                                    onPageChanged: (index) =>
-                                        setState(() => _pageIndex = index),
-                                    itemBuilder: (context, index) {
-                                      final item = entry.items[index];
-                                      return Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                          vertical: 8,
+                                else
+                                  Text(
+                                    _titleController.text.trim().isEmpty
+                                        ? 'A soft grateful memory'
+                                        : _titleController.text.trim(),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineSmall
+                                        ?.copyWith(fontWeight: FontWeight.w900),
+                                  ),
+                                const SizedBox(height: 12),
+                                if (_isEditMode)
+                                  InkWell(
+                                    borderRadius: BorderRadius.circular(18),
+                                    onTap: _pickDate,
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          Icons.calendar_today_outlined,
+                                          size: 18,
+                                          color: scheme.primary,
                                         ),
-                                        child: _PolaroidSlide(
-                                          item: item,
-                                          isEditing: _isEditMode,
-                                          selectedStickerId:
-                                              _selectedStickerIds[item.id],
-                                          captionController:
-                                              _captionControllers[item.id]!,
-                                          label: 'Polaroid ${index + 1}',
-                                          onAddPhotos: _setPhotoForCurrentSlide,
-                                          onAddVideos: _setVideoForCurrentSlide,
-                                          onAddSticker: () => _addSticker(item),
-                                          onCaptionChanged: (text) =>
-                                              _updateItem(
-                                                item.copyWith(caption: text),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          _dateLabel(entry.date),
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodyMedium
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w700,
                                               ),
-                                          onSelectSticker: (stickerId) {
-                                            setState(() {
-                                              _selectedStickerIds[item.id] =
-                                                  stickerId;
-                                            });
-                                          },
-                                          onUpdateSticker: (sticker) =>
-                                              _updateSticker(item, sticker),
-                                          onDeleteSticker: (stickerId) =>
-                                              _deleteSticker(item, stickerId),
                                         ),
-                                      );
-                                    },
+                                      ],
+                                    ),
+                                  )
+                                else
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.calendar_today_outlined,
+                                        size: 18,
+                                        color: scheme.primary,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        _dateLabel(entry.date),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodyMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
+                                if (_isEditMode &&
+                                    entry.seededBubbleTexts.isNotEmpty) ...[
+                                  const SizedBox(height: 18),
+                                  Text(
+                                    'Started from these gratitude bubbles',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: entry.seededBubbleTexts
+                                        .map(
+                                          (text) => Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: chipFill,
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              border: Border.all(
+                                                color: accent.withValues(
+                                                  alpha: isDark ? 0.28 : 0.18,
+                                                ),
+                                              ),
+                                            ),
+                                            child: Text(text),
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
+                                ],
+                                const SizedBox(height: 20),
+                                SizedBox(
+                                  height: 560,
+                                  child: Stack(
+                                    children: [
+                                      Positioned(
+                                        left: 22,
+                                        right: 22,
+                                        top: 10,
+                                        child: _FairyLightsDivider(
+                                          style: style,
+                                        ),
+                                      ),
+                                      Positioned.fill(
+                                        top: 32,
+                                        child: PageView.builder(
+                                          controller: _pageController,
+                                          itemCount: entry.items.length,
+                                          onPageChanged: (index) => setState(
+                                            () => _pageIndex = index,
+                                          ),
+                                          itemBuilder: (context, index) {
+                                            final item = entry.items[index];
+                                            return Padding(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 6,
+                                                    vertical: 8,
+                                                  ),
+                                              child: _PolaroidSlide(
+                                                style: style,
+                                                mediaWellColor: mediaWellColor,
+                                                item: item,
+                                                isEditing: _isEditMode,
+                                                selectedStickerId:
+                                                    _selectedStickerIds[item
+                                                        .id],
+                                                captionController:
+                                                    _captionControllers[item
+                                                        .id]!,
+                                                label: 'Polaroid ${index + 1}',
+                                                onAddPhotos:
+                                                    _setPhotoForCurrentSlide,
+                                                onAddVideos:
+                                                    _setVideoForCurrentSlide,
+                                                onAddSticker: () =>
+                                                    _addSticker(item),
+                                                onCaptionChanged: (text) =>
+                                                    _updateItem(
+                                                      item.copyWith(
+                                                        caption: text,
+                                                      ),
+                                                    ),
+                                                onSelectSticker: (stickerId) {
+                                                  setState(() {
+                                                    _selectedStickerIds[item
+                                                            .id] =
+                                                        stickerId;
+                                                  });
+                                                },
+                                                onUpdateSticker: (sticker) =>
+                                                    _updateSticker(
+                                                      item,
+                                                      sticker,
+                                                    ),
+                                                onDeleteSticker: (stickerId) =>
+                                                    _deleteSticker(
+                                                      item,
+                                                      stickerId,
+                                                    ),
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
+                                if (!_isEditMode &&
+                                    entry.seededBubbleTexts.isNotEmpty) ...[
+                                  const SizedBox(height: 26),
+                                  Text(
+                                    'Started from these gratitude bubbles',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(
+                                          color: scheme.onSurfaceVariant,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: entry.seededBubbleTexts
+                                        .map(
+                                          (text) => Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: chipFill,
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                              border: Border.all(
+                                                color: accent.withValues(
+                                                  alpha: isDark ? 0.28 : 0.18,
+                                                ),
+                                              ),
+                                            ),
+                                            child: Text(text),
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
+                                ],
+                                if (_isEditMode) ...[
+                                  const SizedBox(height: 18),
+                                  Row(
+                                    children: [
+                                      FilledButton.tonalIcon(
+                                        onPressed: _addPolaroid,
+                                        icon: const Icon(Icons.add),
+                                        label: const Text('Add Polaroid'),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      FilledButton.tonalIcon(
+                                        onPressed: entry.items.isEmpty
+                                            ? null
+                                            : _deleteCurrentPolaroid,
+                                        icon: const Icon(Icons.delete_outline),
+                                        label: const Text('Delete Polaroid'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
                           ),
-                          if (!_isEditMode &&
-                              entry.seededBubbleTexts.isNotEmpty) ...[
-                            const SizedBox(height: 26),
-                            Text(
-                              'Started from these gratitude bubbles',
-                              style: Theme.of(context).textTheme.labelLarge
-                                  ?.copyWith(
-                                    color: scheme.onSurfaceVariant,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                            ),
-                            const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              children: entry.seededBubbleTexts
-                                  .map(
-                                    (text) => Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 12,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: scheme.surface.withValues(
-                                          alpha: 0.82,
-                                        ),
-                                        borderRadius: BorderRadius.circular(
-                                          999,
-                                        ),
-                                      ),
-                                      child: Text(text),
-                                    ),
-                                  )
-                                  .toList(),
-                            ),
-                          ],
-                          if (_isEditMode) ...[
-                            const SizedBox(height: 18),
-                            Row(
-                              children: [
-                                FilledButton.tonalIcon(
-                                  onPressed: _addPolaroid,
-                                  icon: const Icon(Icons.add),
-                                  label: const Text('Add Polaroid'),
-                                ),
-                                const SizedBox(width: 10),
-                                FilledButton.tonalIcon(
-                                  onPressed: entry.items.isEmpty
-                                      ? null
-                                      : _deleteCurrentPolaroid,
-                                  icon: const Icon(Icons.delete_outline),
-                                  label: const Text('Delete Polaroid'),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -833,6 +903,8 @@ class _HistoryChip extends StatelessWidget {
 
 class _PolaroidSlide extends StatelessWidget {
   const _PolaroidSlide({
+    required this.style,
+    required this.mediaWellColor,
     required this.item,
     required this.isEditing,
     required this.selectedStickerId,
@@ -847,6 +919,8 @@ class _PolaroidSlide extends StatelessWidget {
     required this.onDeleteSticker,
   });
 
+  final PaperStyle style;
+  final Color mediaWellColor;
   final GratitudeCarouselItem item;
   final bool isEditing;
   final String? selectedStickerId;
@@ -864,7 +938,13 @@ class _PolaroidSlide extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final isDark =
+        ThemeData.estimateBrightnessForColor(style.paper) == Brightness.dark;
+    final accent = style.accent;
+    final labelChipColor = Color.alphaBlend(
+      accent.withValues(alpha: isDark ? 0.18 : 0.10),
+      style.boxFill.withValues(alpha: 0.96),
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
@@ -874,8 +954,11 @@ class _PolaroidSlide extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: scheme.surface.withValues(alpha: 0.84),
+                color: labelChipColor,
                 borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: accent.withValues(alpha: isDark ? 0.28 : 0.18),
+                ),
               ),
               child: Text(
                 label,
@@ -890,13 +973,13 @@ class _PolaroidSlide extends StatelessWidget {
                 clipBehavior: Clip.none,
                 alignment: Alignment.topCenter,
                 children: [
-                  const Positioned(
+                  Positioned(
                     top: 2,
                     child: Row(
                       children: [
-                        _PolaroidClip(),
-                        SizedBox(width: 78),
-                        _PolaroidClip(),
+                        _PolaroidClip(style: style),
+                        const SizedBox(width: 78),
+                        _PolaroidClip(style: style),
                       ],
                     ),
                   ),
@@ -905,8 +988,13 @@ class _PolaroidSlide extends StatelessWidget {
                     child: Container(
                       width: width,
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: style.boxFill,
                         borderRadius: BorderRadius.circular(24),
+                        border: Border.all(
+                          color: style.border.withValues(
+                            alpha: isDark ? 0.36 : 0.22,
+                          ),
+                        ),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(alpha: 0.10),
@@ -927,19 +1015,21 @@ class _PolaroidSlide extends StatelessWidget {
                                     child: ClipRRect(
                                       borderRadius: BorderRadius.circular(18),
                                       child: Container(
-                                        color: scheme.surfaceContainerHighest,
+                                        color: mediaWellColor,
                                         child: _hasMedia
                                             ? switch (item.type) {
                                                 GratitudeCarouselItemType
                                                     .video =>
                                                   _VideoPreview(
                                                     filePath: item.filePath,
+                                                    accentColor: accent,
                                                   ),
                                                 _ => _PhotoPreview(
                                                   filePath: item.filePath,
                                                 ),
                                               }
                                             : _PolaroidEmptyMediaState(
+                                                style: style,
                                                 isEditing: isEditing,
                                                 onAddPhotos: onAddPhotos,
                                                 onAddVideos: onAddVideos,
@@ -982,6 +1072,15 @@ class _PolaroidSlide extends StatelessWidget {
                               Row(
                                 children: [
                                   FilledButton.tonalIcon(
+                                    style: FilledButton.styleFrom(
+                                      foregroundColor: accent,
+                                      backgroundColor: Color.alphaBlend(
+                                        accent.withValues(
+                                          alpha: isDark ? 0.22 : 0.14,
+                                        ),
+                                        style.boxFill,
+                                      ),
+                                    ),
                                     onPressed: onAddSticker,
                                     icon: const Icon(
                                       Icons.auto_awesome_outlined,
@@ -997,9 +1096,7 @@ class _PolaroidSlide extends StatelessWidget {
                                     style: Theme.of(context)
                                         .textTheme
                                         .labelMedium
-                                        ?.copyWith(
-                                          color: scheme.onSurfaceVariant,
-                                        ),
+                                        ?.copyWith(color: style.mutedText),
                                   ),
                                 ],
                               ),
@@ -1023,7 +1120,7 @@ class _PolaroidSlide extends StatelessWidget {
                                   item.caption.trim(),
                                   style: Theme.of(context).textTheme.bodyMedium
                                       ?.copyWith(
-                                        color: scheme.onSurface,
+                                        color: style.text,
                                         height: 1.45,
                                       ),
                                 ),
@@ -1054,18 +1151,22 @@ class _PolaroidSlide extends StatelessWidget {
 
 class _PolaroidEmptyMediaState extends StatelessWidget {
   const _PolaroidEmptyMediaState({
+    required this.style,
     required this.isEditing,
     required this.onAddPhotos,
     required this.onAddVideos,
   });
 
+  final PaperStyle style;
   final bool isEditing;
   final VoidCallback onAddPhotos;
   final VoidCallback onAddVideos;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final isDark =
+        ThemeData.estimateBrightnessForColor(style.paper) == Brightness.dark;
+    final accent = style.accent;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1073,16 +1174,30 @@ class _PolaroidEmptyMediaState extends StatelessWidget {
           Icon(
             Icons.photo_camera_back_outlined,
             size: 42,
-            color: scheme.primary.withValues(alpha: 0.8),
+            color: accent.withValues(alpha: 0.92),
           ),
           const SizedBox(height: 16),
           if (isEditing) ...[
             FilledButton.tonal(
+              style: FilledButton.styleFrom(
+                foregroundColor: accent,
+                backgroundColor: Color.alphaBlend(
+                  accent.withValues(alpha: isDark ? 0.22 : 0.14),
+                  style.boxFill,
+                ),
+              ),
               onPressed: onAddPhotos,
               child: const Text('Add photos'),
             ),
             const SizedBox(height: 10),
             FilledButton.tonal(
+              style: FilledButton.styleFrom(
+                foregroundColor: accent,
+                backgroundColor: Color.alphaBlend(
+                  accent.withValues(alpha: isDark ? 0.22 : 0.14),
+                  style.boxFill,
+                ),
+              ),
               onPressed: onAddVideos,
               child: const Text('Add videos'),
             ),
@@ -1091,7 +1206,7 @@ class _PolaroidEmptyMediaState extends StatelessWidget {
               'A quiet little empty Polaroid',
               style: Theme.of(
                 context,
-              ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+              ).textTheme.bodyMedium?.copyWith(color: style.mutedText),
             ),
         ],
       ),
@@ -1100,18 +1215,26 @@ class _PolaroidEmptyMediaState extends StatelessWidget {
 }
 
 class _PolaroidClip extends StatelessWidget {
-  const _PolaroidClip();
+  const _PolaroidClip({required this.style});
+
+  final PaperStyle style;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final isDark =
+        ThemeData.estimateBrightnessForColor(style.paper) == Brightness.dark;
     return Container(
       width: 28,
       height: 16,
       decoration: BoxDecoration(
-        color: Color.lerp(scheme.surface, Colors.white, 0.65),
+        color: Color.alphaBlend(
+          style.accent.withValues(alpha: isDark ? 0.10 : 0.06),
+          style.boxFill,
+        ),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: scheme.outline.withValues(alpha: 0.10)),
+        border: Border.all(
+          color: style.border.withValues(alpha: isDark ? 0.26 : 0.16),
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.08),
@@ -1125,7 +1248,7 @@ class _PolaroidClip extends StatelessWidget {
           width: 10,
           height: 3,
           decoration: BoxDecoration(
-            color: scheme.primary.withValues(alpha: 0.28),
+            color: style.accent.withValues(alpha: 0.42),
             borderRadius: BorderRadius.circular(999),
           ),
         ),
@@ -1339,9 +1462,9 @@ class _FrameStickerState extends State<_FrameSticker> {
 }
 
 class _FairyLightsDivider extends StatefulWidget {
-  const _FairyLightsDivider({required this.scheme});
+  const _FairyLightsDivider({required this.style});
 
-  final ColorScheme scheme;
+  final PaperStyle style;
 
   @override
   State<_FairyLightsDivider> createState() => _FairyLightsDividerState();
@@ -1369,7 +1492,7 @@ class _FairyLightsDividerState extends State<_FairyLightsDivider>
           size: const Size(double.infinity, 42),
           painter: _FairyLightsPainter(
             glowAmount: _controller.value,
-            scheme: widget.scheme,
+            style: widget.style,
           ),
         );
       },
@@ -1378,15 +1501,17 @@ class _FairyLightsDividerState extends State<_FairyLightsDivider>
 }
 
 class _FairyLightsPainter extends CustomPainter {
-  const _FairyLightsPainter({required this.glowAmount, required this.scheme});
+  const _FairyLightsPainter({required this.glowAmount, required this.style});
 
   final double glowAmount;
-  final ColorScheme scheme;
+  final PaperStyle style;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final isDark =
+        ThemeData.estimateBrightnessForColor(style.paper) == Brightness.dark;
     final wirePaint = Paint()
-      ..color = scheme.primary.withValues(alpha: 0.22)
+      ..color = style.accent.withValues(alpha: isDark ? 0.28 : 0.22)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2;
     final wirePath = Path()
@@ -1411,8 +1536,8 @@ class _FairyLightsPainter extends CustomPainter {
       final x = size.width * t;
       final y = size.height * (0.42 + math.sin((t * math.pi * 2) + 0.3) * 0.12);
       final bulbColor = Color.lerp(
-        scheme.primary.withValues(alpha: 0.52),
-        Colors.white.withValues(alpha: 0.92),
+        style.accent.withValues(alpha: isDark ? 0.7 : 0.56),
+        style.boxFill.withValues(alpha: 0.96),
         ((i % 3) / 3) + (glowAmount * 0.18),
       )!;
       final glowPaint = Paint()
@@ -1426,7 +1551,7 @@ class _FairyLightsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _FairyLightsPainter oldDelegate) {
-    return oldDelegate.glowAmount != glowAmount || oldDelegate.scheme != scheme;
+    return oldDelegate.glowAmount != glowAmount || oldDelegate.style != style;
   }
 }
 
@@ -1449,9 +1574,10 @@ class _PhotoPreview extends StatelessWidget {
 }
 
 class _VideoPreview extends StatefulWidget {
-  const _VideoPreview({required this.filePath});
+  const _VideoPreview({required this.filePath, required this.accentColor});
 
   final String? filePath;
+  final Color accentColor;
 
   @override
   State<_VideoPreview> createState() => _VideoPreviewState();
@@ -1520,11 +1646,12 @@ class _VideoPreviewState extends State<_VideoPreview> {
             child: VideoPlayer(controller),
           ),
         ),
-        const Center(
+        const Center(child: SizedBox.shrink()),
+        Center(
           child: Icon(
             Icons.play_circle_fill_rounded,
             size: 44,
-            color: Colors.white70,
+            color: widget.accentColor.withValues(alpha: 0.88),
           ),
         ),
       ],

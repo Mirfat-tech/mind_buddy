@@ -129,6 +129,7 @@ class _HomeSpherePreviewScreenState
                             );
                             return Stack(
                               alignment: Alignment.center,
+                              clipBehavior: Clip.none,
                               children: [
                                 IgnorePointer(
                                   child: SizedBox(
@@ -608,40 +609,59 @@ class _AnimatedWelcomeSphereState extends State<_AnimatedWelcomeSphere>
     final popScale = 1 + (0.035 * popPulse) - (0.014 * settleValue);
     final activeState = _states[_currentIndex];
     final incomingState = _states[_targetIndex];
+    final sceneWidth = math.min(widget.maxWidth, size * 1.72);
+    final sceneHeight = math.min(widget.maxHeight, size * 1.72);
 
     return SizedBox(
       width: double.infinity,
       child: Center(
         child: SizedBox(
-          width: size,
-          height: size,
+          width: sceneWidth,
+          height: sceneHeight,
           child: Stack(
             alignment: Alignment.center,
+            clipBehavior: Clip.none,
             children: [
-              Transform.scale(
-                scale: (1.06 + (widget.glowValue * 0.055)) * popScale,
-                child: Container(
-                  width: size * (1.14 + (widget.glowValue * 0.075)),
-                  height: size * (1.14 + (widget.glowValue * 0.075)),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: accentGlow,
-                        blurRadius: 140 + (widget.glowValue * 46),
-                        spreadRadius: 22 + (widget.glowValue * 14),
-                      ),
-                      BoxShadow(
-                        color: paperGlow,
-                        blurRadius: 176 + (widget.glowValue * 40),
-                        spreadRadius: 34 + (widget.glowValue * 16),
-                      ),
-                    ],
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: CustomPaint(
+                    painter: _SphereOuterRipplePainter(
+                      progress: _popController.value,
+                      accent: widget.style.accent,
+                      border: widget.style.border,
+                      paper: widget.style.paper,
+                      sphereDiameter: size,
+                      glowValue: widget.glowValue,
+                    ),
+                  ),
+                ),
+              ),
+              Center(
+                child: Transform.scale(
+                  scale: (1.06 + (widget.glowValue * 0.055)) * popScale,
+                  child: Container(
+                    width: size * (1.14 + (widget.glowValue * 0.075)),
+                    height: size * (1.14 + (widget.glowValue * 0.075)),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: accentGlow,
+                          blurRadius: 140 + (widget.glowValue * 46),
+                          spreadRadius: 22 + (widget.glowValue * 14),
+                        ),
+                        BoxShadow(
+                          color: paperGlow,
+                          blurRadius: 176 + (widget.glowValue * 40),
+                          spreadRadius: 34 + (widget.glowValue * 16),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
               Positioned(
-                bottom: size * 0.08,
+                bottom: (sceneHeight - size) / 2 + (size * 0.08),
                 child: Container(
                   width: size * 0.62,
                   height: size * 0.18,
@@ -658,236 +678,238 @@ class _AnimatedWelcomeSphereState extends State<_AnimatedWelcomeSphere>
                   ),
                 ),
               ),
-              Transform.translate(
-                offset: Offset(swayOffset, 0),
-                child: Transform.scale(
-                  scale: (1 + (widget.glowValue * 0.015)) * popScale,
-                  child: Listener(
-                    behavior: HitTestBehavior.translucent,
-                    onPointerDown: _handlePointerDown,
-                    onPointerMove: (event) => _handlePointerMove(event, size),
-                    onPointerUp: (_) => _handlePointerEnd(),
-                    onPointerCancel: (_) => _handlePointerEnd(),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: RadialGradient(
-                          center: const Alignment(-0.16, -0.22),
-                          radius: 1.0,
-                          colors: [
-                            innerHighlight.withValues(alpha: 0.96),
-                            Color.lerp(
-                              widget.style.paper,
-                              widget.style.boxFill,
-                              0.18,
-                            )!,
-                            sphereFill,
-                            Color.lerp(
-                              widget.style.paper,
-                              widget.style.border,
-                              0.08,
-                            )!,
+              Center(
+                child: Transform.translate(
+                  offset: Offset(swayOffset, 0),
+                  child: Transform.scale(
+                    scale: (1 + (widget.glowValue * 0.015)) * popScale,
+                    child: Listener(
+                      behavior: HitTestBehavior.translucent,
+                      onPointerDown: _handlePointerDown,
+                      onPointerMove: (event) => _handlePointerMove(event, size),
+                      onPointerUp: (_) => _handlePointerEnd(),
+                      onPointerCancel: (_) => _handlePointerEnd(),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            center: const Alignment(-0.16, -0.22),
+                            radius: 1.0,
+                            colors: [
+                              innerHighlight.withValues(alpha: 0.96),
+                              Color.lerp(
+                                widget.style.paper,
+                                widget.style.boxFill,
+                                0.18,
+                              )!,
+                              sphereFill,
+                              Color.lerp(
+                                widget.style.paper,
+                                widget.style.border,
+                                0.08,
+                              )!,
+                            ],
+                            stops: const [0.0, 0.42, 0.82, 1.0],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: liftShadow,
+                              blurRadius: 26,
+                              spreadRadius: 1,
+                              offset: const Offset(0, 10),
+                            ),
+                            BoxShadow(
+                              color: widget.style.border.withValues(alpha: 0.12),
+                              blurRadius: 18,
+                              spreadRadius: 0.5,
+                              offset: const Offset(0, 2),
+                            ),
                           ],
-                          stops: const [0.0, 0.42, 0.82, 1.0],
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: liftShadow,
-                            blurRadius: 26,
-                            spreadRadius: 1,
-                            offset: const Offset(0, 10),
-                          ),
-                          BoxShadow(
-                            color: widget.style.border.withValues(alpha: 0.12),
-                            blurRadius: 18,
-                            spreadRadius: 0.5,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: SizedBox(
-                        width: size,
-                        height: size,
-                        child: Stack(
-                          children: [
-                            Positioned(
-                              left: size * 0.14,
-                              top: size * 0.12,
-                              child: IgnorePointer(
-                                child: Container(
-                                  width: size * 0.28,
-                                  height: size * 0.19,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(size),
-                                    gradient: LinearGradient(
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                      colors: [
-                                        Color.lerp(
-                                          widget.style.boxFill,
-                                          Colors.white,
-                                          0.55,
-                                        )!.withValues(alpha: 0.48),
-                                        Colors.white.withValues(alpha: 0.04),
-                                      ],
+                        child: SizedBox(
+                          width: size,
+                          height: size,
+                          child: Stack(
+                            children: [
+                              Positioned(
+                                left: size * 0.14,
+                                top: size * 0.12,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: size * 0.28,
+                                    height: size * 0.19,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(size),
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: [
+                                          Color.lerp(
+                                            widget.style.boxFill,
+                                            Colors.white,
+                                            0.55,
+                                          )!.withValues(alpha: 0.48),
+                                          Colors.white.withValues(alpha: 0.04),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
-                            ),
-                            Positioned.fill(
-                              child: ClipOval(
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    ShaderMask(
-                                      shaderCallback: (bounds) {
-                                        return const LinearGradient(
-                                          begin: Alignment.centerLeft,
-                                          end: Alignment.centerRight,
-                                          colors: [
-                                            Colors.transparent,
-                                            Colors.white,
-                                            Colors.white,
-                                            Colors.transparent,
-                                          ],
-                                          stops: [0.03, 0.24, 0.76, 0.97],
-                                        ).createShader(bounds);
-                                      },
-                                      blendMode: BlendMode.dstIn,
-                                      child: Stack(
-                                        alignment: Alignment.center,
-                                        children: [
-                                          _SphereFaceContent(
-                                            state: activeState,
-                                            style: widget.style,
-                                            size: size,
-                                            phase: _transitionProgress,
-                                            direction: _swipeDirection,
-                                            isIncoming: false,
-                                          ),
-                                          if (_transitionProgress > 0 &&
-                                              _swipeDirection != 0)
+                              Positioned.fill(
+                                child: ClipOval(
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      ShaderMask(
+                                        shaderCallback: (bounds) {
+                                          return const LinearGradient(
+                                            begin: Alignment.centerLeft,
+                                            end: Alignment.centerRight,
+                                            colors: [
+                                              Colors.transparent,
+                                              Colors.white,
+                                              Colors.white,
+                                              Colors.transparent,
+                                            ],
+                                            stops: [0.03, 0.24, 0.76, 0.97],
+                                          ).createShader(bounds);
+                                        },
+                                        blendMode: BlendMode.dstIn,
+                                        child: Stack(
+                                          alignment: Alignment.center,
+                                          children: [
                                             _SphereFaceContent(
-                                              state: incomingState,
+                                              state: activeState,
                                               style: widget.style,
                                               size: size,
                                               phase: _transitionProgress,
                                               direction: _swipeDirection,
-                                              isIncoming: true,
+                                              isIncoming: false,
                                             ),
-                                        ],
-                                      ),
-                                    ),
-                                    Positioned.fill(
-                                      child: IgnorePointer(
-                                        child: DecoratedBox(
-                                          decoration: BoxDecoration(
-                                            gradient: RadialGradient(
-                                              center: const Alignment(
-                                                -0.12,
-                                                -0.18,
+                                            if (_transitionProgress > 0 &&
+                                                _swipeDirection != 0)
+                                              _SphereFaceContent(
+                                                state: incomingState,
+                                                style: widget.style,
+                                                size: size,
+                                                phase: _transitionProgress,
+                                                direction: _swipeDirection,
+                                                isIncoming: true,
                                               ),
-                                              radius: 0.9,
-                                              colors: [
-                                                Colors.transparent,
-                                                Colors.transparent,
-                                                widget.style.border.withValues(
-                                                  alpha: 0.06,
+                                          ],
+                                        ),
+                                      ),
+                                      Positioned.fill(
+                                        child: IgnorePointer(
+                                          child: DecoratedBox(
+                                            decoration: BoxDecoration(
+                                              gradient: RadialGradient(
+                                                center: const Alignment(
+                                                  -0.12,
+                                                  -0.18,
                                                 ),
-                                              ],
-                                              stops: const [0.0, 0.7, 1.0],
+                                                radius: 0.9,
+                                                colors: [
+                                                  Colors.transparent,
+                                                  Colors.transparent,
+                                                  widget.style.border.withValues(
+                                                    alpha: 0.06,
+                                                  ),
+                                                ],
+                                                stops: const [0.0, 0.7, 1.0],
+                                              ),
                                             ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: CustomPaint(
-                                  painter: _SpherePopPainter(
-                                    progress: _popController.value,
-                                    accent: widget.style.accent,
-                                    border: widget.style.border,
+                                    ],
                                   ),
                                 ),
                               ),
-                            ),
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: rimColor,
-                                      width: 1.25,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(
-                                      center: const Alignment(0.56, 0.76),
-                                      radius: 0.94,
-                                      colors: [
-                                        Colors.transparent,
-                                        widget.style.border.withValues(
-                                          alpha: 0.05,
-                                        ),
-                                        widget.style.text.withValues(
-                                          alpha: 0.12,
-                                        ),
-                                      ],
-                                      stops: const [0.58, 0.86, 1.0],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: RadialGradient(
-                                      center: const Alignment(-0.34, -0.42),
-                                      radius: 0.76,
-                                      colors: [
-                                        Colors.white.withValues(alpha: 0.12),
-                                        Colors.transparent,
-                                      ],
-                                      stops: const [0.0, 1.0],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            if (_transitionProgress < 0.02)
                               Positioned.fill(
-                                child: _SphereInteractionLayer(
-                                  state: activeState,
-                                  size: size,
-                                  slideIndex: _currentIndex,
-                                  onPressStateChanged: (value, source) =>
-                                      _setCtaPressState(
-                                        value,
-                                        source: source,
-                                        state: activeState,
-                                        slideIndex: _currentIndex,
-                                      ),
-                                  onTap: () => _handleCtaTap(activeState),
+                                child: IgnorePointer(
+                                  child: CustomPaint(
+                                    painter: _SpherePopPainter(
+                                      progress: _popController.value,
+                                      accent: widget.style.accent,
+                                      border: widget.style.border,
+                                    ),
+                                  ),
                                 ),
                               ),
-                          ],
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: rimColor,
+                                        width: 1.25,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: RadialGradient(
+                                        center: const Alignment(0.56, 0.76),
+                                        radius: 0.94,
+                                        colors: [
+                                          Colors.transparent,
+                                          widget.style.border.withValues(
+                                            alpha: 0.05,
+                                          ),
+                                          widget.style.text.withValues(
+                                            alpha: 0.12,
+                                          ),
+                                        ],
+                                        stops: const [0.58, 0.86, 1.0],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Positioned.fill(
+                                child: IgnorePointer(
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: RadialGradient(
+                                        center: const Alignment(-0.34, -0.42),
+                                        radius: 0.76,
+                                        colors: [
+                                          Colors.white.withValues(alpha: 0.12),
+                                          Colors.transparent,
+                                        ],
+                                        stops: const [0.0, 1.0],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (_transitionProgress < 0.02)
+                                Positioned.fill(
+                                  child: _SphereInteractionLayer(
+                                    state: activeState,
+                                    size: size,
+                                    slideIndex: _currentIndex,
+                                    onPressStateChanged: (value, source) =>
+                                        _setCtaPressState(
+                                          value,
+                                          source: source,
+                                          state: activeState,
+                                          slideIndex: _currentIndex,
+                                        ),
+                                    onTap: () => _handleCtaTap(activeState),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -1672,6 +1694,83 @@ class _SpherePopPainter extends CustomPainter {
     return oldDelegate.progress != progress ||
         oldDelegate.accent != accent ||
         oldDelegate.border != border;
+  }
+}
+
+class _SphereOuterRipplePainter extends CustomPainter {
+  const _SphereOuterRipplePainter({
+    required this.progress,
+    required this.accent,
+    required this.border,
+    required this.paper,
+    required this.sphereDiameter,
+    required this.glowValue,
+  });
+
+  final double progress;
+  final Color accent;
+  final Color border;
+  final Color paper;
+  final double sphereDiameter;
+  final double glowValue;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+
+    final eased = Curves.easeOutCubic.transform(progress.clamp(0.0, 1.0));
+    final center = Offset(size.width / 2, size.height / 2);
+    final sphereRadius = sphereDiameter / 2;
+    final haloRadius = sphereRadius * lerpDouble(1.04, 1.55, eased)!;
+    final outerGlowRadius =
+        sphereRadius * lerpDouble(1.16, 1.74 + (glowValue * 0.08), eased)!;
+
+    final softGlowPaint = Paint()
+      ..style = PaintingStyle.fill
+      ..shader = RadialGradient(
+        colors: [
+          accent.withValues(alpha: (1 - eased) * 0.2),
+          Color.lerp(accent, border, 0.45)!.withValues(
+            alpha: (1 - eased) * 0.1,
+          ),
+          Colors.transparent,
+        ],
+        stops: const [0.0, 0.7, 1.0],
+      ).createShader(
+        Rect.fromCircle(center: center, radius: outerGlowRadius),
+      );
+    canvas.drawCircle(center, outerGlowRadius, softGlowPaint);
+
+    final mainRingPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = lerpDouble(4.4, 1.0, eased)!
+      ..color = Color.lerp(
+        accent,
+        border,
+        0.3,
+      )!.withValues(alpha: (1 - eased) * 0.3);
+    canvas.drawCircle(center, haloRadius, mainRingPaint);
+
+    final edgeMistPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = lerpDouble(14, 3.5, eased)!
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16)
+      ..color = Color.lerp(
+        accent,
+        paper,
+        0.42,
+      )!.withValues(alpha: (1 - eased) * 0.16);
+    canvas.drawCircle(center, haloRadius * 1.01, edgeMistPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SphereOuterRipplePainter oldDelegate) {
+    return oldDelegate.progress != progress ||
+        oldDelegate.accent != accent ||
+        oldDelegate.border != border ||
+        oldDelegate.paper != paper ||
+        oldDelegate.sphereDiameter != sphereDiameter ||
+        oldDelegate.glowValue != glowValue;
   }
 }
 

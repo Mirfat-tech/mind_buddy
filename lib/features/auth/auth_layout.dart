@@ -8,12 +8,14 @@ class AuthLayout extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.child,
+    this.headerAction,
     this.bottom,
   });
 
   final String title;
   final String subtitle;
   final Widget child;
+  final Widget? headerAction;
   final Widget? bottom;
 
   @override
@@ -40,7 +42,11 @@ class AuthLayout extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _AuthHeader(title: title, subtitle: subtitle),
+                      _AuthHeader(
+                        title: title,
+                        subtitle: subtitle,
+                        headerAction: headerAction,
+                      ),
                       SizedBox(height: responsive.sectionGap),
                       child,
                       if (bottom != null) ...[
@@ -60,10 +66,15 @@ class AuthLayout extends StatelessWidget {
 }
 
 class _AuthHeader extends StatelessWidget {
-  const _AuthHeader({required this.title, required this.subtitle});
+  const _AuthHeader({
+    required this.title,
+    required this.subtitle,
+    this.headerAction,
+  });
 
   final String title;
   final String subtitle;
+  final Widget? headerAction;
 
   @override
   Widget build(BuildContext context) {
@@ -87,15 +98,21 @@ class _AuthHeader extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        SizedBox(height: responsive.compactGap),
-        Text(
-          subtitle,
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            fontSize: responsive.bodySize,
-            height: 1.45,
+        if (headerAction != null) ...[
+          SizedBox(height: responsive.compactGap),
+          headerAction!,
+        ],
+        if (subtitle.trim().isNotEmpty) ...[
+          SizedBox(height: responsive.compactGap),
+          Text(
+            subtitle,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontSize: responsive.bodySize,
+              height: 1.45,
+            ),
           ),
-        ),
+        ],
       ],
     );
   }

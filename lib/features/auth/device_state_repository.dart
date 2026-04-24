@@ -12,6 +12,7 @@ class DeviceDisplaySession {
     required this.platform,
     required this.lastSeen,
     required this.sortKey,
+    this.isActive = true,
   });
 
   final String deviceId;
@@ -19,6 +20,7 @@ class DeviceDisplaySession {
   final String platform;
   final String lastSeen;
   final String sortKey;
+  final bool isActive;
 }
 
 class DeviceDisplayState {
@@ -74,25 +76,13 @@ class DeviceStateRepository {
 
     final localSnapshot = await DeviceSessionService.currentDeviceSnapshot();
     final registration = await DeviceSessionService.registerDevice();
+    debugPrint('DEVICES_SCREEN_QUERY_START userId=${user.id}');
 
-    List rows;
-    String source = 'user_devices';
-    try {
-      rows = await _supabase
-          .from('user_devices')
-          .select('device_id, device_name, platform, last_seen')
-          .eq('user_id', user.id)
-          .order('last_seen', ascending: false);
-    } on PostgrestException {
-      source = 'user_sessions';
-      rows = await _supabase
-          .from('user_sessions')
-          .select('device_id, device_name, platform, last_seen_at')
-          .eq('user_id', user.id)
-          .order('last_seen_at', ascending: false);
-    }
+    final queryResult = await _loadActiveDeviceRows(user.id);
+    var rows = queryResult.rows;
+    final source = queryResult.source;
 
-    final sessions = rows
+    var sessions = rows
         .map(
           (row) => DeviceDisplaySession(
             deviceId: (row['device_id'] ?? '').toString(),
@@ -100,6 +90,7 @@ class DeviceStateRepository {
             platform: (row['platform'] ?? 'Unknown').toString(),
             lastSeen: _formatLastSeen(row['last_seen'] ?? row['last_seen_at']),
             sortKey: (row['last_seen'] ?? row['last_seen_at'] ?? '').toString(),
+            isActive: row['is_active'] != false,
           ),
         )
         .where((session) => session.deviceId.isNotEmpty)
@@ -109,6 +100,10 @@ class DeviceStateRepository {
         })
         .values
         .toList(growable: true);
+    debugPrint('DEVICES_SCREEN_DEDUPED_COUNT count=${sessions.length}');
+    debugPrint(
+      'DEVICES_SCREEN_QUERY_RESULT rawCount=${rows.length} activeCount=${sessions.length}',
+    );
 
     if (registration.devices != null && registration.devices!.isNotEmpty) {
       for (final row in registration.devices!) {
@@ -118,6 +113,7 @@ class DeviceStateRepository {
           platform: (row['platform'] ?? 'Unknown').toString(),
           lastSeen: _formatLastSeen(row['last_seen']),
           sortKey: (row['last_seen'] ?? '').toString(),
+          isActive: row['is_active'] != false,
         );
         if (session.deviceId.isEmpty) {
           continue;
@@ -129,6 +125,51 @@ class DeviceStateRepository {
           sessions.add(session);
         }
       }
+    }
+
+    if (sessions.isEmpty && user.id.isNotEmpty) {
+      debugPrint(
+        'DEVICES_SCREEN_EMPTY_REPAIR_START userId=${user.id} deviceId=${localSnapshot.deviceId}',
+      );
+      final repairedRegistration = await DeviceSessionService.registerDevice();
+      final repairedQueryResult = await _loadActiveDeviceRows(user.id);
+      rows = repairedQueryResult.rows;
+      sessions = rows
+          .map(
+            (row) => DeviceDisplaySession(
+              deviceId: (row['device_id'] ?? '').toString(),
+              deviceName: (row['device_name'] ?? 'Unknown').toString(),
+              platform: (row['platform'] ?? 'Unknown').toString(),
+              lastSeen: _formatLastSeen(
+                row['last_seen'] ?? row['last_seen_at'],
+              ),
+              sortKey: (row['last_seen'] ?? row['last_seen_at'] ?? '')
+                  .toString(),
+              isActive: row['is_active'] != false,
+            ),
+          )
+          .where((session) => session.deviceId.isNotEmpty)
+          .fold<Map<String, DeviceDisplaySession>>({}, (acc, session) {
+            acc.putIfAbsent(session.deviceId, () => session);
+            return acc;
+          })
+          .values
+          .toList(growable: true);
+      if (sessions.isEmpty &&
+          (repairedRegistration.allowed ||
+              repairedRegistration.entitlementCheckFailed)) {
+        sessions.add(
+          DeviceDisplaySession(
+            deviceId: localSnapshot.deviceId,
+            deviceName: localSnapshot.deviceName,
+            platform: localSnapshot.platform,
+            lastSeen: _formatLastSeen(localSnapshot.lastSeen.toIso8601String()),
+            sortKey: localSnapshot.lastSeen.toIso8601String(),
+            isActive: true,
+          ),
+        );
+      }
+      debugPrint('DEVICES_SCREEN_EMPTY_REPAIR_RESULT count=${sessions.length}');
     }
 
     final hasCurrentDevice = sessions.any(
@@ -144,6 +185,7 @@ class DeviceStateRepository {
           platform: localSnapshot.platform,
           lastSeen: _formatLastSeen(localSnapshot.lastSeen.toIso8601String()),
           sortKey: localSnapshot.lastSeen.toIso8601String(),
+          isActive: true,
         ),
       );
     }
@@ -155,6 +197,9 @@ class DeviceStateRepository {
     );
     debugPrint(
       'DEVICE_STATE_REMOTE_REFRESH userId=${user.id} source=$source sessionCount=${normalized.sessions.length} allowed=${registration.allowed} entitlementCheckFailed=${registration.entitlementCheckFailed}',
+    );
+    debugPrint(
+      'DEVICES_SCREEN_ACTIVE_COUNT count=${normalized.sessions.length}',
     );
     await _localDataSource.save(
       userId: user.id,
@@ -172,6 +217,68 @@ class DeviceStateRepository {
           .toList(growable: false),
     );
     return normalized;
+  }
+
+  Future<_DeviceQueryResult> _loadActiveDeviceRows(String userId) async {
+    try {
+      final rows = await _supabase
+          .from('user_devices')
+          .select(
+            'device_id, device_name, platform, last_seen, is_active, revoked_at, signed_out_at',
+          )
+          .eq('user_id', userId)
+          .eq('is_active', true)
+          .isFilter('revoked_at', null)
+          .isFilter('signed_out_at', null)
+          .order('last_seen', ascending: false);
+      return _DeviceQueryResult(source: 'user_devices', rows: rows);
+    } catch (e) {
+      debugPrint('DEVICES_SCREEN_QUERY_ERROR error=$e');
+    }
+
+    try {
+      final rows = await _supabase
+          .from('user_devices')
+          .select('device_id, device_name, platform, last_seen')
+          .eq('user_id', userId)
+          .order('last_seen', ascending: false);
+      return _DeviceQueryResult(source: 'user_devices_legacy', rows: rows);
+    } catch (e) {
+      debugPrint('DEVICES_SCREEN_QUERY_ERROR error=$e');
+    }
+
+    try {
+      final rows = await _supabase
+          .from('user_sessions')
+          .select(
+            'device_id, device_name, platform, last_seen_at, is_active, revoked_at, signed_out_at',
+          )
+          .eq('user_id', userId)
+          .eq('is_active', true)
+          .isFilter('revoked_at', null)
+          .isFilter('signed_out_at', null)
+          .order('last_seen_at', ascending: false);
+      return _DeviceQueryResult(source: 'user_sessions', rows: rows);
+    } catch (e) {
+      debugPrint('DEVICES_SCREEN_QUERY_ERROR error=$e');
+    }
+
+    try {
+      final rows = await _supabase
+          .from('user_sessions')
+          .select('device_id, device_name, platform, last_seen_at, last_seen')
+          .eq('user_id', userId)
+          .order('last_seen_at', ascending: false);
+      return _DeviceQueryResult(source: 'user_sessions_legacy', rows: rows);
+    } catch (e) {
+      debugPrint('DEVICES_SCREEN_QUERY_ERROR error=$e');
+    }
+
+    return const _DeviceQueryResult(source: 'none', rows: []);
+  }
+
+  Future<void> clearLocalForUser(String userId) {
+    return _localDataSource.clear(userId: userId);
   }
 
   Future<DeviceDisplayState> removeDeviceAndRefresh({
@@ -200,4 +307,11 @@ class DeviceStateRepository {
         '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
     return '$date $time';
   }
+}
+
+class _DeviceQueryResult {
+  const _DeviceQueryResult({required this.source, required this.rows});
+
+  final String source;
+  final List rows;
 }

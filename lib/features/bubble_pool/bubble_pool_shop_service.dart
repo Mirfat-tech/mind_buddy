@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:mind_buddy/core/database/app_database.dart';
 import 'package:mind_buddy/features/bubble_coins/bubble_coin_wallet.dart';
 import 'package:mind_buddy/features/bubble_coins/data/local/bubble_coin_local_data_source.dart';
+import 'package:mind_buddy/features/bubble_pool/bubble_pool_launch_config.dart';
 import 'package:mind_buddy/features/bubble_pool/bubble_pool_shop_catalog.dart';
 import 'package:mind_buddy/features/bubble_pool/data/local/bubble_pool_inventory_local_data_source.dart';
 import 'package:mind_buddy/features/bubble_pool/models/bubble_pool_inventory.dart';
@@ -42,6 +44,15 @@ class BubblePoolShopService {
   String? get currentUserId => _supabase.auth.currentUser?.id;
 
   Future<BubblePoolPurchaseResult> buyItem(BubblePoolShopItem item) async {
+    if (!bubblePoolEnabledForLaunch) {
+      debugPrint('BUBBLE_SHOP_DISABLED_FOR_LAUNCH');
+      return const BubblePoolPurchaseResult(
+        didPurchase: false,
+        updatedBalance: 0,
+        updatedItemCount: 0,
+        message: 'Bubble Pool shop is coming soon.',
+      );
+    }
     final userId = currentUserId;
     if (userId == null) {
       return const BubblePoolPurchaseResult(

@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:mind_buddy/core/database/app_database.dart';
 import 'package:mind_buddy/features/bubble_coins/bubble_coin_wallet.dart';
 import 'package:mind_buddy/features/bubble_coins/data/local/bubble_coin_local_data_source.dart';
+import 'package:mind_buddy/features/bubble_pool/bubble_pool_launch_config.dart';
 import 'package:mind_buddy/features/bubble_pool/data/local/bubble_pool_collectible_local_data_source.dart';
 import 'package:mind_buddy/features/bubble_pool/models/bubble_pool_collectible_state.dart';
 
@@ -53,6 +55,15 @@ class BubblePoolCollectionService {
     int rewardAmount = 1,
     Duration cooldown = const Duration(minutes: 30),
   }) async {
+    if (!bubblePoolEnabledForLaunch) {
+      debugPrint('BUBBLE_COIN_DISABLED_FOR_LAUNCH');
+      return const BubblePoolCollectResult(
+        didCollect: false,
+        updatedBalance: 0,
+        cooldownEndsAt: null,
+        message: 'Bubble Pool rewards are coming soon.',
+      );
+    }
     final userId = currentUserId;
     if (userId == null) {
       return const BubblePoolCollectResult(

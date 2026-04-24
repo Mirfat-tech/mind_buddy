@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:mind_buddy/services/subscription_plan_catalog.dart';
+import 'package:mind_buddy/services/startup_user_data_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:uuid/uuid.dart';
@@ -22,6 +23,7 @@ class DeviceRegistrationResult {
     this.errorCode,
     this.entitlementCheckFailed = false,
     this.devices,
+    this.reusedExistingDevice,
   });
 
   final bool allowed;
@@ -33,6 +35,7 @@ class DeviceRegistrationResult {
   final String? errorCode;
   final bool entitlementCheckFailed;
   final List<Map<String, dynamic>>? devices;
+  final bool? reusedExistingDevice;
 
   bool get isDeviceLimit => !allowed && errorCode == _kDeviceLimitErrorCode;
   bool get isLimitEnforcedTier => tier == 'free';
@@ -79,6 +82,16 @@ class DeviceSessionSnapshot {
   final DateTime lastSeen;
 }
 
+class SignOutEverywhereResult {
+  const SignOutEverywhereResult({
+    required this.revokedSessionCount,
+    required this.markedInactiveDeviceCount,
+  });
+
+  final int revokedSessionCount;
+  final int markedInactiveDeviceCount;
+}
+
 class DeviceSessionService {
   static const _deviceIdKey = 'mb_device_id';
   static const _storage = FlutterSecureStorage();
@@ -94,10 +107,13 @@ class DeviceSessionService {
   static String? _lastRegistrationUserId;
   static String? _lastRegistrationDeviceId;
   static DateTime? _lastRegistrationAt;
+  static bool? _supportsDeviceLifecycleSchema;
+  static bool? _supportsSignOutEverywhereRpc;
 
   static Future<String> getOrCreateDeviceId() async {
     final cached = _cachedDeviceId;
     if (cached != null && cached.isNotEmpty) {
+      debugPrint('DEVICE_ID_REUSED value=$cached');
       return cached;
     }
 
@@ -111,6 +127,7 @@ class DeviceSessionService {
     try {
       final deviceId = await future;
       _cachedDeviceId = deviceId;
+      debugPrint('DEVICE_ID_LOAD value=$deviceId');
       return deviceId;
     } finally {
       if (identical(_deviceIdFuture, future)) {
@@ -127,6 +144,7 @@ class DeviceSessionService {
       final existing = await _storage.read(key: _deviceIdKey);
       if (existing != null && existing.isNotEmpty) {
         await _persistDeviceId(existing, prefs: prefs, writeSecure: false);
+        debugPrint('DEVICE_ID_REUSED value=$existing');
         return existing;
       }
     } catch (e) {
@@ -137,6 +155,7 @@ class DeviceSessionService {
 
     if (legacy != null && legacy.isNotEmpty) {
       await _persistDeviceId(legacy, prefs: prefs);
+      debugPrint('DEVICE_ID_REUSED value=$legacy');
       return legacy;
     }
 
@@ -230,10 +249,114 @@ class DeviceSessionService {
     }
   }
 
+  static void clearRegistrationCache() {
+    _registrationFuture = null;
+    _registrationFutureUserId = null;
+    _lastRegistrationResult = null;
+    _lastRegistrationUserId = null;
+    _lastRegistrationDeviceId = null;
+    _lastRegistrationAt = null;
+  }
+
+  static Future<SignOutEverywhereResult> signOutEverywhere() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      return const SignOutEverywhereResult(
+        revokedSessionCount: 0,
+        markedInactiveDeviceCount: 0,
+      );
+    }
+
+    debugPrint('SIGN_OUT_EVERYWHERE_START userId=${user.id}');
+    if (_supportsSignOutEverywhereRpc != false) {
+      try {
+        final res = await Supabase.instance.client.rpc('sign_out_everywhere');
+        _supportsSignOutEverywhereRpc = true;
+        final map = res is Map
+            ? Map<String, dynamic>.from(res)
+            : const <String, dynamic>{};
+        return SignOutEverywhereResult(
+          revokedSessionCount: _asInt(map['revoked_session_count']) ?? 0,
+          markedInactiveDeviceCount:
+              _asInt(map['marked_inactive_device_count']) ?? 0,
+        );
+      } on PostgrestException catch (e) {
+        if (!_isMissingFunctionError(e, 'sign_out_everywhere')) {
+          rethrow;
+        }
+        _supportsSignOutEverywhereRpc = false;
+      }
+    }
+
+    final deletedSessionCount = await _deleteTrackedRows(
+      table: 'user_sessions',
+      userId: user.id,
+    );
+    final deletedDeviceCount = await _deleteTrackedRows(
+      table: 'user_devices',
+      userId: user.id,
+    );
+    return SignOutEverywhereResult(
+      revokedSessionCount: deletedSessionCount,
+      markedInactiveDeviceCount: deletedDeviceCount,
+    );
+  }
+
+  static Future<void> markCurrentDeviceInactive() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    final deviceId = await getOrCreateDeviceId();
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    if (_supportsDeviceLifecycleSchema != false) {
+      try {
+        await Future.wait([
+          Supabase.instance.client
+              .from('user_devices')
+              .update({'is_active': false, 'signed_out_at': nowIso})
+              .eq('user_id', user.id)
+              .eq('device_id', deviceId),
+          Supabase.instance.client
+              .from('user_sessions')
+              .update({
+                'is_active': false,
+                'signed_out_at': nowIso,
+                'last_seen_at': nowIso,
+                'last_seen': nowIso,
+              })
+              .eq('user_id', user.id)
+              .eq('device_id', deviceId),
+        ]);
+        _supportsDeviceLifecycleSchema = true;
+        return;
+      } on PostgrestException catch (e) {
+        if (!_isMissingLifecycleSchemaError(e)) {
+          rethrow;
+        }
+        _supportsDeviceLifecycleSchema = false;
+      }
+    }
+
+    await Future.wait([
+      _deleteTrackedRows(
+        table: 'user_devices',
+        userId: user.id,
+        deviceId: deviceId,
+      ),
+      _deleteTrackedRows(
+        table: 'user_sessions',
+        userId: user.id,
+        deviceId: deviceId,
+      ),
+    ]);
+  }
+
   static Future<DeviceRegistrationResult> _registerDeviceForUser(
     String userId,
     String deviceId,
   ) async {
+    debugPrint(
+      'DEVICE_REGISTER_UPSERT_START userId=$userId deviceId=$deviceId',
+    );
     final deviceInfo = await _getDeviceInfo();
     final payload = {
       'user_id': userId,
@@ -261,8 +384,14 @@ class DeviceSessionService {
       }
       final parsed = _parseRpcResult(deviceId, res);
       final normalized = await _normalizeForEntitlement(userId, parsed);
-      _debugLog(userId, deviceId, normalized);
-      return normalized;
+      final finalResult = await _applyCachedTierFallback(userId, normalized);
+      if (finalResult.allowed) {
+        debugPrint(
+          'DEVICE_REGISTER_UPSERT_OK userId=$userId deviceId=$deviceId',
+        );
+      }
+      _debugLog(userId, deviceId, finalResult);
+      return finalResult;
     } on PostgrestException catch (e) {
       final rpcMissingFromSchemaCache =
           e.code == 'PGRST202' ||
@@ -275,8 +404,17 @@ class DeviceSessionService {
         // Backward-compatible fallback when the newer RPC signature is not
         // deployed yet or PostgREST has not refreshed its schema cache.
         final fallbackResult = await _legacyUpsertFallback(payload, deviceId);
-        _debugLog(userId, deviceId, fallbackResult);
-        return fallbackResult;
+        final finalResult = await _applyCachedTierFallback(
+          userId,
+          fallbackResult,
+        );
+        if (finalResult.allowed) {
+          debugPrint(
+            'DEVICE_REGISTER_UPSERT_OK userId=$userId deviceId=$deviceId',
+          );
+        }
+        _debugLog(userId, deviceId, finalResult);
+        return finalResult;
       }
       final message = e.message.toLowerCase();
       if (e.code == _deviceLimitErrorCode || message.contains('device limit')) {
@@ -309,8 +447,14 @@ class DeviceSessionService {
         deviceId,
         onFailure: DeviceRegistrationResult.graceAllowed(deviceId),
       );
-      _debugLog(userId, deviceId, result);
-      return result;
+      final finalResult = await _applyCachedTierFallback(userId, result);
+      if (finalResult.allowed) {
+        debugPrint(
+          'DEVICE_REGISTER_UPSERT_OK userId=$userId deviceId=$deviceId',
+        );
+      }
+      _debugLog(userId, deviceId, finalResult);
+      return finalResult;
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('registerDevice unexpected error: $e');
@@ -321,8 +465,14 @@ class DeviceSessionService {
         deviceId,
         onFailure: DeviceRegistrationResult.graceAllowed(deviceId),
       );
-      _debugLog(userId, deviceId, result);
-      return result;
+      final finalResult = await _applyCachedTierFallback(userId, result);
+      if (finalResult.allowed) {
+        debugPrint(
+          'DEVICE_REGISTER_UPSERT_OK userId=$userId deviceId=$deviceId',
+        );
+      }
+      _debugLog(userId, deviceId, finalResult);
+      return finalResult;
     }
   }
 
@@ -361,6 +511,7 @@ class DeviceSessionService {
                 .map((e) => Map<String, dynamic>.from(e as Map))
                 .toList()
           : null,
+      reusedExistingDevice: map['reused'] == true,
     );
   }
 
@@ -391,6 +542,7 @@ class DeviceSessionService {
         errorCode: result.errorCode,
         entitlementCheckFailed: result.entitlementCheckFailed,
         devices: result.devices,
+        reusedExistingDevice: result.reusedExistingDevice,
       );
     }
 
@@ -404,6 +556,7 @@ class DeviceSessionService {
       errorCode: null,
       entitlementCheckFailed: result.entitlementCheckFailed,
       devices: result.devices,
+      reusedExistingDevice: result.reusedExistingDevice,
     );
   }
 
@@ -424,6 +577,12 @@ class DeviceSessionService {
   }
 
   static Future<String?> _fetchEntitlementTier(String userId) async {
+    final cachedTier = _cachedEntitlementTier(userId);
+    if (cachedTier != null) {
+      debugPrint('SUBSCRIPTION_VERIFY_USING_CACHED_TIER tier=$cachedTier');
+      return cachedTier;
+    }
+
     try {
       final res = await Supabase.instance.client.rpc('get_my_entitlement');
       if (res is Map) {
@@ -449,6 +608,60 @@ class DeviceSessionService {
     }
   }
 
+  static String? _cachedEntitlementTier(String userId) {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null || user.id != userId) return null;
+    final profile = StartupUserDataService.instance
+        .peekCachedForCurrentUser()
+        ?.profileRow;
+    final tier = SubscriptionPlanCatalog.databaseTierFor(
+      SubscriptionPlanCatalog.resolveTier(profile?['subscription_tier']),
+    );
+    return tier.isEmpty ? null : tier;
+  }
+
+  static Future<DeviceRegistrationResult> _applyCachedTierFallback(
+    String userId,
+    DeviceRegistrationResult result,
+  ) async {
+    if (!result.allowed || !result.entitlementCheckFailed) {
+      return result;
+    }
+
+    final tier = await _fetchEntitlementTier(userId);
+    if (tier == null || tier == 'free') {
+      return result;
+    }
+
+    return DeviceRegistrationResult(
+      allowed: result.allowed,
+      deviceId: result.deviceId,
+      tier: tier,
+      subscriptionStatus: result.subscriptionStatus,
+      deviceLimit: tier == 'plus' ? -1 : result.deviceLimit,
+      deviceCount: result.deviceCount,
+      errorCode: result.errorCode,
+      entitlementCheckFailed: false,
+      devices: result.devices,
+      reusedExistingDevice: result.reusedExistingDevice,
+    );
+  }
+
+  static bool shouldSuppressSubscriptionWarning(String route) {
+    final normalized = route.toLowerCase();
+    final suppressed =
+        normalized == '/bootstrap' ||
+        normalized == '/auth' ||
+        normalized == '/signin' ||
+        normalized == '/signup' ||
+        normalized.startsWith('/onboarding');
+    if (suppressed) {
+      debugPrint('SUBSCRIPTION_VERIFY_DEFERRED_DURING_STARTUP');
+      debugPrint('SUBSCRIPTION_WARNING_SUPPRESSED route=$route');
+    }
+    return suppressed;
+  }
+
   static Future<DeviceRegistrationResult> _legacyUpsertFallback(
     Map<String, dynamic> payload,
     String deviceId, {
@@ -463,9 +676,7 @@ class DeviceSessionService {
 
     try {
       try {
-        await Supabase.instance.client
-            .from('user_devices')
-            .upsert(payload, onConflict: 'user_id,device_id');
+        await _upsertUserDeviceFallback(payload, payloadCompat: payloadCompat);
       } on PostgrestException catch (e) {
         final msg = '${e.message} ${e.details} ${e.hint}'.toLowerCase();
         final missingLastSeen = e.code == '42703' && msg.contains('last_seen');
@@ -473,39 +684,33 @@ class DeviceSessionService {
             e.code == '42703' &&
             (msg.contains('device_model') || msg.contains('system_version'));
         if (missingLastSeen) {
-          await Supabase.instance.client
-              .from('user_devices')
-              .upsert(payloadCompat, onConflict: 'user_id,device_id');
+          await _upsertUserDeviceFallback(
+            payloadCompat,
+            payloadCompat: payloadCompat,
+          );
         } else if (missingDeviceMetadata) {
-          await Supabase.instance.client.from('user_devices').upsert({
+          await _upsertUserDeviceFallback({
             ...payloadCompat,
             if (seenIso != null && seenIso.isNotEmpty) 'last_seen': seenIso,
-          }, onConflict: 'user_id,device_id');
+          }, payloadCompat: payloadCompat);
         } else {
           rethrow;
         }
       }
-      return DeviceRegistrationResult(allowed: true, deviceId: deviceId);
+      await _upsertUserSessionFallback(payloadCompat, seenIso: seenIso);
+      return DeviceRegistrationResult(
+        allowed: true,
+        deviceId: deviceId,
+        reusedExistingDevice: true,
+      );
     } on PostgrestException {
       try {
-        final base = <String, dynamic>{...payloadCompat};
-        if (seenIso != null && seenIso.isNotEmpty) {
-          base['last_seen_at'] = seenIso;
-          base['last_seen'] = seenIso;
-        }
-        try {
-          await Supabase.instance.client
-              .from('user_sessions')
-              .upsert(base, onConflict: 'user_id,device_id');
-        } on PostgrestException catch (e) {
-          final msg = '${e.message} ${e.details} ${e.hint}'.toLowerCase();
-          if (!(e.code == '42703' && msg.contains('last_seen'))) rethrow;
-          final retry = <String, dynamic>{...base}..remove('last_seen');
-          await Supabase.instance.client
-              .from('user_sessions')
-              .upsert(retry, onConflict: 'user_id,device_id');
-        }
-        return DeviceRegistrationResult(allowed: true, deviceId: deviceId);
+        await _upsertUserSessionFallback(payloadCompat, seenIso: seenIso);
+        return DeviceRegistrationResult(
+          allowed: true,
+          deviceId: deviceId,
+          reusedExistingDevice: true,
+        );
       } catch (_) {
         return onFailure ?? DeviceRegistrationResult.graceAllowed(deviceId);
       }
@@ -514,12 +719,126 @@ class DeviceSessionService {
     }
   }
 
+  static Future<void> _upsertUserSessionFallback(
+    Map<String, dynamic> payloadCompat, {
+    required String? seenIso,
+  }) async {
+    final legacyPayload = <String, dynamic>{...payloadCompat};
+    final base = <String, dynamic>{...legacyPayload};
+    if (seenIso != null && seenIso.isNotEmpty) {
+      base['last_seen_at'] = seenIso;
+      base['last_seen'] = seenIso;
+      legacyPayload['last_seen_at'] = seenIso;
+      legacyPayload['last_seen'] = seenIso;
+    }
+    try {
+      await _upsertUserSessionPayload(base, legacyPayload: legacyPayload);
+    } on PostgrestException catch (e) {
+      final msg = '${e.message} ${e.details} ${e.hint}'.toLowerCase();
+      final missingLastSeen = e.code == '42703' && msg.contains('last_seen');
+      if (!missingLastSeen) rethrow;
+      final retry = <String, dynamic>{...base}..remove('last_seen');
+      final legacyRetry = <String, dynamic>{...legacyPayload}
+        ..remove('last_seen');
+      await _upsertUserSessionPayload(retry, legacyPayload: legacyRetry);
+    }
+  }
+
+  static Future<void> _upsertUserDeviceFallback(
+    Map<String, dynamic> payload, {
+    required Map<String, dynamic> payloadCompat,
+  }) async {
+    try {
+      if (_supportsDeviceLifecycleSchema != false) {
+        await Supabase.instance.client.from('user_devices').upsert({
+          ...payload,
+          'is_active': true,
+          'signed_out_at': null,
+          'revoked_at': null,
+        }, onConflict: 'user_id,device_id');
+        _supportsDeviceLifecycleSchema = true;
+        return;
+      }
+    } on PostgrestException catch (e) {
+      if (!_isMissingLifecycleSchemaError(e)) rethrow;
+      _supportsDeviceLifecycleSchema = false;
+    }
+
+    await Supabase.instance.client
+        .from('user_devices')
+        .upsert(payloadCompat, onConflict: 'user_id,device_id');
+  }
+
+  static Future<void> _upsertUserSessionPayload(
+    Map<String, dynamic> payload, {
+    required Map<String, dynamic> legacyPayload,
+  }) async {
+    try {
+      if (_supportsDeviceLifecycleSchema != false) {
+        await Supabase.instance.client.from('user_sessions').upsert({
+          ...payload,
+          'is_active': true,
+          'signed_out_at': null,
+          'revoked_at': null,
+        }, onConflict: 'user_id,device_id');
+        _supportsDeviceLifecycleSchema = true;
+        return;
+      }
+    } on PostgrestException catch (e) {
+      if (!_isMissingLifecycleSchemaError(e)) rethrow;
+      _supportsDeviceLifecycleSchema = false;
+    }
+
+    await Supabase.instance.client
+        .from('user_sessions')
+        .upsert(legacyPayload, onConflict: 'user_id,device_id');
+  }
+
+  static Future<int> _deleteTrackedRows({
+    required String table,
+    required String userId,
+    String? deviceId,
+  }) async {
+    final query = Supabase.instance.client
+        .from(table)
+        .delete()
+        .eq('user_id', userId);
+    final filtered = deviceId == null ? query : query.eq('device_id', deviceId);
+    final res = await filtered.select('device_id');
+    return res.length;
+  }
+
+  static bool _isMissingFunctionError(PostgrestException e, String fnName) {
+    final message = '${e.message} ${e.details} ${e.hint}'.toLowerCase();
+    return e.code == 'PGRST202' ||
+        e.code == '42883' ||
+        message.contains(fnName.toLowerCase());
+  }
+
+  static bool _isMissingLifecycleSchemaError(PostgrestException e) {
+    final message = '${e.message} ${e.details} ${e.hint}'.toLowerCase();
+    return e.code == 'PGRST204' ||
+        e.code == '42703' ||
+        message.contains('is_active') ||
+        message.contains('signed_out_at') ||
+        message.contains('revoked_at');
+  }
+
   static void _debugLog(
     String userId,
     String deviceId,
     DeviceRegistrationResult result,
   ) {
     if (!kDebugMode) return;
+    if (result.reusedExistingDevice == true) {
+      debugPrint('DEVICE_REGISTER_REUSED_EXISTING_DEVICE deviceId=$deviceId');
+    } else if (result.reusedExistingDevice == false) {
+      debugPrint('DEVICE_REGISTER_CREATED_NEW_DEVICE deviceId=$deviceId');
+    }
+    if (result.allowed) {
+      debugPrint('DEVICE_REGISTER_MARKED_ACTIVE deviceId=$deviceId');
+      debugPrint('DEVICE_MARKED_ACTIVE deviceId=$deviceId');
+    }
     debugPrint(
       'DeviceRegistration user_id=$userId device_id=$deviceId '
       'tier=${result.tier ?? 'unknown'} limit=${result.deviceLimit?.toString() ?? 'unknown'} '

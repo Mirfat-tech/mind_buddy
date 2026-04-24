@@ -12,6 +12,7 @@ import 'package:mind_buddy/features/bubble_pool/game/bubble_pool_game.dart';
 import 'package:mind_buddy/features/bubble_pool/game/models/bubble_pool_item_definition.dart';
 import 'package:mind_buddy/features/bubble_pool/game/models/bubble_pool_slot_definition.dart';
 import 'package:mind_buddy/features/bubble_pool/bubble_pool_inventory_service.dart';
+import 'package:mind_buddy/features/bubble_pool/bubble_pool_launch_config.dart';
 import 'package:mind_buddy/features/bubble_pool/bubble_pool_shop_catalog.dart';
 import 'package:mind_buddy/features/bubble_pool/bubble_pool_shop_service.dart';
 
@@ -71,6 +72,10 @@ class _BubblePoolScreenState extends State<BubblePoolScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!bubblePoolEnabledForLaunch) {
+      debugPrint('BUBBLE_POOL_DISABLED_FOR_LAUNCH_SHOW_COMING_SOON');
+      return buildBubbleComingSoonPage('bubble_pool');
+    }
     final scheme = Theme.of(context).colorScheme;
     final palette = BubblePoolScenePalette.fromColorScheme(scheme);
     final game = _game ??= BubblePoolGame(

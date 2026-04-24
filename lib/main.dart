@@ -182,12 +182,14 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
         if (mounted && !_suppressAutoHomeNavigation) {
           widget.router.go('/bootstrap');
         }
+        unawaited(_registerCurrentDeviceAfterSignIn());
         unawaited(_enforceDeviceLimitOnSignIn());
       }
       if (data.event == AuthChangeEvent.signedOut) {
         OAuthSignInCoordinator.instance.markFailed(
           reason: 'auth_state_signed_out',
         );
+        DeviceSessionService.clearRegistrationCache();
         unawaited(OnboardingController.setAuthStageCompleted(false));
       }
       unawaited(JournalEncryptionService.instance.handleAuthScopeChanged());
@@ -198,6 +200,7 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
         unawaited(HabitHomeWidgetService.flushPendingWidgetToggles());
         _maybeReactivateAccount();
         _syncStartupUserData();
+        unawaited(_registerCurrentDeviceAfterSignIn());
       }
       ref.read(settingsControllerProvider).handleAuthChange();
     });
@@ -209,12 +212,13 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
     if (!mounted) return;
     if (registration.allowed) {
       if (registration.entitlementCheckFailed) {
-        globalMessengerKey.currentState?.showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not verify your subscription right now. Signed in with temporary access.',
-            ),
-          ),
+        if (DeviceSessionService.shouldSuppressSubscriptionWarning(
+          '/bootstrap',
+        )) {
+          return;
+        }
+        debugPrint(
+          'SUBSCRIPTION_WARNING_SHOWN route=/bootstrap reason=entitlement_check_failed_without_cached_tier',
         );
       }
       return;
@@ -236,6 +240,17 @@ class _BootstrapState extends ConsumerState<_Bootstrap> {
       widget.router.go('/settings');
     } finally {
       _deviceLimitSignOutInFlight = false;
+    }
+  }
+
+  Future<void> _registerCurrentDeviceAfterSignIn() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    debugPrint('DEVICE_REGISTER_AFTER_SIGN_IN_START userId=${user.id}');
+    try {
+      await DeviceSessionService.registerDevice();
+    } catch (e) {
+      debugPrint('DEVICES_SCREEN_QUERY_ERROR error=$e');
     }
   }
 

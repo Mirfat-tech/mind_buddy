@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:mind_buddy/core/database/app_database.dart';
 import 'package:mind_buddy/services/startup_user_data_service.dart';
 
 class OnboardingAnswers {
@@ -48,6 +49,7 @@ final onboardingControllerProvider =
 class OnboardingController extends StateNotifier<OnboardingAnswers> {
   OnboardingController() : super(const OnboardingAnswers());
 
+  static const _installSeenLocallyKey = 'onboarding_seen_locally';
   static const _completedKey = 'onboarding_completed';
   static const _authSkippedKey = 'onboarding_auth_skipped';
   static const _authStageCompletedKey = 'onboarding_auth_stage_completed';
@@ -108,6 +110,84 @@ class OnboardingController extends StateNotifier<OnboardingAnswers> {
     final prefs = await SharedPreferences.getInstance();
     final userId = _currentUserId();
     await prefs.setBool(_scopedKey(_completedKey, userId), true);
+  }
+
+  static Future<bool> hasSeenLocally() async {
+    final prefs = await SharedPreferences.getInstance();
+    final seen = prefs.getBool(_installSeenLocallyKey) ?? false;
+    debugPrint('LOCAL_ONBOARDING_FLAG_LOAD seen=$seen scope=install');
+    if (seen) return true;
+
+    final hasExistingLocalAppData = await _hasExistingLocalAppData(prefs);
+    debugPrint(
+      'LOCAL_ONBOARDING_BACKFILL_CHECK seen=false hasExistingLocalAppData=$hasExistingLocalAppData',
+    );
+    if (!hasExistingLocalAppData) {
+      return false;
+    }
+
+    await prefs.setBool(_installSeenLocallyKey, true);
+    debugPrint(
+      'LOCAL_ONBOARDING_BACKFILL_SAVE seen=true reason=existing_install_data',
+    );
+    return true;
+  }
+
+  static Future<void> setSeenLocally(bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_installSeenLocallyKey, value);
+    debugPrint('LOCAL_ONBOARDING_FLAG_SAVE seen=$value');
+  }
+
+  static Future<bool> _hasExistingLocalAppData(SharedPreferences prefs) async {
+    final prefKeys = prefs.getKeys();
+    final hasPreferenceEvidence = prefKeys.any(
+      (key) =>
+          key == _completedKey ||
+          key == _authSkippedKey ||
+          key == _authStageCompletedKey ||
+          key == _featuresSeenKey ||
+          key == _planCompletedKey ||
+          key == _setupCompletedKey ||
+          key == 'mb_settings_v1' ||
+          key.startsWith('completion_gate_state_') ||
+          key.startsWith('${_completedKey}_') ||
+          key.startsWith('${_featuresSeenKey}_') ||
+          key.startsWith('${_planCompletedKey}_') ||
+          key.startsWith('${_setupCompletedKey}_'),
+    );
+    if (hasPreferenceEvidence) {
+      return true;
+    }
+
+    try {
+      final db = AppDatabase.shared();
+      final result = await db.customSelect('''
+        select
+          exists(select 1 from settings_records limit 1) as has_settings,
+          exists(select 1 from sync_metadata_entries limit 1) as has_sync_metadata,
+          exists(select 1 from template_definitions limit 1) as has_templates,
+          exists(select 1 from template_log_entries limit 1) as has_template_logs,
+          exists(select 1 from journal_entries limit 1) as has_journals,
+          exists(select 1 from journal_folders limit 1) as has_journal_folders
+        ''').getSingle();
+      bool readFlag(String key) =>
+          (result.data[key] == true) ||
+          result.data[key]?.toString() == '1' ||
+          result.data[key]?.toString().toLowerCase() == 'true';
+
+      return readFlag('has_settings') ||
+          readFlag('has_sync_metadata') ||
+          readFlag('has_templates') ||
+          readFlag('has_template_logs') ||
+          readFlag('has_journals') ||
+          readFlag('has_journal_folders');
+    } catch (e) {
+      debugPrint(
+        '[OnboardingInstallFlag] existing local data check failed error=$e',
+      );
+      return false;
+    }
   }
 
   static Future<bool> isAuthSkipped() async {

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:mind_buddy/features/bubble_coins/widgets/bubble_coin_reward_burst.dart';
+import 'package:mind_buddy/features/bubble_pool/bubble_pool_launch_config.dart';
 import 'package:mind_buddy/common/mb_floating_hint.dart';
 import 'package:mind_buddy/common/mb_glow_back_button.dart';
 import 'package:mind_buddy/common/mb_glow_icon_button.dart';
@@ -98,9 +99,11 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
       );
       if (!mounted) return;
       if (rewardAwarded) {
-        setState(() {
-          _rewardBurstCount++;
-        });
+        if (bubbleCoinsEnabledForLaunch) {
+          setState(() {
+            _rewardBurstCount++;
+          });
+        }
       }
     } catch (_) {
       if (!mounted) return;
@@ -225,7 +228,8 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
           MbGlowIconButton(
             tooltip: 'Bubble Pool',
             icon: Icons.bubble_chart_outlined,
-            onPressed: () => context.go('/bubble-pool'),
+            onPressed: () =>
+                openBubblePoolLaunchAware(context, featureKey: 'habit_bubble'),
           ),
         ],
       ),
@@ -300,10 +304,11 @@ class _HabitBubbleEntryScreenState extends State<HabitBubbleEntryScreen> {
                       ),
               ),
             ),
-            BubbleCoinRewardBurst(
-              playCount: _rewardBurstCount,
-              padding: const EdgeInsets.only(top: 72),
-            ),
+            if (bubbleCoinsEnabledForLaunch)
+              BubbleCoinRewardBurst(
+                playCount: _rewardBurstCount,
+                padding: const EdgeInsets.only(top: 72),
+              ),
           ],
         ),
       ),

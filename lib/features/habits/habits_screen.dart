@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:mind_buddy/features/bubble_coins/bubble_coin_reward_service.dart';
+import 'package:mind_buddy/features/bubble_pool/bubble_pool_launch_config.dart';
 import 'package:mind_buddy/features/insights/habit_month_grid.dart';
 import 'package:mind_buddy/features/insights/habit_streaks_summary.dart';
 import 'package:mind_buddy/features/habits/habit_home_widget_service.dart';
@@ -111,6 +112,13 @@ class _HabitsScreenState extends State<HabitsScreen>
   }
 
   Future<void> _loadBubbleCoinBalance() async {
+    if (!bubbleCoinsEnabledForLaunch) {
+      if (!mounted) return;
+      setState(() {
+        _bubbleCoinBalance = 0;
+      });
+      return;
+    }
     final wallet = await _bubbleCoinRewardService.loadWallet();
     if (!mounted) return;
     setState(() {
@@ -315,7 +323,17 @@ class _HabitsScreenState extends State<HabitsScreen>
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 10),
-                _BubbleCoinWalletChip(balance: _bubbleCoinBalance),
+                if (bubbleCoinsEnabledForLaunch)
+                  _BubbleCoinWalletChip(balance: _bubbleCoinBalance)
+                else
+                  _LaunchDisabledBubbleCard(
+                    title: 'Bubble Coins',
+                    subtitle: 'Coming soon',
+                    onTap: () => openBubbleCoinsLaunchAware(
+                      context,
+                      featureKey: 'habit_bubble',
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 if (!_hideStreaks)
                   _GlowPanel(
@@ -490,6 +508,77 @@ class _BubbleCoinWalletChip extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _LaunchDisabledBubbleCard extends StatelessWidget {
+  const _LaunchDisabledBubbleCard({
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Opacity(
+      opacity: 0.88,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: scheme.surface.withValues(alpha: 0.84),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: scheme.primary.withValues(alpha: 0.18)),
+            ),
+            child: Row(
+              children: <Widget>[
+                Icon(
+                  Icons.bubble_chart_outlined,
+                  color: scheme.primary.withValues(alpha: 0.72),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Text(
+                        title,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.64),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  'Open',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

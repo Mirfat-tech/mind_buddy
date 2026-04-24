@@ -136,4 +136,12 @@ class DeviceStateLocalDataSource {
       'DEVICE_STATE_QUEUE_SYNC userId=$userId action=device_display_cache_updated',
     );
   }
+
+  Future<void> clear({required String userId}) async {
+    debugPrint('DEVICE_STATE_CLEAR_LOCAL_START userId=$userId');
+    await (_database.delete(
+      _database.syncMetadataEntries,
+    )..where((tbl) => tbl.key.equals(_scopeKey(userId)))).go();
+    debugPrint('DEVICE_STATE_CLEAR_LOCAL_SUCCESS userId=$userId');
+  }
 }
